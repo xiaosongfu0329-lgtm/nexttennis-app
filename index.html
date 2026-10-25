@@ -1,0 +1,2064 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+<meta name="theme-color" content="#0d1117" />
+<meta name="description" content="网球传感器冲击窗口接收、QC 校验与可视化" />
+<title>Nexttennis V101 — 击球数据接收与 QC 校验台</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" type="image/png" href="favicon.png" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Nexttennis" />
+<meta name="mobile-web-app-capable" content="yes" />
+<!-- ECharts 用于波形渲染 -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --pass: #3fb950; --fail: #f85149; --warn: #d29922;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+         background: var(--bg); color: var(--text);
+         padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  header { padding: 10px 12px; border-bottom: 1px solid var(--border);
+           display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  h1 { margin: 0; font-size: 15px; }
+  .conn-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  button { background: var(--panel); color: var(--text); border: 1px solid var(--border);
+           padding: 10px 14px; border-radius: 8px; cursor: pointer; font-size: 14px;
+           min-height: 44px; min-width: 44px; touch-action: manipulation; }
+  button:hover { border-color: var(--accent); }
+  button:active { transform: scale(0.97); }
+  button.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+  button.pass { background: var(--pass); color: #000; border-color: var(--pass); }
+  button.fail { background: var(--fail); color: #fff; border-color: var(--fail); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  /* ---------- 双页签（页1 核心信息 / 页2 运行日志） ---------- */
+  .tabs { display: flex; gap: 6px; padding: 8px 12px 0; border-bottom: 1px solid var(--border); }
+  .tab { flex: 1; min-height: 40px; font-size: 14px; color: var(--muted);
+         background: var(--panel); border: 1px solid var(--border); border-bottom: none;
+         border-radius: 8px 8px 0 0; }
+  .tab.active { color: var(--text); background: var(--bg); border-color: var(--accent); font-weight: 600; }
+  .page { display: none; padding: 10px 12px 24px; }
+  .page.active { display: block; }
+  /* ---------- 页1：核心信息卡 ---------- */
+  .statrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .statrow + .statrow { margin-top: 8px; }
+  /* 设备名 / 电池：小字一行，不占大卡片 */
+  .infobar { display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+             padding: 0 4px 6px; font-size: 12px; color: var(--muted); }
+  .infobar .dev { overflow-wrap: anywhere; }
+  .infobar .bat { font-family: ui-monospace, monospace; white-space: nowrap; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+          padding: 10px 12px; min-width: 0; }
+  .stat .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .stat .val { font-size: 18px; font-weight: 700; margin-top: 4px;
+               font-family: ui-monospace, "Cascadia Code", monospace; overflow-wrap: anywhere; }
+  .stat.big .val { font-size: 38px; color: var(--accent); line-height: 1.05; }
+  .stat .val .unit { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 4px; }
+  /* ---------- 动作诊断（引拍 / 随挥）：两行紧凑，不挤占球速卡 ---------- */
+  .diag { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+          padding: 8px 12px; margin-top: 8px; }
+  .diag-row { display: flex; align-items: baseline; gap: 8px; font-size: 14px; padding: 2px 0; }
+  .diag-row .k { color: var(--muted); font-size: 12px; min-width: 34px; }
+  .diag-row .num { margin-left: auto; font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); }
+  .diag .tip { font-size: 12px; margin-top: 4px; color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+           padding: 12px; margin-top: 8px; }
+  .panel h2 { margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .kv { display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; border-bottom: 1px dashed var(--border); }
+  .kv:last-child { border-bottom: none; }
+  .kv .v { font-family: ui-monospace, "Cascadia Code", monospace; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge.pass { background: rgba(63,185,80,.18); color: var(--pass); }
+  .badge.fail { background: rgba(248,81,73,.18); color: var(--fail); }
+  .badge.warn { background: rgba(210,153,34,.18); color: var(--warn); }
+  .badge.idle { background: rgba(139,148,158,.18); color: var(--muted); }
+  #chart { width: 100%; height: 200px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .actions button { flex: 1 1 30%; }
+  /* ---------- 页2：全窗口运行日志 ---------- */
+  #log { font-family: ui-monospace, monospace; font-size: 12px; overflow-y: auto;
+         background: #010409; border: 1px solid var(--border); border-radius: 6px; padding: 8px;
+         height: calc(100vh - 240px); }
+  .log-line { margin: 0; padding: 1px 0; }
+  .log-pass { color: var(--pass); } .log-fail { color: var(--fail); }
+  .log-info { color: var(--accent); } .log-warn { color: var(--warn); }
+  select { background: var(--panel); color: var(--text); border: 1px solid var(--border);
+           padding: 10px; border-radius: 8px; font-size: 14px; min-height: 44px; }
+  /* ---------- 折叠的技术详情（次要信息） ---------- */
+  details.tech { margin-top: 8px; }
+  details.tech > summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 10px 12px;
+                           background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+                           list-style: none; }
+  details.tech > summary::-webkit-details-marker { display: none; }
+  details.tech > summary::after { content: " ▾"; }
+  details.tech[open] > summary::after { content: " ▴"; }
+  .hint { font-size: 11px; color: var(--muted); margin: 8px 0 0; }
+  /* ---------- 预设打标 chips（批量采集；note 受控词表见契约 §4.8） ---------- */
+  .lbl-group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+  .lbl-key { font-size: 11px; color: var(--muted); min-width: 54px; letter-spacing: .5px; }
+  .chip { min-height: 34px; min-width: 0; padding: 6px 12px; font-size: 13px; border-radius: 16px; }
+  .chip.on { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+  #labelSpeed { width: 100px; min-height: 34px; padding: 6px 10px; font-size: 14px;
+                background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; }
+  /* ---------- 语音标注（录音版，不做 ASR；课后导出 ZIP 转写） ---------- */
+  .voice-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .voice-row .chip { min-height: 40px; }
+  #voiceRecBtn.rec { background: var(--fail); color: #fff; border-color: var(--fail); animation: vpulse 1.1s infinite; }
+  @keyframes vpulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+  #voiceStat { font-size: 11px; color: var(--muted); }
+  #voiceStat.err { color: var(--fail); }
+  #voiceAutoBtn.on { background: var(--pass); color: #000; border-color: var(--pass); }
+  #voiceDevSel { max-width: 190px; min-height: 40px; padding: 4px 8px; font-size: 12px;
+                 background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; }
+  #voiceBarWrap { height: 6px; margin: 6px 0 2px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  #voiceBar { height: 100%; width: 0; background: var(--fail); transition: width 80ms linear; }
+  /* 移动端优化 */
+  @media (max-width: 600px) {
+    header { padding: 8px 10px; }
+    h1 { font-size: 14px; }
+    .page { padding: 8px 10px 24px; }
+    .tab { font-size: 13px; min-height: 38px; }
+    .infobar { font-size: 11px; }
+    #chart { height: 170px; }
+    .stat .val { font-size: 17px; }
+    .stat.big .val { font-size: 34px; }
+    #log { height: calc(100vh - 215px); }
+  }
+  @media (max-height: 700px) {
+    #chart { height: 150px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Nexttennis V101 · 击球数据台</h1>
+  <div class="conn-bar">
+    <select id="modeSel">
+      <option value="impact">真实设备 — 冲击窗口 (Tennis_Sensor_01/02/03)</option>
+      <option value="mock">Mock 设备（合成冲击数据）</option>
+      <option value="step1">Step1 桥接 — 实时流 (XIAO-IMU-416)</option>
+    </select>
+    <button id="connectBtn" class="primary">连接设备</button>
+    <button id="disconnectBtn" disabled>断开</button>
+    <span id="connStatus" class="badge idle">未连接</span>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-page="page1">击球</button>
+  <button class="tab" data-page="page2">运行日志</button>
+</nav>
+
+<!-- ================= 页1：最重要的信息 ================= -->
+<section id="page1" class="page active">
+  <div class="infobar">
+    <span class="dev" id="devName">—</span>
+    <span id="t0off" style="white-space:nowrap">T0 偏移 —</span>
+    <span class="bat" id="devBatt">—</span>
+  </div>
+  <div class="statrow">
+    <div class="stat big"><div class="label">预估球速</div>
+      <div class="val"><span id="speedVal">—</span><span class="unit">km/h</span></div>
+    </div>
+    <div class="stat"><div class="label">正反手 / 上下旋</div><div class="val" id="p1StrokeSpin">—</div></div>
+  </div>
+
+  <div class="diag">
+    <div class="diag-row"><span class="k">引拍</span>
+      <span id="diagBack"><span class="badge idle">—</span></span>
+      <span class="num" id="diagBackNum">—</span></div>
+    <div class="diag-row"><span class="k">随挥</span>
+      <span id="diagFollow"><span class="badge idle">—</span></span>
+      <span class="num" id="diagFollowNum">—</span></div>
+    <div class="tip" id="diagTip">—</div>
+  </div>
+
+  <div class="panel">
+    <select id="winSel" style="width:100%"></select>
+    <div id="sessStat" style="font-size:12px;color:var(--muted);margin-top:4px"></div>
+    <h2 style="margin-top:10px">12×396 物理波形（1.77s 混合速率窗口：前1.20s + 后0.57s，LSM6DSV320X）</h2>
+    <div id="chart"></div>
+  </div>
+
+  <div class="panel">
+    <h2>打标与导出</h2>
+    <!-- 语音标注（录音版）：只存音频 + 窗口锚点，课后导出 ZIP 转写后回填 note -->
+    <div class="voice-row">
+      <span class="lbl-key">语音</span>
+      <button id="voiceRecBtn" class="chip">● 录音打标</button>
+      <button id="voiceUndoBtn" class="chip">撤销上一条</button>
+      <button id="voiceExportBtn" class="chip">导出语音包</button>
+      <span id="voiceStat">就绪</span>
+    </div>
+    <p class="hint">点一下开始录音，说完不必再点（3 秒自动停）；录音自动挂到最近一个窗口。导出 ZIP 内含 clips/ 与 voice_labels.csv，转写后按 (file, seq) 回填 note。</p>
+    <div class="voice-row">
+      <button id="voiceAutoBtn" class="chip">自动录音：关</button>
+      <select id="voiceDevSel"><option value="">麦克风：默认</option></select>
+      <button id="voiceMicRetry" class="chip">检测麦克风</button>
+    </div>
+    <div id="voiceBarWrap"><div id="voiceBar"></div></div>
+    <p class="hint">耳机测试：先点一次录音授予麦克风权限，再在「麦克风」里选耳机；自动录音开启后，每球窗口到达即录 3 秒，无需按键（需保持页面在前台）。</p>
+    <p class="hint">配合方式：「录音打标」= 手动补录当前球（自动模式下用于重录，会替换该球旧录音）；「自动录音」= 每球到达自动录，二者不会产生重复条目。没有传感器时，把顶部设备选成 Mock 才会产生窗口来触发录音。</p>
+    <!-- 预设标签（批量采集用；note 受控词表与格式见契约 §4.8） -->
+    <div class="lbl-group"><span class="lbl-key">击球</span>
+      <button class="chip" data-k="stroke" data-v="FH">正手</button>
+      <button class="chip" data-k="stroke" data-v="BH">反手</button>
+      <button class="chip" data-k="stroke" data-v="SV">发球</button>
+      <button class="chip" data-k="stroke" data-v="VL">截击</button>
+    </div>
+    <div class="lbl-group"><span class="lbl-key">旋转</span>
+      <button class="chip" data-k="spin" data-v="FLAT">平击</button>
+      <button class="chip" data-k="spin" data-v="TOP">上旋</button>
+      <button class="chip" data-k="spin" data-v="BACK">下旋</button>
+      <button class="chip" data-k="spin" data-v="SIDE">侧旋</button>
+    </div>
+    <div class="lbl-group"><span class="lbl-key">击球点</span>
+      <button class="chip" data-k="spot" data-v="SWEET">甜区</button>
+      <button class="chip" data-k="spot" data-v="OFF">偏心</button>
+      <button class="chip" data-k="spot" data-v="FRAME">打框</button>
+      <button class="chip" data-k="spot" data-v="MISHIT">误击</button>
+    </div>
+    <div class="lbl-group"><span class="lbl-key">技术缺陷</span>
+      <button class="chip" data-k="defect" data-v="LATE">击球点偏后</button>
+      <button class="chip" data-k="defect" data-v="MIN">引拍不足</button>
+      <button class="chip" data-k="defect" data-v="NFT">随挥不足</button>
+    </div>
+    <div class="lbl-group"><span class="lbl-key">非击球</span>
+      <button class="chip" data-k="stroke" data-v="TAP">磕碰</button>
+      <button class="chip" data-k="stroke" data-v="SOFT">轻打</button>
+      <button class="chip" data-k="stroke" data-v="DROP">落球</button>
+      <button class="chip" data-k="stroke" data-v="BOUNCE">颠球</button>
+      <button class="chip" data-k="stroke" data-v="WARMUP">热身</button>
+    </div>
+    <div class="lbl-group"><span class="lbl-key">真值球速</span>
+      <input id="labelSpeed" type="number" inputmode="numeric" min="0" max="250" step="1" placeholder="km/h" />
+      <button class="chip" id="labelClearBtn">清除选择</button>
+    </div>
+    <div id="labelPreview" class="hint" style="font-family:ui-monospace,monospace">打标预览：（未选）</div>
+    <div class="actions" style="margin-top:6px">
+      <button id="labelApplyBtn" class="primary">应用打标</button>
+      <button id="labelPassBtn" class="pass">【合格】</button>
+      <button id="labelFailBtn" class="fail">【废球】</button>
+      <button id="labelNoteBtn">自由文本</button>
+    </div>
+    <div class="actions" style="margin-top:8px">
+      <button id="exportSessionCsvBtn" class="pass">导出本次全部 CSV</button>
+      <button id="exportCsvBtn">导出当前窗口 CSV</button>
+      <button id="exportJsonBtn">导出 JSON</button>
+    </div>
+    <p class="hint">“本次全部”= 自本次点击连接以来的全部窗口（含 PASS/拍框/异物），便于对比标定；“当前窗口”只导出上面下拉框选中的一个窗口</p>
+  </div>
+
+  <details class="tech">
+    <summary>技术详情（连接状态 / QC 引擎 / 声音反馈）</summary>
+    <div class="panel">
+      <h2>连接状态</h2>
+      <div class="kv"><span>模式</span><span class="v" id="devMode">—</span></div>
+      <div class="kv"><span>App 版本</span><span class="v" id="appVer">—</span></div>
+      <div class="kv"><span>MTU / 吞吐</span><span class="v" id="devMtu">—</span></div>
+      <div class="kv"><span>已接收窗口</span><span class="v" id="winCount">0</span></div>
+      <div class="kv"><span>分片重组缓存</span><span class="v" id="reasmStat">—</span></div>
+    </div>
+    <div class="panel">
+      <h2>Sanity Check QC 引擎</h2>
+      <div class="kv"><span>当前判定</span><span id="qcResult"><span class="badge idle">待检测</span></span></div>
+      <div class="kv"><span>板上判决</span><span id="qcQuick">—</span></div>
+      <div class="kv"><span>击球类型</span><span id="qcStroke">—</span></div>
+      <div class="kv"><span>旋转类型</span><span id="qcSpin">—</span></div>
+      <div class="kv"><span>Seq 连续性</span><span class="v" id="qcSeq">—</span></div>
+      <div class="kv"><span>峰值 a_Total</span><span class="v" id="qcPeak">—</span></div>
+      <div class="kv"><span>T0 偏移（实测−名义#186）</span><span class="v" id="qcT0">—</span></div>
+      <div class="kv"><span>Spike 跳变</span><span class="v" id="qcSpike">—</span></div>
+      <div class="kv"><span>饱和削顶</span><span class="v" id="qcSat">—</span></div>
+      <div class="kv"><span>Pass Rate</span><span class="v" id="qcPassRate">—</span></div>
+      <div class="kv"><span>硬件连通</span><span id="qcHw"><span class="badge idle">—</span></span></div>
+    </div>
+    <div class="panel">
+      <h2>声音反馈</h2>
+      <div class="kv"><span>暴击音延迟</span><span class="v" id="audioLat">—</span></div>
+      <div class="kv"><span>语音播报</span><span class="v" id="ttsStat">—</span></div>
+    </div>
+  </details>
+</section>
+
+<!-- ================= 页2：大窗口运行日志 ================= -->
+<section id="page2" class="page">
+  <div class="panel" style="margin-top:0">
+    <h2>运行日志（全窗口，可滚动）</h2>
+    <div id="log"></div>
+  </div>
+</section>
+
+<script>
+"use strict";
+
+// App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
+const APP_BUILD = "APP-B67-20261025";
+
+// =====================================================================
+// 0. 协议常量（与固件约定）
+// =====================================================================
+const PROTO = {
+  IMPACT: {
+    deviceName: "Tennis_Sensor_01",
+    namePrefix: "Tennis_Sensor",   // 前缀匹配，支持 01/02/03 等多板并行
+    serviceUUID: "19b10000-e8f2-537e-4f6c-d104768a1214",
+    charUUID:    "19b10001-e8f2-537e-4f6c-d104768a1214",
+  },
+  STEP1: {
+    deviceName: "XIAO-IMU-416",
+    serviceUUID: "0000aaaa-0000-1000-8000-00805f9b34fb",
+    charUUID:    "0000aaab-0000-1000-8000-00805f9b34fb",
+    pktBytes: 62,   // [seq u16][5×{ax,ay,az} float]
+  },
+  WINDOW: {
+    channels: 12,        // ax,ay,az, gx,gy,gz, roll,pitch,yaw, hx,hy,hz (LSM6DSV320X)
+    samples: 396,        // [B54] 138宏观前(120Hz) + 48微观前 + 162微观后 (960Hz) + 48宏观后(120Hz)
+    sampleRate: 960,     // Hz —— 仅微观段；宏观段为 MACRO_RATE，分段索引见 MICRO_*
+    bytes: 9504,         // 396 × 12 × int16
+    chunks: 41,          // 9504 / 232 → 41 片
+    chunkPayload: 232,   // 每片载荷字节数 (12B 头 + 232B = 244B/片)
+    T0_INDEX: 186,       // 138 + 48：T0 在窗内的固定索引
+    MICRO_START: 138,    // 微观段起始索引（宏观前结束）
+    MICRO_END: 347,      // 微观段结束索引（含）([B54] 原 281 = 138+48+162-1)
+    MACRO_RATE: 120,     // 宏观段速率 (Hz)
+  },
+  // Step4 窗口分片包头 (12B)：[chunk_index u8][flags u8][seq u8][total u8][plen u16][crc16 u16][fw u8][rsv×3]
+  // flags: bit[1:0]=chunk_type(0起/1中/2末), bit[3:2]=impact_class(0 NORMAL/1 FRAME/2 FOREIGN)
+  // 系统包(心跳/电池)沿用旧头：[magic u8=0xA5][flags u8][seq u16=0xFFFE][ts u32][off u16][len u16][batt u16]
+  SYS_MAGIC: 0xA5,
+  CHUNK_HDR: 12,
+  // 原始 int16 → 物理单位换算
+  SCALE_A:   0.000488,                 // g/LSB    @ ±16g
+  SCALE_G:   0.140 * Math.PI / 180,    // rad/s/LSB @ ±4000dps
+  SCALE_ANG: 0.01,                     // °/LSB    (roll/pitch/yaw, 0.01°)
+  SCALE_HG:  0.010417,                 // g/LSB    @ ±320g
+};
+
+// =====================================================================
+// 1. 日志工具
+// =====================================================================
+const logEl = document.getElementById("log");
+function log(msg, cls = "") {
+  const line = document.createElement("div");
+  line.className = "log-line " + cls;
+  const t = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  line.textContent = `[${t}] ${msg}`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// CRC16-CCITT (poly 0x1021, init 0xFFFF) —— 与固件 crc16_ccitt 必须 1:1
+function crc16ccitt(bytes) {
+  let crc = 0xFFFF;
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i] << 8;
+    for (let b = 0; b < 8; b++)
+      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xFFFF : (crc << 1) & 0xFFFF;
+  }
+  return crc;
+}
+
+// =====================================================================
+// 2. BLE 数据流解析器（含分片重组）
+// =====================================================================
+class BleStreamParser {
+  constructor(onWindow) {
+    this.onWindow = onWindow;   // callback(meta, data12x396)
+    this._buf = new Map();      // seq -> { bytes, createdAt, total, fw, filled, crcFail, quickClass, seen }
+    this._lastSeq = -1;
+    this._delivered = new Set(); // 已完整交付过的 seq：迟到的重复分片直接忽略
+  }
+
+  // 处理一条特征值通知（Step4 冲击窗口协议的一个分片）
+  handleChunk(buf) {
+    const dv = new DataView(buf);
+    if (buf.byteLength < PROTO.CHUNK_HDR) {
+      log(`分片过短: ${buf.byteLength}B`, "log-warn");
+      return;
+    }
+
+    // 系统包（心跳/电池）：byte0=0xA5，seq(u16)@2 = 0xFFFE，不进入窗口重组
+    if (dv.getUint8(0) === PROTO.SYS_MAGIC) {
+      if (buf.byteLength >= 14 && dv.getUint16(2, true) >= 0xFFF0) {
+        const battMv = dv.getUint16(12, true);
+        const battEl = document.getElementById("devBatt");
+        if (battEl) {
+          const pct = Math.max(0, Math.min(100, Math.round((battMv - 3300) / 900 * 100)));
+          battEl.textContent = `${battMv}mV (${pct}%)`;
+        }
+      }
+      return;
+    }
+
+    // Step4 窗口分片头：byte0 = chunk_index (0..34)，不再有 magic
+    const ci    = dv.getUint8(0);
+    const flags = dv.getUint8(1);   // bit[1:0]=chunk_type 0起/1中/2末; bit[3:2]=impact_class
+    const seq   = dv.getUint8(2);   // 窗口序号 (u8, 255 回绕)
+    const total = dv.getUint8(3);   // 总片数 = 35
+    const plen  = dv.getUint16(4, true);
+    const crc   = dv.getUint16(6, true);
+    const fw    = dv.getUint8(8);
+    const ct    = flags & 0x03;
+    const imp   = (flags >> 2) & 0x03;   // 0 NORMAL / 1 FRAME / 2 FOREIGN
+
+    if (plen + PROTO.CHUNK_HDR > buf.byteLength) {
+      log(`分片 #${ci} 声明长度 ${plen} 超出实际 ${buf.byteLength - PROTO.CHUNK_HDR}`, "log-warn");
+      return;
+    }
+    // 已交付过的 seq 又来分片 => 多链路堆叠/迟到重传，直接忽略
+    if (this._delivered.has(seq)) return;
+
+    let slot = this._buf.get(seq);
+    if (!slot) {
+      this._gc(seq);
+      slot = { bytes: new Uint8Array(PROTO.WINDOW.bytes), createdAt: Date.now(),
+               total, fw, filled: 0, crcFail: 0, quickClass: null, seen: new Set() };
+      this._buf.set(seq, slot);
+    }
+    // 同 (chunk_index,plen) 的重复分片忽略：防止 filled 虚胖导致"伪完整"PASS
+    const dupKey = ci * 65536 + plen;
+    if (slot.seen.has(dupKey)) return;
+    slot.seen.add(dupKey);
+    // 首片(chunk_index=0) flags bit[3:2] 携带固件判决：0 NORMAL / 1 FRAME / 2 FOREIGN
+    // Step4 flags v2 已把击球/旋转位移交 AI，bit[5:4]/bit[7:6] 恒为 0，App 不再解析
+    if (ct === 0) slot.quickClass = imp;
+
+    // CRC16-CCITT 校验（与固件 crc16_ccitt 1:1）
+    const payload = new Uint8Array(buf, PROTO.CHUNK_HDR, plen);
+    if (crc16ccitt(payload) !== crc) {
+      slot.crcFail++;
+      log(`seq=${seq} 分片 #${ci} CRC 不符`, "log-warn");
+    }
+    slot.bytes.set(payload, ci * PROTO.WINDOW.chunkPayload);
+    slot.filled += plen;
+
+    // 末分片(ct=2) 或收满 9504 字节 → 重组交付
+    if (ct === 2 || slot.filled >= PROTO.WINDOW.bytes) {
+      this._deliver(seq, slot);
+    }
+  }
+
+  _deliver(seq, slot) {
+    // 解析为 12x396：按样本交错 int16（每 12 个 int16 = 一个采样点），再按通道缩放
+    const i16 = new Int16Array(slot.bytes.buffer, slot.bytes.byteOffset,
+                               PROTO.WINDOW.samples * PROTO.WINDOW.channels);
+    const sc = [PROTO.SCALE_A, PROTO.SCALE_A, PROTO.SCALE_A,
+                PROTO.SCALE_G, PROTO.SCALE_G, PROTO.SCALE_G,
+                PROTO.SCALE_ANG, PROTO.SCALE_ANG, PROTO.SCALE_ANG,
+                PROTO.SCALE_HG, PROTO.SCALE_HG, PROTO.SCALE_HG];
+    const data = [];
+    for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) data.push(new Float32Array(PROTO.WINDOW.samples));
+    for (let i = 0; i < PROTO.WINDOW.samples; i++) {
+      for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) {
+        data[ch][i] = i16[i * PROTO.WINDOW.channels + ch] * sc[ch];
+      }
+    }
+    if (slot.filled < PROTO.WINDOW.bytes) {
+      log(`seq=${seq} 窗口不完整: 仅收到 ${slot.filled}/${PROTO.WINDOW.bytes}B`, "log-warn");
+    }
+    if (slot.crcFail > 0) {
+      log(`seq=${seq} 有 ${slot.crcFail} 片 CRC 校验失败`, "log-warn");
+    }
+    const meta = { seq, timestamp: slot.createdAt, source: "impact",
+                   recvBytes: slot.filled, total: slot.total, fw: slot.fw,
+                   crcFail: slot.crcFail, quickClass: slot.quickClass,
+                   strokeType: null, spinType: null };   // Step4: 击球/旋转移交 AI 判定
+    this._buf.delete(seq);
+    this._delivered.add(seq);
+    if (this._delivered.size > 64) {   // 只防近 64 个窗口的迟到副本（seq 为 u8，64 ≪ 256 回绕周期）
+      this._delivered.delete(this._delivered.values().next().value);
+    }
+    this.onWindow(meta, data);
+  }
+
+  // 给 QC 引擎判断丢包用（seq 为 u8，需处理回绕）
+  consumeSeq(seq) {
+    let lost = false;
+    if (this._lastSeq >= 0) {
+      const expected = (this._lastSeq + 1) & 0xFF;
+      if (seq !== expected) lost = true;
+    }
+    this._lastSeq = seq;
+    return lost;
+  }
+
+  reset() { this._buf.clear(); this._lastSeq = -1; this._delivered.clear(); }
+
+  // 防止分片丢失导致的缓存泄漏：只保留最近 8 个 seq；丢弃未收齐的窗口要留痕
+  _gc(keepSeq) {
+    for (const s of this._buf.keys()) {
+      if (s !== keepSeq && ((keepSeq - s + 256) & 0xFF) > 8) {
+        const slot = this._buf.get(s);
+        if (slot && slot.filled > 0) {
+          log(`seq=${s} 分片未收齐被丢弃 (${slot.filled}/${PROTO.WINDOW.bytes}B)`, "log-warn");
+        }
+        this._buf.delete(s);
+      }
+    }
+  }
+  get reasmStat() { return `缓存 ${this._buf.size} 个窗口`; }
+}
+
+// =====================================================================
+// 3. Sanity Check QC 引擎
+// =====================================================================
+const QC = {
+  PASS: "PASS",
+  FAIL_PACKET_LOSS: "FAIL_PACKET_LOSS",
+  FAIL_FRAME_HIT:     "FAIL_FRAME_HIT",
+  FAIL_FOREIGN_IMPACT:"FAIL_FOREIGN_IMPACT",
+  FAIL_NO_IMPACT:   "FAIL_NO_IMPACT",
+  FAIL_SPIKE_NOISE: "FAIL_SPIKE_NOISE",
+  FAIL_SATURATION:  "FAIL_SATURATION",
+  FAIL_GYRO_SAT:    "FAIL_GYRO_SAT",
+};
+
+// 「好球·低g削顶」是内部概念：固件板判 NORMAL_HIT，但 App 仅因低g加速度/陀螺削顶而 FAIL。
+// 低g ±16g 打真实击球必然触顶（合模长上限 16g×√3≈27.7g），属已知硬件局限，终端用户无需感知；
+// 高g(±320g)+陀螺通道完好，既不影响击球有效性，也不影响 F1/F2/F3 标定。
+// → 对外一律按 PASS（不拖低 Pass Rate）；硬件细节只在「技术详情」的饱和行露出，供调试。
+function isGoodClip(code, meta) {
+  return (code === QC.FAIL_SATURATION || code === QC.FAIL_GYRO_SAT)
+      && !!meta && meta.quickClass === 0;
+}
+// QC 是否视为通过（数据可用）
+function isQcOk(code, meta) { return code === QC.PASS || isGoodClip(code, meta); }
+// 日志/下拉框文案（削顶好球对外就是 PASS，不暴露硬件细节）
+function qcCodeText(code, meta) { return isGoodClip(code, meta) ? "PASS" : code; }
+
+class SanityCheckEngine {
+  constructor() {
+    this.total = 0; this.passed = 0;
+    this.last = null;
+  }
+  get passRate() { return this.total ? (this.passed / this.total * 100) : 0; }
+  get hwOk() { return this.passRate >= 98; }
+
+  // data: 12x396, meta: {seq, timestamp}
+  check(data, meta) {
+    this.total++;
+    const ax = data[0], ay = data[1], az = data[2];
+    const N = PROTO.WINDOW.samples;
+
+    // --- 合成线加速度（同时统计全零样本：静止也有 ~1g 重力，|a|<=0.02 必是未写入的空洞） ---
+    const aMag = new Float32Array(N);
+    let peakIdx = 0, peakVal = 0, zeroSamples = 0;
+    for (let i = 0; i < N; i++) {
+      aMag[i] = Math.hypot(ax[i], ay[i], az[i]);
+      if (aMag[i] > peakVal) { peakVal = aMag[i]; peakIdx = i; }
+      if (aMag[i] <= 0.02) zeroSamples++;
+    }
+
+    // --- 规则 A：丢包（seq 跳号 / 字节未收满 / 重复分片把 filled 抬满但数据有空洞） ---
+    const incomplete = meta.recvBytes != null && meta.recvBytes < PROTO.WINDOW.bytes;
+    const hasHoles = zeroSamples > N * 0.05;   // >5% 全零样本：必然不完整
+    if (meta.packetLoss || incomplete || hasHoles) {
+      return this._record(QC.FAIL_PACKET_LOSS,
+        { peakIdx, peakVal, zeroSamples }, data, meta);
+    }
+
+    // --- 规则 A2：固件刚体判决（与固件 quickAnalyzeImpact 对齐） ---
+    // FRAME_HIT：Step4 由微观段高频振动能量 E_hf 判决（台架标定前 FRAME_DETECT_ENABLE=0，暂不产生）。
+    // FOREIGN_IMPACT：无挥拍背景 或 持续能量不足（dwellN < 4）。
+    // quickClass 为 null（Step1/首片缺失）或 0（NORMAL/Mock）时不门控。
+    if (meta.quickClass === 1) {
+      return this._record(QC.FAIL_FRAME_HIT, { peakIdx, peakVal }, data, meta);
+    }
+    if (meta.quickClass === 2) {
+      return this._record(QC.FAIL_FOREIGN_IMPACT, { peakIdx, peakVal }, data, meta);
+    }
+
+    // --- 规则 B：阈值（无冲击） ---
+    if (peakVal < 5.0) {
+      return this._record(QC.FAIL_NO_IMPACT, { peakIdx, peakVal }, data, meta);
+    }
+
+    // --- 规则 C：孤立毛刺噪声（区分物理 ringing 与单点电气噪声） ---
+    // 高速冲击会激发连续多样本的结构阻尼振荡(ringing)，属真实信号；
+    // 电气/焊接噪声的特征是“宽度仅 1 个样本的孤立尖峰”。
+    // 用 ±2 点(5点)中值作为局域稳健电平：单点毛刺残差≈整个毛刺幅度，
+    // 连续振荡的中值会跟随波形、残差仅一个采样步长，从而区分二者。
+    // 阈值随冲击峰值自适应（ringing 幅度与冲击强度成正比，电气噪声不会）。
+    // 豁免窗非对称：上升沿很陡只需峰前 ~29ms，峰后结构 ringing 可持续 ~100ms。
+    const sr = PROTO.WINDOW.sampleRate;
+    const guardPre  = Math.round(0.03 * sr); // 峰前 ~12 点
+    const guardPost = Math.round(0.10 * sr); // 峰后 ~42 点，覆盖 ringing 主体
+    const spikeThr = Math.max(3.0, peakVal * 0.35);
+    let spikeCount = 0, maxJump = 0;
+    for (let i = 2; i < N - 2; i++) {
+      if (i >= peakIdx - guardPre && i <= peakIdx + guardPost) continue;
+      const w = [aMag[i-2], aMag[i-1], aMag[i], aMag[i+1], aMag[i+2]].sort((x, y) => x - y);
+      const resid = Math.abs(aMag[i] - w[2]); // 相对 5 点中值的偏离
+      if (resid > maxJump) maxJump = resid;
+      if (resid > spikeThr) spikeCount++;
+    }
+    // 偶发 1 个孤立点可容忍（量化抖动）；≥2 个才判定为硬件噪声
+    if (spikeCount >= 2) {
+      return this._record(QC.FAIL_SPIKE_NOISE,
+        { peakIdx, peakVal, maxJump, spikeCount, spikeThr }, data, meta);
+    }
+
+    // --- 规则 D：单轴“平顶削顶”（加速度 ±16g / 陀螺 ±4000dps） ---
+    // 真正的 ADC 削顶是原始码被钉在数值满量程，特征是：
+    //   幅值贴近满量程 且 连续样本几乎完全相等（平顶，无抖动）。
+    // 只是幅值大但样本仍在正常变化，属真实高量程冲击，不能判削顶；
+    // 多轴合成超限也不算，必须某一根轴被钉死。
+    // 加速度满量程码 32767×0.488mg≈15.99g；
+    // 陀螺满量程码 32767×140mdps≈4586.7dps≈80.06rad/s（本板配 ±4000dps 档；
+    // 标称 ±4000dps≈69.81rad/s 只是数据手册保证线性区的上限，超出仍可读但线性度不保证）。
+    // 一旦陀螺削顶，球速会被低估，必须判废，不能播报错误球速）。
+    const flatRun = (a, rail, flat) => {
+      let run = 0, best = 0;
+      for (let i = 0; i < a.length; i++) {
+        if (Math.abs(a[i]) < rail) { run = 0; continue; }
+        const prevNear = i > 0 && Math.abs(a[i - 1]) >= rail &&
+                         Math.sign(a[i - 1]) === Math.sign(a[i]);
+        run = prevNear ? ((Math.abs(a[i] - a[i - 1]) <= flat) ? run + 1 : 1) : 1;
+        if (run > best) best = run;
+      }
+      return best;
+    };
+    const RAIL_G = 15.90, FLAT_G = 0.05;     // 加速度 g
+    const RAIL_W = 79.60, FLAT_W = 0.12;     // 陀螺 rad/s（±4000dps 档码满≈80.06，取 99.4%）
+    let accSatRun = 0, accSatAxis = -1;
+    for (let ch = 0; ch < 3; ch++) {
+      const r = flatRun(data[ch], RAIL_G, FLAT_G);
+      if (r > accSatRun) { accSatRun = r; accSatAxis = ch; }
+    }
+    let gyroSatRun = 0, gyroSatAxis = -1;
+    for (let ch = 3; ch < 6; ch++) {
+      const r = flatRun(data[ch], RAIL_W, FLAT_W);
+      if (r > gyroSatRun) { gyroSatRun = r; gyroSatAxis = ch - 3; }
+    }
+    const maxSatRun = Math.max(accSatRun, gyroSatRun);
+    if (accSatRun >= 3) {
+      return this._record(QC.FAIL_SATURATION,
+        { peakIdx, peakVal, maxSatRun, satAxis: accSatAxis,
+          accSatRun, gyroSatRun, satSensor: gyroSatRun >= 3 ? "acc+gyro" : "acc" },
+        data, meta);
+    }
+    if (gyroSatRun >= 3) {
+      return this._record(QC.FAIL_GYRO_SAT,
+        { peakIdx, peakVal, maxSatRun, satAxis: gyroSatAxis,
+          accSatRun, gyroSatRun, satSensor: "gyro" }, data, meta);
+    }
+
+    return this._record(QC.PASS,
+      { peakIdx, peakVal, maxJump, spikeCount, spikeThr,
+        maxSatRun: 0, accSatRun: 0, gyroSatRun: 0 }, data, meta);
+  }
+
+  _record(code, info, data, meta) {
+    if (isQcOk(code, meta)) this.passed++;
+    this.last = { code, info, data, meta };
+    return { code, info, passRate: this.passRate, hwOk: this.hwOk };
+  }
+}
+
+// =====================================================================
+// 4. 声音反馈引擎（<10ms 暴击音 + TTS 报速）
+// =====================================================================
+class AudioFeedbackEngine {
+  constructor() {
+    this.ctx = null;
+    this.impactBuf = null;
+    this.enabled = true;
+  }
+
+  async init() {
+    if (this.ctx) return;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    this.ctx = new Ctx();
+    // 合成短促冲击音（噪声爆发 + 低频 thump）
+    this.impactBuf = this._synthImpact();
+    log("暴击音已合成", "log-info");
+  }
+
+  // 合成短促冲击音（噪声爆发 + 低频 thump，指数衰减）
+  _synthImpact() {
+    const sr = this.ctx.sampleRate;
+    const len = Math.floor(sr * 0.18);
+    const buf = this.ctx.createBuffer(1, len, sr);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      const t = i / len;
+      const noise = (Math.random() * 2 - 1) * Math.exp(-t * 22);
+      const thump = Math.sin(2 * Math.PI * 90 * t) * Math.exp(-t * 14) * 0.7;
+      d[i] = (noise * 0.65 + thump * 0.45) * (1 - t * 0.25);
+    }
+    return buf;
+  }
+
+  // 暴击音：必须 <10ms 触发
+  playImpact() {
+    if (!this.enabled || !this.ctx || !this.impactBuf) return;
+    if (this.ctx.state === "suspended") this.ctx.resume();
+    const t0 = this.ctx.currentTime;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.impactBuf;
+    const g = this.ctx.createGain();
+    g.gain.value = 0.9;
+    src.connect(g).connect(this.ctx.destination);
+    src.start(0);
+    const lat = (this.ctx.currentTime - t0) * 1000;
+    return lat; // ms
+  }
+
+  // 语音报速（不阻塞暴击音）
+  speak(text) {
+    if (!("speechSynthesis" in window)) return;
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "zh-CN"; u.rate = 1.15; u.volume = 1;
+      window.speechSynthesis.speak(u);
+    } catch (e) { log("TTS 失败: " + e.message, "log-warn"); }
+  }
+}
+
+// =====================================================================
+// 5. 波形渲染（ECharts）
+// =====================================================================
+class WaveformView {
+  constructor(el) {
+    this.el = el;
+    this.chart = echarts.init(el, "dark");
+    this._renderEmpty();
+  }
+
+  // 始终下发“完整 option”，避免 notMerge 全量替换时丢失 yAxis/grid/轴类型
+  _buildOption(series, xData) {
+    const names = ["Ax","Ay","Az","Gx","Gy","Gz","Roll","Pitch","Yaw","Hx","Hy","Hz"];
+    return {
+      backgroundColor: "transparent",
+      animation: false,
+      tooltip: { trigger: "axis" },
+      legend: { data: names, textStyle: { color: "#8b949e" }, top: 0 },
+      grid: { left: 55, right: 24, top: 38, bottom: 52 },
+      xAxis: {
+        type: "category", data: xData || [], name: "sample idx",
+        boundaryGap: false, axisLabel: { color: "#8b949e" },
+      },
+      yAxis: {
+        type: "value", name: "g / rad/s / °", scale: true,
+        axisLabel: { color: "#8b949e" },
+        splitLine: { lineStyle: { color: "#21262d" } },
+      },
+      dataZoom: [
+        { type: "inside", xAxisIndex: 0 },
+        { type: "slider", xAxisIndex: 0, height: 18, bottom: 12 },
+      ],
+      series: series || [],
+    };
+  }
+
+  _renderEmpty() {
+    this.chart.setOption(this._buildOption([], []), true);
+  }
+
+  render(data12x330, peakIdx, t0Idx) {
+    const names = ["Ax","Ay","Az","Gx","Gy","Gz","Roll","Pitch","Yaw","Hx","Hy","Hz"];
+    const colors = ["#f85149","#d29922","#3fb950","#58a6ff","#bc8cff","#f778ba","#79c0ff","#56d364","#ffa657","#ff7b72","#e3b341","#7ee787"];
+    const xData = Array.from({ length: PROTO.WINDOW.samples }, (_, i) => i);
+    const series = names.map((n, ch) => ({
+      name: n, type: "line", showSymbol: false,
+      lineStyle: { width: 1.2, color: colors[ch] },
+      data: Array.from(data12x330[ch]),
+    }));
+    // 垂直标注线（挂在 Ax 系列上，随类目轴定位）：T0 = 微观段起点+48，PEAK = 冲击峰值
+    if (series[0]) {
+      const mlines = [];
+      // 名义 T0 参考线（蓝虚线）—— 仅当与实测 T0 不重合时画，避免标签叠在一起
+      if (PROTO.WINDOW.T0_INDEX != null && t0Idx !== PROTO.WINDOW.T0_INDEX)
+        mlines.push({ xAxis: PROTO.WINDOW.T0_INDEX,
+          lineStyle: { color: "#58a6ff", type: "dashed", width: 1 },
+          label: { color: "#79c0ff", formatter: `名义T0 #${PROTO.WINDOW.T0_INDEX}` } });
+      // 实测 T0（绿实线）—— 始终画；与名义 186 重合即代表固件对齐成功
+      if (t0Idx != null) {
+        const off = windowTimeMs(t0Idx);
+        mlines.push({ xAxis: t0Idx,
+          lineStyle: { color: "#3fb950", type: "solid", width: 2 },
+          label: { color: "#3fb950",
+                   formatter: `实测T0 #${t0Idx} ${off >= 0 ? "+" : ""}${off.toFixed(0)}ms${Math.abs(off) <= 10 ? " ✓" : ""}` } });
+      }
+      // 峰值线（红虚线）—— 与实测 T0 相距 ≤4 样本时省略，避免两个标签叠在一起
+      if (peakIdx != null && (t0Idx == null || Math.abs(peakIdx - t0Idx) > 4))
+        mlines.push({ xAxis: peakIdx,
+          lineStyle: { color: "#ff4444", type: "dashed", width: 1 },
+          label: { color: "#ff6666", formatter: `PEAK #${peakIdx}` } });
+      series[0].markLine = { silent: true, symbol: "none", data: mlines };
+    }
+
+    this.chart.setOption(this._buildOption(series, xData), true);
+  }
+
+  resize() { this.chart.resize(); }
+}
+
+// =====================================================================
+// 6. Mock 设备（合成冲击数据，端到端验证）
+// =====================================================================
+class MockDevice {
+  constructor(onChunk) {
+    this.onChunk = onChunk;
+    this.seq = 0;
+    this.running = false;
+  }
+  start() {
+    this.running = true;
+    this._tick();
+  }
+  stop() { this.running = false; }
+  _tick() {
+    if (!this.running) return;
+    this._emitImpact();
+    // 每 1.2~2.5 秒一次"击球"
+    setTimeout(() => this._tick(), 1200 + Math.random() * 1300);
+  }
+  _emitImpact() {
+    const N = PROTO.WINDOW.samples, C = PROTO.WINDOW.channels;
+    const i16 = new Int16Array(N * C);
+    const T0 = PROTO.WINDOW.T0_INDEX;                 // 冲击固定在 T0=idx186
+    const invA = 1 / PROTO.SCALE_A, invG = 1 / PROTO.SCALE_G, invHg = 1 / PROTO.SCALE_HG;
+    const peakA = 8 + Math.random() * 6;              // 8~14g
+    for (let i = 0; i < N; i++) {
+      // 名义微观时间轴（宏观段只是 8 点平均，包络近似不变，直接按微观时间算）
+      const dt = (i - T0) / PROTO.WINDOW.sampleRate;
+      // 高斯冲击包络
+      const env = Math.exp(-(dt * dt) / (2 * 0.008 * 0.008)) * peakA;
+      const noise = (Math.random() - 0.5) * 0.05;     // 单位: g
+      // ax,ay,az (g)
+      i16[i*C+0] = Math.round((env * 0.6 + noise) * invA);
+      i16[i*C+1] = Math.round((env * 0.3 + noise) * invA);
+      i16[i*C+2] = Math.round((env * 0.8 + noise + 1.0) * invA);   // 含重力
+      // gx,gy,gz (rad/s)
+      const w = env * 8;
+      i16[i*C+3] = Math.round((w * 0.5 + noise) * invG);
+      i16[i*C+4] = Math.round((w * 0.8 + noise) * invG);
+      i16[i*C+5] = Math.round((w * 0.3 + noise) * invG);
+      // roll,pitch,yaw (0.01°)
+      i16[i*C+6] = Math.round(dt * 300 / PROTO.SCALE_ANG);
+      i16[i*C+7] = Math.round(dt * 200 / PROTO.SCALE_ANG);
+      i16[i*C+8] = 0;
+      // hx,hy,hz (高g加速度 g, 可超 ±16g)
+      i16[i*C+9]  = Math.round((env * 0.6 + noise) * invHg);
+      i16[i*C+10] = Math.round((env * 0.3 + noise) * invHg);
+      i16[i*C+11] = Math.round((env * 0.8 + noise + 1.0) * invHg);
+    }
+    const bytes = new Uint8Array(i16.buffer);
+    // 分片发送（Step4: 每片载荷 232B，共 41 片，12B 头含 chunk_index/CRC16）
+    const payloadPerChunk = PROTO.WINDOW.chunkPayload;
+    const totalChunks = PROTO.WINDOW.chunks;
+    const seq = this.seq++ & 0xFF;                    // seq 为 u8
+    for (let ci = 0; ci < totalChunks; ci++) {
+      const off = ci * payloadPerChunk;
+      const len = Math.min(payloadPerChunk, bytes.length - off);
+      const payload = bytes.subarray(off, off + len);
+      const chunk = new ArrayBuffer(PROTO.CHUNK_HDR + len);
+      const dv = new DataView(chunk);
+      dv.setUint8(0, ci);                                                     // chunk_index
+      dv.setUint8(1, ci === 0 ? 0 : (ci === totalChunks - 1 ? 2 : 1));        // chunk_type 0起/1中/2末
+      dv.setUint8(2, seq);                                                    // seq u8
+      dv.setUint8(3, totalChunks);                                            // total
+      dv.setUint16(4, len, true);                                             // plen
+      dv.setUint16(6, crc16ccitt(payload), true);                             // crc16
+      dv.setUint8(8, 39);                                                     // fw build
+      new Uint8Array(chunk, PROTO.CHUNK_HDR).set(payload);
+      // 模拟分片间微小间隔
+      setTimeout(() => this.onChunk(chunk), ci * 4);
+    }
+  }
+}
+
+// =====================================================================
+// 7. App 控制器
+// =====================================================================
+const parser = new BleStreamParser(onWindow);
+const qc = new SanityCheckEngine();
+const audio = new AudioFeedbackEngine();
+const view = new WaveformView(document.getElementById("chart"));
+window.addEventListener("resize", () => view.resize());
+
+let btDevice = null, btServer = null, btChar = null;
+let mockDev = null;
+let step1Samples = null, step1Seq = -1;
+let currentWindow = null; // {meta, data, qc}
+// 本次连接以来的全部窗口（含拍框/异物/丢包），断开后保留，下次点【连接设备】时重置
+let sessionWindows = [];
+let sessionStartTs = 0;
+let labeledCount = 0;
+
+const $ = id => document.getElementById(id);
+const connBadge = $("connStatus");
+
+function setConn(text, cls) {
+  connBadge.textContent = text;
+  connBadge.className = "badge " + cls;
+}
+
+// ---------- 窗口到达（冲击协议 / mock 共用） ----------
+function onWindow(meta, data) {
+  let res;
+  try {
+  meta.packetLoss = parser.consumeSeq(meta.seq);
+  meta.receivedAt = new Date();   // 本地到达时刻（HH:MM:SS，供会话列表/导出）
+  res = qc.check(data, meta);
+  const w = { meta, data, qc: res };
+  meta.t0Index = findT0Index(data);   // 实测 T0（详情面板读数 + 波形标注 + 验证固件对齐）
+  currentWindow = w;
+  sessionWindows.push(w);        // 含 FAIL 窗口，全部留存到本次会话结束
+  voiceAutoTrigger(meta);        // 自动录音：击球窗口一到达即录 3 秒（无按键）
+  updateWinSelector(true);
+  updateQcPanel(res);
+  updateDiagnosis(w);
+
+  view.render(data, res.info.peakIdx, meta.t0Index);
+  } catch (err) { log(`[DBG] onWindow 异常: ${err.message}\n${err.stack}`, "log-fail"); return; }
+
+  // 声音反馈
+  audio.init().then(() => {
+    const lat = audio.playImpact();
+    $("audioLat").textContent = lat != null ? lat.toFixed(1) + " ms" : "—";
+  });
+  if (isQcOk(res.code, meta)) {
+    const spd = estimateSpeed(data);
+    $("speedVal").textContent = spd.kmh.toFixed(0);
+    audio.speak(`${spd.kmh.toFixed(0)} 公里！${spd.comment}`);
+    $("ttsStat").textContent = "播报中";
+  } else {
+    $("ttsStat").textContent = "（未通过，不播报）";
+  }
+
+  $("winCount").textContent = (parseInt($("winCount").textContent) || 0) + 1;
+  $("reasmStat").textContent = parser.reasmStat;
+  const qkName = meta.quickClass === 1 ? "FRAME"
+                : meta.quickClass === 2 ? "FOREIGN"
+                : meta.quickClass === 0 ? "NORMAL" : "N/A";
+  log(`窗口 seq=${meta.seq} ${qcCodeText(res.code, meta)} 板判=${qkName} peak=${res.info.peakVal.toFixed(2)}g`,
+      isQcOk(res.code, meta) ? "log-pass" : "log-fail");
+}
+
+// ---------- 本次连接窗口选择器（回看含 FAIL 在内的任意窗口） ----------
+function hhmmss(d) {
+  const p = n => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function updateWinSelector(selectLatest) {
+  const sel = $("winSel");
+  sel.innerHTML = "";
+  sessionWindows.forEach((w, i) => {
+    const o = document.createElement("option");
+    o.value = i;
+    const qk = w.meta.quickClass === 1 ? "FRAME"
+             : w.meta.quickClass === 2 ? "FOREIGN"
+             : w.meta.quickClass === 0 ? "NORMAL" : "—";
+    o.textContent = `#${i + 1} ${hhmmss(w.meta.receivedAt)} seq=${w.meta.seq} ` +
+                    `${qcCodeText(w.qc.code, w.meta)} 板判=${qk} ${w.qc.info.peakVal.toFixed(1)}g` +
+                    (w.meta.note ? ` 🏷${w.meta.note}` : "");
+    sel.appendChild(o);
+  });
+  if (selectLatest) sel.value = sessionWindows.length - 1;
+  updateSessStat();
+}
+
+function updateSessStat() {
+  const n = sessionWindows.length;
+  const passN = sessionWindows.filter(w => isQcOk(w.qc.code, w.meta)).length;
+  const el = $("sessStat");
+  if (!n) { el.textContent = ""; return; }
+  el.textContent = `本次连接共 ${n} 个窗口（PASS ${passN}，其余 ${n - passN}）`;
+}
+
+// 选择历史窗口：重新载入图表 + QC 面板（currentWindow 同步切换，单窗口导出即导出所选）
+$("winSel").addEventListener("change", () => {
+  const i = parseInt($("winSel").value);
+  const w = sessionWindows[i];
+  if (!w) return;
+  currentWindow = w;
+  updateQcPanel(w.qc);
+  updateDiagnosis(w);
+  view.render(w.data, w.qc.info.peakIdx, w.meta.t0Index);
+  if (isQcOk(w.qc.code, w.meta)) {
+    const spd = estimateSpeed(w.data);
+    $("speedVal").textContent = spd.kmh.toFixed(0);
+  }
+});
+
+// 球速估算（碰撞物理模型，Brody/Cross）：
+//   1) 入射拍头速：取 T0 前 30ms 角速度峰 × 拍长 —— 不能取全窗峰，T0 瞬间球的
+//      冲量会使拍体角速度阶跃 +600~2000dps（实测 seq23 701→2695），那不是拍速
+//   2) 出球速 = 拍头速 × (1+e)/(1+m球/M拍) ≈ ×1.42：球在拍床上被弹性反弹，
+//      v_ball > v_racket；忽略来球速度（快对拉另加 10~20km/h，测不了不估）
+const SPEED_R_M         = 0.76;    // [B55] 有效挥拍半径 = 拍长 27in(0.685) + 旋转中心后移 ~7.5cm。
+                                   //   0.685→0.76（≈+11%）：2026-10-19 球场复核「球速大致准，再高 ~10km/h」
+const SPEED_PRE_WIN_N   = 48;      // 入射拍速取 T0 前 48 点 @960Hz ≈ 50ms
+const SPEED_LEAD_N      = 10;      // [B54] 排除 T0 前 ~10.4ms 接触区：碰撞给拍体的角速度阶跃/振铃
+                                   //   （实测 Gz 在 T0 前 8ms 反号剧烈振荡）会翻倍高估球速——
+                                   //   2026-10-19 seq8/9 取到 45.9/52.1 rad/s，恰好复现用户报的 170/193km/h
+const SPEED_COLLISION_K = 1.5;     // 2.0→1.5：2026-10-15 球场实测估值偏高30%+，除以1.33校正
+const SPEED_T0_BACKTRACK_MS = 20;  // 与固件 B51 同规则（固件 T0_HG_BACKTRACK_N=19×1.0417ms≈20ms）
+
+// 窗内样本相对名义 T0（idx186）的时间（ms）—— 按三段非均匀速率映射（契约 §4.4）
+function windowTimeMs(i) {
+  const r = PROTO.WINDOW.sampleRate;
+  if (i < PROTO.WINDOW.MICRO_START) return (-1148.5 + 8 * i) / r * 1000;             // 宏观前 120Hz
+  if (i <= PROTO.WINDOW.MICRO_END)  return (i - PROTO.WINDOW.T0_INDEX) / r * 1000;   // 微观 960Hz
+  return (165.5 + 8 * (i - 348)) / r * 1000;                                         // 宏观后 120Hz
+}
+
+// 实测 T0：与固件 relocateT0 同规则 —— 取高g合模长峰值，回追 20ms 取最大正向跃变（碰撞前沿）。
+// 用高g（Hx,Hy,Hz）而非低g：真实击球低g ±16g 削顶，跃变被削平会导致定位失真。
+function findT0Index(data) {
+  const hx = data[9], hy = data[10], hz = data[11];
+  const mag = i => Math.hypot(hx[i], hy[i], hz[i]);
+  const N = PROTO.WINDOW.samples;
+  let peakIdx = PROTO.WINDOW.T0_INDEX, peakM = -1;
+  for (let i = 0; i < N; i++) { const v = mag(i); if (v > peakM) { peakM = v; peakIdx = i; } }
+  const tPeak = windowTimeMs(peakIdx);
+  let t0 = peakIdx, bestJump = -Infinity;
+  for (let i = peakIdx; i >= 0 && (tPeak - windowTimeMs(i)) <= SPEED_T0_BACKTRACK_MS; i--) {
+    if (i > 0) { const j = mag(i) - mag(i - 1); if (j > bestJump) { bestJump = j; t0 = i; } }
+  }
+  return t0;
+}
+
+function estimateSpeed(data) {
+  const gx = data[3], gy = data[4], gz = data[5];
+  const t0 = findT0Index(data);   // 实测真实触球点（固件 B51 已按同规则对齐 idx186）
+  // 入射拍速峰：T0 前 ~50ms(48点) .. T0-SPEED_LEAD_N（整段排除接触区，避开碰撞阶跃/振铃），
+  // 下限夹到微观段起点
+  let wPeak = 0;
+  const lo = Math.max(PROTO.WINDOW.MICRO_START, t0 - SPEED_PRE_WIN_N);
+  const hi = t0 - SPEED_LEAD_N;
+  for (let i = lo; i <= hi && i >= 0; i++) {
+    const w = Math.hypot(gx[i], gy[i], gz[i]);
+    if (w > wPeak) wPeak = w;
+  }
+  const ballSpeedKmh = wPeak * SPEED_R_M * 3.6 * SPEED_COLLISION_K;
+  let comment = "引拍非常及时！";
+  if (ballSpeedKmh < 45) comment = "发力稍弱，继续加速！";
+  else if (ballSpeedKmh > 100) comment = "暴力击球，注意控制落点！";
+  return { kmh: ballSpeedKmh, comment, t0 };
+}
+
+// =====================================================================
+// 3.6 动作诊断（引拍 / 随挥）—— 与 tools/followthrough_rule_check.py 1:1
+// =====================================================================
+// 只用陀螺角量，与传感器安装朝向无关（重力方向由前窗逐轴中位数估计）。
+// 引拍：固定窗 [T0−600, T0−200]ms
+//       tb_score = min(转角/95°, 平均角速度/240dps)
+//       判定：≥0.93 有 / 0.83~0.93 不确定 / <0.83 无（门限 0.88，2026-10-24 由 196 窗重标定）
+// 随挥：[T0+40, T0+400]ms（跳过碰撞瞬态），角速度矢量积分 R 按重力方向分解：
+//       perp = 垂直于重力的模长（拍头由下往上）；par = 沿重力轴的有符号分量（绕过身体）
+//       post_total = hypot(perp, |par|)  ÷100° → ≥1.05 完整 / 0.95~1.05 不确定 / <0.95 不足
+// 注：keep / keep200 / brake50 只作诊断，不参与判决（实测会把完整随挥误杀）。
+const DIAG = {
+  RAD2DEG: 180 / Math.PI,
+  FT_LO_MS: 40, FT_HI_MS: 400, FT_TOTAL_DEG: 100,   // 随挥窗与几何总转角门限（度）
+  TB_LO_MS: -600, TB_HI_MS: -200,                    // 引拍窗（ms，相对实测 T0）
+  TB_ARC_DEG: 95, TB_MEAN_DPS: 240,                  // 引拍转角 / 平均角速度归一（score=1 的基准）
+  TB_SCORE_THR: 0.88,                                // 引拍门限（与 Python TB_SCORE_THR 同值）
+  FT_SCORE_THR: 1.00,                                // 随挥门限（等价几何总转角 100°）
+  BAND: 0.05,                                        // 三态「不确定」带半宽（与 Python BAND 同值）
+  GYRO_ALIVE_DPS: 1.0,                               // 全窗陀螺最大模长低于此值 → 无陀螺数据
+};
+
+// 与 Python ia._quantile 同口径（线性插值分位数；偶数样本取中间两点插值）
+function diagQuantile(vals, q) {
+  const xs = vals.slice().sort((a, b) => a - b);
+  if (!xs.length) return NaN;
+  if (xs.length === 1) return xs[0];
+  const pos = (xs.length - 1) * q;
+  const lo = Math.floor(pos), hi = Math.ceil(pos);
+  return xs[lo] + (xs[hi] - xs[lo]) * (pos - lo);
+}
+
+function diagTau(i, t0) { return windowTimeMs(i) - windowTimeMs(t0); }
+function diagOmegaDps(data, i) {
+  const k = DIAG.RAD2DEG;
+  return [data[3][i] * k, data[4][i] * k, data[5][i] * k];
+}
+function diagOmegaMag(data, i) {
+  return Math.hypot(data[3][i], data[4][i], data[5][i]) * DIAG.RAD2DEG;
+}
+function diagSegIds(t0, lo, hi) {
+  const out = [];
+  for (let i = 0; i < PROTO.WINDOW.samples; i++) {
+    const t = diagTau(i, t0);
+    if (t >= lo && t <= hi) out.push(i);
+  }
+  return out;
+}
+// 重力方向：宏观前段（idx 0..min(t0,MICRO_START)）逐轴中位数 → 单位矢量
+function diagGravityHat(data, t0) {
+  const n = Math.min(t0, PROTO.WINDOW.MICRO_START);
+  if (n < 8) return { gh: [0, 0, 1], ok: false };
+  const m = [];
+  for (let c = 0; c < 3; c++) {
+    const vals = [];
+    for (let i = 0; i < n; i++) vals.push(data[c][i]);
+    m.push(diagQuantile(vals, 0.5));
+  }
+  const mag = Math.hypot(m[0], m[1], m[2]);
+  if (mag < 1e-6) return { gh: [0, 0, 1], ok: false };
+  return { gh: [m[0] / mag, m[1] / mag, m[2] / mag], ok: mag >= 0.75 && mag <= 1.30 };
+}
+// 角速度矢量在给定索引序列上的梯形积分（deg，传感器坐标系）
+function diagRotVecIds(data, t0, ids) {
+  const R = [0, 0, 0];
+  for (let a = 0; a < ids.length - 1; a++) {
+    const i = ids[a], j = ids[a + 1];
+    const dt = (diagTau(j, t0) - diagTau(i, t0)) / 1000;
+    const oa = diagOmegaDps(data, i), ob = diagOmegaDps(data, j);
+    for (let k = 0; k < 3; k++) R[k] += 0.5 * (oa[k] + ob[k]) * dt;
+  }
+  return R;
+}
+// 按重力分解：(垂直于重力的模长, 沿重力轴的有符号分量)
+function diagDecompose(R, gh) {
+  const par = R[0] * gh[0] + R[1] * gh[1] + R[2] * gh[2];
+  const perp = Math.sqrt(Math.max(0, R[0] * R[0] + R[1] * R[1] + R[2] * R[2] - par * par));
+  return { perp, par };
+}
+// 转角（|ω| 的梯形积分，deg）
+function diagArc(data, t0, ids) {
+  if (ids.length < 2) return NaN;
+  let s = 0;
+  for (let a = 0; a < ids.length - 1; a++) {
+    const i = ids[a], j = ids[a + 1];
+    s += 0.5 * (diagOmegaMag(data, i) + diagOmegaMag(data, j)) *
+         ((diagTau(j, t0) - diagTau(i, t0)) / 1000);
+  }
+  return s;
+}
+
+function diagnoseSwing(data, t0) {
+  // 陀螺通道全零（Step1 桥接只送加速度）→ 判据无意义
+  let gyroMax = 0;
+  for (let i = 0; i < PROTO.WINDOW.samples; i++) {
+    const v = diagOmegaMag(data, i);
+    if (v > gyroMax) gyroMax = v;
+  }
+  if (!(gyroMax >= DIAG.GYRO_ALIVE_DPS)) return { alive: false };
+
+  const grav = diagGravityHat(data, t0);
+
+  const tbIds = diagSegIds(t0, DIAG.TB_LO_MS, DIAG.TB_HI_MS);
+  const tbArc = diagArc(data, t0, tbIds);
+  let tbMean = NaN;
+  if (tbIds.length) {
+    let s = 0;
+    for (const i of tbIds) s += diagOmegaMag(data, i);
+    tbMean = s / tbIds.length;
+  }
+  const tbScore = Number.isNaN(tbMean) ? 0
+                  : Math.min(tbArc / DIAG.TB_ARC_DEG, tbMean / DIAG.TB_MEAN_DPS);
+
+  const postIds = diagSegIds(t0, DIAG.FT_LO_MS, DIAG.FT_HI_MS);
+  const R = diagRotVecIds(data, t0, postIds);
+  const d = diagDecompose(R, grav.gh);
+  const postTotal = Math.hypot(d.perp, Math.abs(d.par));
+  const ftScore = postTotal / DIAG.FT_TOTAL_DEG;
+
+  return {
+    alive: true, gravOk: grav.ok,
+    tbArc, tbMean, tbScore,
+    tbVerdict: tbScore >= DIAG.TB_SCORE_THR + DIAG.BAND ? "有"
+               : (tbScore >= DIAG.TB_SCORE_THR - DIAG.BAND ? "不确定" : "无"),
+    postTotal, ftScore, perp: d.perp, par: d.par,
+    ftVerdict: ftScore >= DIAG.FT_SCORE_THR + DIAG.BAND ? "完整"
+               : (ftScore >= DIAG.FT_SCORE_THR - DIAG.BAND ? "不确定" : "不足"),
+  };
+}
+
+const VERDICT_CLS = { "有": "pass", "完整": "pass", "不确定": "warn", "无": "fail", "不足": "fail" };
+
+function updateDiagnosis(w) {
+  const tbEl = $("diagBack"), ftEl = $("diagFollow");
+  const tbNum = $("diagBackNum"), ftNum = $("diagFollowNum"), tipEl = $("diagTip");
+  const idle = (txt) => {
+    tbEl.innerHTML = `<span class="badge idle">—</span>`;
+    ftEl.innerHTML = `<span class="badge idle">—</span>`;
+    tbNum.textContent = "—"; ftNum.textContent = "—";
+    tipEl.textContent = txt; tipEl.style.color = "";
+  };
+  if (!w) { idle("—"); return; }
+  // 无效窗口（丢包/拍框/异物/无冲击等）不做动作诊断
+  if (!isQcOk(w.qc.code, w.meta)) { idle("（非有效击球窗，不做动作诊断）"); return; }
+
+  const t0 = w.meta.t0Index != null ? w.meta.t0Index : findT0Index(w.data);
+  const d = diagnoseSwing(w.data, t0);
+  w.diag = d;
+  if (!d.alive) { idle("（本窗无陀螺数据，无法诊断引拍/随挥）"); return; }
+
+  tbEl.innerHTML = `<span class="badge ${VERDICT_CLS[d.tbVerdict]}">${d.tbVerdict}</span>`;
+  ftEl.innerHTML = `<span class="badge ${VERDICT_CLS[d.ftVerdict]}">${d.ftVerdict}</span>`;
+  tbNum.textContent = `score ${d.tbScore.toFixed(2)} · ${d.tbArc.toFixed(0)}° / ${d.tbMean.toFixed(0)}dps`;
+  ftNum.textContent = `score ${d.ftScore.toFixed(2)} · ${d.postTotal.toFixed(0)}°`;
+
+  // 一次只报最严重一项：引拍缺失是根本原因，此时不重复报随挥不足
+  let tip, col = "";
+  if (d.tbVerdict === "无") { tip = "引拍不足：球拍没有充分向后拉开，先解决引拍"; col = "var(--fail)"; }
+  else if (d.ftVerdict === "不足") { tip = "随挥不足：触球后没有把球拍送完整"; col = "var(--fail)"; }
+  else if (d.tbVerdict === "不确定" || d.ftVerdict === "不确定") {
+    tip = "动作幅度落在门限附近，本球不下结论"; col = "var(--warn)";
+  } else { tip = "引拍与随挥都在合格区间"; col = "var(--pass)"; }
+  tipEl.textContent = tip;
+  tipEl.style.color = col;
+}
+
+function updateQcPanel(res) {
+  const badge = (code, meta) => {
+    if (isQcOk(code, meta)) return `<span class="badge pass">PASS</span>`;
+    if (code === QC.FAIL_PACKET_LOSS) return `<span class="badge fail">丢包</span>`;
+    if (code === QC.FAIL_FRAME_HIT) return `<span class="badge fail">拍框球</span>`;
+    if (code === QC.FAIL_FOREIGN_IMPACT) return `<span class="badge warn">异物/轻敲</span>`;
+    if (code === QC.FAIL_NO_IMPACT) return `<span class="badge warn">无冲击</span>`;
+    if (code === QC.FAIL_SPIKE_NOISE) return `<span class="badge fail">Spike</span>`;
+    if (code === QC.FAIL_SATURATION) return `<span class="badge fail">饱和</span>`;
+    if (code === QC.FAIL_GYRO_SAT) return `<span class="badge fail">陀螺饱和</span>`;
+    return `<span class="badge idle">${code}</span>`;
+  };
+  $("qcResult").innerHTML = badge(res.code, currentWindow && currentWindow.meta);
+
+  // 板上判决（固件 quickAnalyzeImpact 原始结果，独立于 App 最终判定）
+  const qk = currentWindow ? currentWindow.meta.quickClass : null;
+  $("qcQuick").innerHTML =
+    qk === 1 ? `<span class="badge fail">FRAME_HIT</span>` :
+    qk === 2 ? `<span class="badge warn">FOREIGN_IMPACT</span>` :
+    qk === 0 ? `<span class="badge pass">NORMAL_HIT</span>` : "—";
+  // 击球/旋转类型：Step4 flags v2 已把 stroke/spin 移交 AI（固件不再下发），无值则标「—（AI）」
+  const st = currentWindow ? currentWindow.meta.strokeType : null;
+  const sp = currentWindow ? currentWindow.meta.spinType : null;
+  $("qcStroke").innerHTML = st != null
+    ? `<span class="badge pass">${["正手","反手","发球","截击"][st]}</span>`
+    : `<span class="badge idle">—（AI）</span>`;
+  $("qcSpin").innerHTML = sp != null
+    ? `<span class="badge pass">${["平击","上旋","下旋","侧旋"][sp]}</span>`
+    : `<span class="badge idle">—（AI）</span>`;
+  // 页1 核心信息卡：正反手 / 上下旋（单一来源，每次窗口到达与回看切换都刷新）
+  // Step4 固件 flags v2 起不再下发该判定（已移交 AI），无值时显式标注「—（AI）」
+  const p1 = $("p1StrokeSpin");
+  if (p1) p1.textContent = (st != null && sp != null)
+    ? `${["正手","反手","发球","截击"][st]} · ${["平击","上旋","下旋","侧旋"][sp]}`
+    : "—（AI）";
+  $("qcSeq").textContent = res.code === QC.FAIL_PACKET_LOSS ? "断层" : "连续";
+  $("qcPeak").textContent = res.info.peakVal.toFixed(3) + " g";
+  // T0 偏移 = 实测 T0 − 名义 186（ms）。 >0 表示窗口仍前移（固件未对齐）；|偏移|≤10ms 视为对齐成功。
+  const t0i = currentWindow ? currentWindow.meta.t0Index : null;
+  const t0offEl = $("t0off");
+  if (t0i != null) {
+    const off = windowTimeMs(t0i);
+    const ok = Math.abs(off) <= 10;
+    const col = ok ? "var(--pass)" : "var(--fail)";
+    $("qcT0").textContent = `${off >= 0 ? "+" : ""}${off.toFixed(0)}ms（实测 #${t0i}）${ok ? "✓ 对齐" : "✗ 偏移"}`;
+    $("qcT0").style.color = col;
+    if (t0offEl) { t0offEl.textContent = `T0 偏移 ${off >= 0 ? "+" : ""}${off.toFixed(0)}ms ${ok ? "✓" : "✗"}`; t0offEl.style.color = col; }
+  } else {
+    $("qcT0").textContent = "—"; $("qcT0").style.color = "";
+    if (t0offEl) { t0offEl.textContent = "T0 偏移 —"; t0offEl.style.color = ""; }
+  }
+  $("qcSpike").textContent = res.info.maxJump != null
+    ? (res.code === QC.FAIL_SPIKE_NOISE ? "FAIL " : "") +
+      res.info.maxJump.toFixed(2) + "g / 阈" +
+      (res.info.spikeThr != null ? res.info.spikeThr.toFixed(1) : "3.0") +
+      (res.info.spikeCount != null ? " ×" + res.info.spikeCount : "")
+    : "—";
+  const axisName = ["X", "Y", "Z"];
+  const satFail = res.code === QC.FAIL_SATURATION || res.code === QC.FAIL_GYRO_SAT;
+  const goodClip = isGoodClip(res.code, currentWindow && currentWindow.meta);
+  if (res.info.accSatRun != null) {
+    let txt = "";
+    if (res.info.accSatRun >= 3) txt += `加速度${axisName[res.info.satAxis]}轴 连${res.info.accSatRun}点`;
+    if (res.info.gyroSatRun >= 3) txt += (txt ? "；" : "") + `陀螺${axisName[res.info.satAxis]}轴 连${res.info.gyroSatRun}点`;
+    $("qcSat").textContent = txt
+      ? (goodClip ? "低g削顶(不影响好球判定)：" : (satFail ? "FAIL " : "")) + txt
+      : "无削顶";
+  } else {
+    $("qcSat").textContent = "—";
+  }
+  $("qcPassRate").textContent = res.passRate.toFixed(1) + "%";
+  $("qcHw").innerHTML = res.hwOk
+    ? `<span class="badge pass">合格 ≥98%</span>`
+    : `<span class="badge warn">${res.passRate.toFixed(0)}%</span>`;
+}
+
+// ---------- Web Bluetooth 连接（冲击窗口协议） ----------
+async function connectImpact() {
+  if (!navigator.bluetooth) { log("当前浏览器不支持 Web Bluetooth，请用 Chrome/Edge", "log-fail"); return; }
+  // 防多连接堆叠：旧连接未断开时再点连接，会产生多条并存 GATT 链路，
+  // 每条通知被同一 parser 消费 N 次 => 每个窗口被重复交付（2026-10-09 会话 39=13x3 实测）
+  if (btDevice && btDevice.gatt && btDevice.gatt.connected) {
+    log("设备仍在连接中，请先点【断开】再重新连接", "log-warn");
+    return;
+  }
+  try {
+    btDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: PROTO.IMPACT.namePrefix }],
+      optionalServices: [PROTO.IMPACT.serviceUUID],
+    });
+    btDevice.addEventListener("gattserverdisconnected", onDisconnect);
+    // 连接重试：链路刚释放时首次 connect 仍可能被 Chrome 拒绝，退避后重试 2 次
+    for (let attempt = 0; ; attempt++) {
+      try { btServer = await btDevice.gatt.connect(); break; }
+      catch (err) {
+        if (attempt >= 2) throw err;
+        log(`连接重试 ${attempt + 1}/3 …`, "log-warn");
+        await new Promise(r => setTimeout(r, 700));
+      }
+    }
+    const svc = await btServer.getPrimaryService(PROTO.IMPACT.serviceUUID);
+    btChar = await svc.getCharacteristic(PROTO.IMPACT.charUUID);
+    // 先监听后订阅（经验教训）
+    let _dbgChunks = 0;
+    btChar.addEventListener("characteristicvaluechanged", e => {
+      try {
+        const dv = e.target.value;
+        const buf = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+        parser.handleChunk(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+      } catch (err) {
+        log(`[DBG] 处理通知异常: ${err.message}`, "log-fail");
+      }
+    });
+    await btChar.startNotifications();
+    setConn("已连接", "pass");
+    $("devName").textContent = btDevice.name;
+    $("t0off").textContent = "T0 偏移 —"; $("t0off").style.color = "";
+    $("devMode").textContent = "冲击窗口协议";
+    $("devMtu").textContent = "BLE 5.3 DLE";
+    log(`已连接 ${btDevice.name}，监听 0x19B10001`, "log-pass");
+  } catch (e) {
+    log("连接失败: " + e.message, "log-fail");
+    setConn("连接失败", "fail");
+  }
+}
+
+// ---------- Step1 桥接：XIAO-IMU-416 实时 62B 流 ----------
+async function connectStep1() {
+  if (!navigator.bluetooth) { log("当前浏览器不支持 Web Bluetooth", "log-fail"); return; }
+  try {
+    btDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ name: PROTO.STEP1.deviceName }],
+      optionalServices: [PROTO.STEP1.serviceUUID],
+    });
+    btDevice.addEventListener("gattserverdisconnected", onDisconnect);
+    btServer = await btDevice.gatt.connect();
+    const svc = await btServer.getPrimaryService(PROTO.STEP1.serviceUUID);
+    btChar = await svc.getCharacteristic(PROTO.STEP1.charUUID);
+    step1Samples = [];
+    btChar.addEventListener("characteristicvaluechanged", e => handleStep1Pkt(e.target.value.buffer));
+    await btChar.startNotifications();
+    setConn("已连接", "pass");
+    $("devName").textContent = btDevice.name;
+    $("t0off").textContent = "T0 偏移 —"; $("t0off").style.color = "";
+    $("devMode").textContent = "Step1 实时流桥接";
+    $("devMtu").textContent = "62B/pkt ~83Hz";
+    log(`已连接 ${btDevice.name}，将 3 轴流重组为 12x396 窗口`, "log-pass");
+  } catch (e) {
+    log("连接失败: " + e.message, "log-fail");
+    setConn("连接失败", "fail");
+  }
+}
+
+function handleStep1Pkt(buf) {
+  const dv = new DataView(buf);
+  const seq = dv.getUint16(0, true);
+  // 5 个采样点 × 3 轴 float
+  for (let s = 0; s < 5; s++) {
+    const off = 2 + s * 12;
+    const ax = dv.getFloat32(off, true);
+    const ay = dv.getFloat32(off + 4, true);
+    const az = dv.getFloat32(off + 8, true);
+    step1Samples.push([ax, ay, az, 0, 0, 0, 0, 0, 0, 0, 0, 0]); // gyro/attitude/hg 置 0
+  }
+  // 凑满 396 样本 → 交付一个窗口（Step1 是 416Hz，396 样本≈0.95s）
+  if (step1Samples.length >= PROTO.WINDOW.samples) {
+    const data = [];
+    for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) data.push(new Float32Array(PROTO.WINDOW.samples));
+    for (let i = 0; i < PROTO.WINDOW.samples; i++)
+      for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) data[ch][i] = step1Samples[i][ch];
+    step1Samples = step1Samples.slice(PROTO.WINDOW.samples); // 滑动窗口
+    onWindow({ seq, timestamp: Date.now(), source: "step1" }, data);
+  }
+}
+
+// ---------- Mock 连接 ----------
+function connectMock() {
+  mockDev = new MockDevice(chunk => parser.handleChunk(chunk));
+  mockDev.start();
+  setConn("已连接(Mock)", "pass");
+  $("devName").textContent = "Mock Impact Generator";
+  $("t0off").textContent = "T0 偏移 —"; $("t0off").style.color = "";
+  $("devMode").textContent = "合成冲击数据";
+  $("devMtu").textContent = "模拟分片 232B";
+  log("Mock 设备已启动，每 1.2~2.5s 产生一次冲击窗口", "log-info");
+}
+
+function onDisconnect(e) {
+  // 只处理"当前设备"的断开：旧连接迟到的 gattserverdisconnected 会误拆掉新建立的连接
+  if (e && e.target && e.target !== btDevice) return;
+  setConn("已断开", "warn");
+  log("设备已断开", "log-warn");
+  cleanupBt();
+}
+// 断开必须"等链路真正释放"再允许重连：Chrome 的 GATT 释放是异步的，JS 变量置 null 后
+// 底层旧链路仍在拆。此时立刻 gatt.connect() 会撞上正在消失的旧链路 → 失败一次；
+// 下一次因为已经等够了拆链时间 → 又成功，形成"失败一次/成功一次"交替（实测确认）。
+// 刷新浏览器之所以每次必成，正是因为刷新后 Chrome 释放了全部陈旧 GATT 引用。
+// 另一个后果：陈旧特征值引用会让 startNotifications() 静默不生效 → 固件侧收不到 CCCD
+// 订阅 → g_cccdOn=false → 固件把窗口整窗丢弃(SKIP) → App 永远看不到波形。
+let cleaningUp = null;   // 幂等清理：重复调用复用同一次等待
+function cleanupBt() {
+  if (cleaningUp) return cleaningUp;
+  const chr = btChar, dev = btDevice;
+  btChar = null; btServer = null; btDevice = null;
+  if (mockDev) { mockDev.stop(); mockDev = null; }
+  parser.reset();
+  if (!chr && !dev) return Promise.resolve();
+  cleaningUp = (async () => {
+    if (chr) { try { chr.stopNotifications(); } catch(e){} }   // 不 await：避免陈旧引用把清理挂死
+    try {
+      if (dev && dev.gatt && dev.gatt.connected) {
+        await new Promise(res => {
+          let done = false;
+          const fin = () => { if (!done) { done = true; clearTimeout(t); res(); } };
+          const t = setTimeout(fin, 2000);   // 兜底 2s
+          dev.addEventListener("gattserverdisconnected", fin, { once: true });
+          dev.gatt.disconnect();
+        });
+      }
+    } catch(e){}
+    await new Promise(r => setTimeout(r, 1500));   // 链路释放后的稳定延迟(Windows 蓝牙栈释放更慢)
+  })().finally(() => { cleaningUp = null; });
+  return cleaningUp;
+}
+
+// ---------- 按钮绑定 ----------
+$("connectBtn").addEventListener("click", async () => {
+  const mode = $("modeSel").value;
+  // 必须等旧链路真正释放（cleanupBt 现在返回 Promise）再发起新连接，
+  // 否则会撞上正在拆的旧 GATT 链路 → "一次失败一次成功"交替
+  await cleanupBt();
+  parser.reset();
+  // 新连接：清空上一次连接的全部窗口，重新累积本次会话
+  sessionWindows = [];
+  sessionStartTs = Date.now();
+  currentWindow = null;
+  updateWinSelector(false);
+  updateDiagnosis(null);
+  if (mode === "mock") connectMock();
+  else if (mode === "impact") connectImpact();
+  else if (mode === "step1") connectStep1();
+});
+$("disconnectBtn").addEventListener("click", () => {
+  cleanupBt();
+  setConn("未连接", "idle");
+});
+$("modeSel").addEventListener("change", () => cleanupBt());
+
+// ---------- 打标与导出 ----------
+function getLabeledMatrix(label) {
+  if (!currentWindow) { log("暂无窗口数据可打标", "log-warn"); return null; }
+  const m = currentWindow;
+  return {
+    label,
+    seq: m.meta.seq,
+    timestamp: m.meta.timestamp,
+    source: m.meta.source,
+    qc: m.qc.code,
+    quick_class: m.meta.quickClass,                              // 0/1/2/null
+    impact_type: m.meta.quickClass != null
+                 ? ["NORMAL_HIT", "FRAME_HIT", "FOREIGN_IMPACT"][m.meta.quickClass]
+                 : null,                                         // 固件刚体判决
+    stroke_type: m.meta.quickClass === 0 && m.meta.strokeType != null
+                 ? ["FOREHAND", "BACKHAND", "SERVE", "VOLLEY"][m.meta.strokeType] : null,
+    spin_type: m.meta.quickClass === 0 && m.meta.spinType != null
+                 ? ["FLAT", "TOPSPIN", "BACKSPIN", "SIDESPIN"][m.meta.spinType] : null,
+    peak_g: m.qc.info.peakVal,
+    note: m.meta.note || "",
+    sampleRate: PROTO.WINDOW.sampleRate,
+    channels: ["Ax","Ay","Az","Gx","Gy","Gz","Roll","Pitch","Yaw","Hx","Hy","Hz"],
+    matrix: m.data.map(col => Array.from(col)), // 12x396
+  };
+}
+
+$("labelPassBtn").addEventListener("click", () => {
+  const obj = getLabeledMatrix("good");
+  if (obj) { currentWindow.meta.note = "合格"; labeledCount++; log(`已打标【合格】 seq=${obj.seq} (#${labeledCount})`, "log-pass"); updateWinSelector(false); }
+});
+$("labelFailBtn").addEventListener("click", () => {
+  const obj = getLabeledMatrix("bad");
+  if (obj) { currentWindow.meta.note = "废球"; labeledCount++; log(`已打标【废球】 seq=${obj.seq} (#${labeledCount})`, "log-fail"); updateWinSelector(false); }
+});
+$("labelNoteBtn").addEventListener("click", () => {
+  if (!currentWindow) { log("暂无窗口数据可打标", "log-warn"); return; }
+  const note = prompt("输入打标信息（如：75km/h 正手发力）", currentWindow.meta.note || "");
+  if (note !== null) {
+    currentWindow.meta.note = note.trim();
+    labeledCount++;
+    log(`已打标「${note}」 seq=${currentWindow.meta.seq} (#${labeledCount})`, "log-info");
+    updateWinSelector(false);
+  }
+});
+
+// ---------- 预设打标 chips（批量采集；note 受控词表见契约 §4.8） ----------
+// 格式：击球 <正反手>-<旋转>-<真值球速>-<击球点>[-<技术缺陷>]，例 FH-TOP-85-SWEET / FH-FLAT-60-FRAME-LATE；
+// 技术缺陷 LATE/MIN/NFT **可空、可多选**（MIN 与 NFT 正交，可同时成立 → MIN-NFT；未选则只拼 4 段）；
+// 非击球 TAP/SOFT/DROP/BOUNCE/WARMUP 单独成词。选择持久保留，便于连续同类球快速打标。
+// 力度**不标注**（2026-10-24 定）：人工三档无客观锚点、易漂移，且终局目标是跨力度不变识别——
+// 只在采集时"每个条件内混打轻中重"，事后用客观 peak|ω| 分层核验（见契约 §11.8）。
+const lblSel = { stroke: "", spin: "", spot: "", defect: "" };
+const NON_HIT = ["TAP", "SOFT", "DROP", "BOUNCE", "WARMUP"];
+const DEFECT_ORDER = ["LATE", "MIN", "NFT"];               // 第 5 段按固定顺序拼接
+function toggleDefect(v) {
+  const cur = lblSel.defect ? lblSel.defect.split("-") : [];
+  const i = cur.indexOf(v);
+  if (i >= 0) cur.splice(i, 1); else cur.push(v);
+  lblSel.defect = DEFECT_ORDER.filter(t => cur.includes(t)).join("-");
+}
+function composeNote() {
+  const s = lblSel.stroke;
+  if (!s) return "";
+  if (NON_HIT.includes(s)) return s;                        // 非击球：只写类别
+  const v = ($("labelSpeed").value || "").trim();
+  const seg = [s, lblSel.spin || "?", v || "?", lblSel.spot || "?"];
+  if (lblSel.defect) seg.push(lblSel.defect);               // 技术缺陷可空
+  return seg.join("-");
+}
+function refreshLabelUI() {
+  document.querySelectorAll(".chip[data-k]").forEach(b => {
+    const on = b.dataset.k === "defect"
+      ? lblSel.defect.split("-").includes(b.dataset.v)
+      : lblSel[b.dataset.k] === b.dataset.v;
+    b.classList.toggle("on", on);
+  });
+  const t = composeNote();
+  $("labelPreview").textContent = "打标预览：" + (t || "（未选）");
+}
+document.querySelectorAll(".chip[data-k]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const k = btn.dataset.k, v = btn.dataset.v;
+    if (k === "defect") toggleDefect(v);
+    else lblSel[k] = (lblSel[k] === v) ? "" : v;            // 再点一次取消
+    // 击球与非击球互斥：选了非击球则清掉旋转/击球点
+    if (k === "stroke" && NON_HIT.includes(lblSel.stroke)) { lblSel.spin = ""; lblSel.spot = ""; lblSel.defect = ""; }
+    refreshLabelUI();
+  });
+});
+$("labelSpeed").addEventListener("input", refreshLabelUI);
+$("labelClearBtn").addEventListener("click", () => {
+  lblSel.stroke = ""; lblSel.spin = ""; lblSel.spot = ""; lblSel.defect = ""; $("labelSpeed").value = "";
+  refreshLabelUI();
+});
+$("labelApplyBtn").addEventListener("click", () => {
+  if (!currentWindow) { log("暂无窗口数据可打标", "log-warn"); return; }
+  const note = composeNote();
+  if (!note) { log("请先选择标签（击球 或 非击球）", "log-warn"); return; }
+  currentWindow.meta.note = note;
+  labeledCount++;
+  log(`已打标「${note}」 seq=${currentWindow.meta.seq} (#${labeledCount})`, "log-pass");
+  updateWinSelector(false);
+});
+refreshLabelUI();
+
+// ---------- 语音标注（录音版，不做 ASR） ----------
+// 教练每球说完一句即录一段；App 只存「音频 + 窗口锚点 + 时间」，
+// 课后导出 ZIP（clips/*.webm + voice_labels.csv），转写后按 (file, seq) 回填 note。
+const VOICE_DB = "nt_voice_v1", VOICE_STORE = "clips";
+const VOICE_MAX_MS = 3000;                 // 单段上限（说完不必再点）
+
+function sessionTag() {
+  const p = n => String(n).padStart(2, "0");
+  const d = new Date(sessionStartTs || Date.now());
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_` +
+         `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+function idbOpen() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(VOICE_DB, 1);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      if (!db.objectStoreNames.contains(VOICE_STORE)) {
+        db.createObjectStore(VOICE_STORE, { keyPath: "id", autoIncrement: true })
+          .createIndex("sess", "sessionTag", { unique: false });
+      }
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbAdd(rec) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const rq = db.transaction(VOICE_STORE, "readwrite").objectStore(VOICE_STORE).add(rec);
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error);
+  });
+}
+async function idbAll() {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const rq = db.transaction(VOICE_STORE, "readonly").objectStore(VOICE_STORE).getAll();
+    rq.onsuccess = () => res((rq.result || []).sort((a, b) => a.id - b.id));
+    rq.onerror = () => rej(rq.error);
+  });
+}
+async function idbDel(id) {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const rq = db.transaction(VOICE_STORE, "readwrite").objectStore(VOICE_STORE).delete(id);
+    rq.onsuccess = () => res();
+    rq.onerror = () => rej(rq.error);
+  });
+}
+
+let voiceRec = null, voiceChunks = [], voiceTimer = null;
+let voiceStart = 0, voiceTarget = null, voiceLastId = null, voiceBusy = false;
+let voiceAuto = localStorage.getItem("nt_voice_auto") === "1";
+let voiceDevId = localStorage.getItem("nt_voice_dev") || "";
+let voiceMissed = 0, voiceLastStart = 0, wakeLock = null, voiceMicError = false;
+let voiceMicReason = "";
+let voiceLastFailKey = "";
+
+async function voiceUpdateStat() {
+  try {
+    const all = await idbAll();
+    const cur = all.filter(r => r.sessionTag === sessionTag()).length;
+    const base = all.length ? `已存 ${all.length} 条（本次 ${cur}）` : "就绪";
+    const st = $("voiceStat");
+    st.classList.toggle("err", voiceMicError);
+    st.textContent = base
+      + (voiceMicError ? `｜麦克风未就绪${voiceMicReason ? "：" + voiceMicReason : ""}` : "")
+      + (voiceMissed ? `｜漏录 ${voiceMissed}` : "");
+  } catch (e) {
+    $("voiceStat").textContent = "存储不可用";
+  }
+}
+
+// 列出声卡（授权后才拿得到 label，所以首次录音后再刷新）
+async function voiceListDevices() {
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices())
+      .filter(d => d.kind === "audioinput");
+    const sel = $("voiceDevSel");
+    sel.innerHTML = `<option value="">麦克风：默认</option>` + devs.map((d, i) =>
+      `<option value="${d.deviceId}">${d.label || ("输入设备 " + (i + 1))}</option>`).join("");
+    sel.value = devs.some(d => d.deviceId === voiceDevId) ? voiceDevId : "";
+  } catch (e) { /* 忽略 */ }
+}
+
+async function voiceWakeLock(on) {
+  if (!("wakeLock" in navigator)) return;
+  try {
+    if (on && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } else if (!on && wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  } catch (e) { /* 不支持就忽略 */ }
+}
+
+// 开启自动录音前先拿一次麦克风权限：否则第一球到达时才弹授权框，会漏掉这句
+async function voicePrimeMic() {
+  const baseAudio = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({
+      audio: voiceDevId ? Object.assign({ deviceId: { exact: voiceDevId } }, baseAudio) : baseAudio
+    });
+    s.getTracks().forEach(t => t.stop());
+    voiceMicError = false;
+    voiceMicReason = "";
+    await voiceListDevices();
+    await voiceUpdateStat();
+    log("麦克风已就绪", "log-info");
+  } catch (e) {
+    paintVoiceAuto();
+    await voiceMarkFail(e);
+    log("点「检测麦克风」可重试", "log-warn");
+  }
+}
+
+// 麦克风环境快照：排查 NotAllowedError 时直接看这一行
+async function voiceEnvReport() {
+  const p = [];
+  p.push(`协议=${location.protocol.replace(":", "")}`);
+  p.push(`secure=${window.isSecureContext ? "是" : "否"}`);
+  p.push(`接口=${navigator.mediaDevices ? "有" : "无"}`);
+  p.push(`webview=${/(;\s*wv\)|Version\/4\.0)/.test(navigator.userAgent) ? "是" : "否"}`);
+  p.push(`iframe=${window.top !== window.self ? "是" : "否"}`);
+  try {
+    const st = await navigator.permissions.query({ name: "microphone" });
+    p.push(`权限=${st.state}`);
+  } catch (e) { p.push("权限=未知"); }
+  return p.join("，");
+}
+
+async function voiceMarkFail(e) {
+  voiceMicError = true;
+  voiceMicReason = `${(e && e.name) || "Error"}${(e && e.message) ? "：" + e.message : ""}`;
+  await voiceUpdateStat();
+  if (voiceMicReason === voiceLastFailKey) return;   // 同因只详报一次，避免每球刷屏
+  voiceLastFailKey = voiceMicReason;
+  let hint = "";
+  if (!window.isSecureContext) {
+    hint = "当前地址不是 https，浏览器会直接拒绝麦克风（换成 https 地址）";
+  } else if (window.top !== window.self) {
+    hint = "页面在 iframe 里，需外层容器允许麦克风权限";
+  } else if (/(;\s*wv\)|Version\/4\.0)/.test(navigator.userAgent)) {
+    hint = "当前是 WebView 容器，默认拦截麦克风，请改用 Chrome 打开";
+  } else if ((e && e.name) === "NotAllowedError") {
+    hint = "站点设置里麦克风改为「允许」，再点「检测麦克风」重试";
+  }
+  log(`麦克风不可用：${voiceMicReason}${hint ? "｜" + hint : ""}｜环境：${await voiceEnvReport()}`,
+      "log-fail");
+}
+
+// 窗口到达即触发（自动模式）；录音中再来球则记漏录，不打断当前这句
+function voiceAutoTrigger(meta) {
+  if (!voiceAuto) return;
+  const now = Date.now();
+  if (voiceBusy) {
+    voiceMissed++;
+    voiceUpdateStat();
+    log(`自动录音冲突：seq=${meta.seq} 到达时仍在录上一球，本球无录音`, "log-warn");
+    return;
+  }
+  if (now - voiceLastStart < 1500) return;   // 重复窗口去重
+  voiceStartRec(true);
+}
+
+async function voiceStartRec(auto = false) {
+  if (voiceBusy) {
+    if (!auto) log("正在录音，等这一段结束再按（自动模式下每球已自动录）", "log-warn");
+    return;
+  }
+  if (!sessionWindows.length) {
+    if (!auto) log("暂无窗口，先连接并打出第一个球再录音", "log-warn");
+    return;
+  }
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    voiceMarkFail({ name: "SecurityError", message: "缺少 mediaDevices（非 https 或浏览器不支持）" });
+    return;
+  }
+  voiceBusy = true;
+  const w = sessionWindows[sessionWindows.length - 1];
+  voiceTarget = { index: sessionWindows.length - 1, seq: w.meta.seq,
+                  recv: w.meta.receivedAt, note: w.meta.note || "" };
+  const baseAudio = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: voiceDevId ? Object.assign({ deviceId: { exact: voiceDevId } }, baseAudio) : baseAudio
+    });
+  } catch (e) {
+    if (voiceDevId) {                       // 耳机拔了/设备变了 → 回退默认麦克风
+      voiceDevId = "";
+      localStorage.removeItem("nt_voice_dev");
+      log("所选麦克风不可用，已回退默认输入", "log-warn");
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: baseAudio });
+      } catch (e2) {
+        voiceBusy = false;
+        voiceMarkFail(e2);
+        return;
+      }
+    } else {
+      voiceBusy = false;
+      voiceMarkFail(e);
+      return;
+    }
+  }
+  voiceMicError = false;
+  voiceMicReason = "";
+  voiceLastFailKey = "";
+  voiceListDevices();
+  const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
+    .find(m => MediaRecorder.isTypeSupported(m)) || "";
+  voiceChunks = [];
+  voiceRec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
+  voiceRec.ondataavailable = e => { if (e.data && e.data.size) voiceChunks.push(e.data); };
+  voiceRec.onstop = async () => {
+    clearInterval(voiceTimer); voiceTimer = null;
+    const dur = Date.now() - voiceStart;
+    const type = (voiceRec && voiceRec.mimeType) || (voiceChunks[0] && voiceChunks[0].type) || "audio/webm";
+    const blob = new Blob(voiceChunks, { type });
+    stream.getTracks().forEach(t => t.stop());
+    $("voiceRecBtn").classList.remove("rec");
+    $("voiceRecBtn").textContent = "● 录音打标";
+    $("voiceBar").style.width = "0";
+    const rec = {
+      sessionTag: sessionTag(), windowIndex: voiceTarget.index, seq: voiceTarget.seq,
+      recordedAt: new Date().toISOString(),
+      deltaMs: voiceStart - (voiceTarget.recv ? voiceTarget.recv.getTime() : voiceStart),
+      durMs: dur, mime: type, note: voiceTarget.note, blob
+    };
+    try {
+      voiceLastId = await idbAdd(rec);
+      // 手动重录同一球：删掉旧录音，保持"一球一条"
+      const dup = (await idbAll()).filter(r => r.id !== voiceLastId
+        && r.sessionTag === rec.sessionTag && r.seq === rec.seq);
+      for (const d of dup) await idbDel(d.id);
+      log(`已录音 ${(dur / 1000).toFixed(1)}s → seq=${rec.seq}（窗口到达后 ${rec.deltaMs}ms 开始）`
+          + (dup.length ? `，替换旧录音 ${dup.length} 条` : ""), "log-pass");
+      await voiceUpdateStat();
+    } catch (e) {
+      log(`录音保存失败：${e.message}`, "log-fail");
+    }
+    voiceBusy = false;
+  };
+  voiceStart = Date.now();
+  voiceLastStart = voiceStart;
+  voiceRec.start();
+  $("voiceRecBtn").classList.add("rec");
+  $("voiceRecBtn").textContent = "● 录音中…";
+  const tick = () => {
+    if (!voiceRec || voiceRec.state === "inactive") return;
+    const el = (Date.now() - voiceStart) / 1000;
+    const cap = VOICE_MAX_MS / 1000;
+    $("voiceStat").textContent = `● 录音中 ${el.toFixed(1)} / ${cap.toFixed(1)}s → seq=${voiceTarget.seq}`;
+    $("voiceBar").style.width = Math.min(100, el / cap * 100) + "%";
+    $("voiceRecBtn").textContent = `● ${el.toFixed(1)}s / ${cap.toFixed(0)}s`;
+  };
+  tick();
+  voiceTimer = setInterval(tick, 100);
+  setTimeout(() => { if (voiceRec && voiceRec.state === "recording") voiceRec.stop(); }, VOICE_MAX_MS);
+}
+
+function voiceStopRec() {
+  if (voiceRec && voiceRec.state !== "inactive") voiceRec.stop();
+  else voiceBusy = false;
+}
+
+async function voiceUndo() {
+  if (voiceLastId == null) { log("没有可撤销的语音标注", "log-warn"); return; }
+  await idbDel(voiceLastId);
+  voiceLastId = null;
+  log("已撤销上一条语音标注", "log-info");
+  await voiceUpdateStat();
+}
+
+// ---- 最小 ZIP 打包（store 模式；音频本身已压缩，无需再 deflate） ----
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(u8) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function zipBuild(files) {
+  const enc = new TextEncoder();
+  const now = new Date();
+  const dosTime = ((now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1)) & 0xFFFF;
+  const dosDate = (((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate()) & 0xFFFF;
+  const parts = [], central = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), data = f.data, crc = crc32(data);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true);
+    lh.setUint16(8, 0, true); lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true);
+    lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
+    parts.push(new Uint8Array(lh.buffer), name, data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true);
+    ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true);
+    ch.setUint16(12, dosTime, true); ch.setUint16(14, dosDate, true);
+    ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true);
+    ch.setUint16(28, name.length, true); ch.setUint16(30, 0, true); ch.setUint16(32, 0, true);
+    ch.setUint16(34, 0, true); ch.setUint16(36, 0, true); ch.setUint32(38, 0, true);
+    ch.setUint32(42, offset, true);
+    central.push(new Uint8Array(ch.buffer), name);
+    offset += 30 + name.length + data.length;
+  }
+  let csize = 0;
+  central.forEach(p => { csize += p.length; });
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(4, 0, true); end.setUint16(6, 0, true);
+  end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+  end.setUint32(12, csize, true); end.setUint32(16, offset, true); end.setUint16(20, 0, true);
+  // 返回 Uint8Array（同步，便于自检）；下载时再由 download() 包成 Blob
+  const all = [...parts, ...central, new Uint8Array(end.buffer)];
+  let total = 0;
+  all.forEach(p => { total += p.length; });
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const p of all) { out.set(p, o); o += p.length; }
+  return out;
+}
+
+async function voiceExport() {
+  let all;
+  try { all = await idbAll(); } catch (e) { log(`读取语音存储失败：${e.message}`, "log-fail"); return; }
+  if (!all.length) { log("还没有语音标注可导出", "log-warn"); return; }
+  const rows = ["file,seq,window_index,recorded_at,delta_ms,dur_ms,clip,note,source"];
+  const files = [];
+  for (let i = 0; i < all.length; i++) {
+    const r = all[i];
+    const ext = (r.mime || "").includes("mp4") ? "m4a" : "webm";
+    const clip = `clips/${r.sessionTag}_${String(r.seq).padStart(3, "0")}_${String(i + 1).padStart(4, "0")}.${ext}`;
+    files.push({ name: clip, data: new Uint8Array(await r.blob.arrayBuffer()) });
+    rows.push([`tennis_session_${r.sessionTag}.csv`, r.seq, r.windowIndex, r.recordedAt,
+               r.deltaMs, r.durMs, clip,
+               `"${String(r.note || "").replace(/"/g, '""')}"`, "voice"].join(","));
+  }
+  files.unshift({ name: "voice_labels.csv",
+                  data: new TextEncoder().encode("\ufeff" + rows.join("\n") + "\n") });
+  download(`voice_${sessionTag()}.zip`, zipBuild(files), "application/zip");
+  log(`已导出语音包：${all.length} 段音频 + voice_labels.csv`, "log-info");
+}
+
+$("voiceRecBtn").addEventListener("click", () => {
+  if (voiceRec && voiceRec.state === "recording") voiceStopRec();
+  else voiceStartRec();
+});
+$("voiceUndoBtn").addEventListener("click", voiceUndo);
+$("voiceExportBtn").addEventListener("click", voiceExport);
+
+function paintVoiceAuto() {
+  const b = $("voiceAutoBtn");
+  b.textContent = `自动录音：${voiceAuto ? "开" : "关"}`;
+  b.classList.toggle("on", voiceAuto);
+  voiceUpdateStat();
+}
+$("voiceAutoBtn").addEventListener("click", async () => {
+  voiceAuto = !voiceAuto;
+  localStorage.setItem("nt_voice_auto", voiceAuto ? "1" : "0");
+  paintVoiceAuto();
+  if (voiceAuto) await voicePrimeMic();   // 紧接点击调用，保住用户手势（先 await 别的会丢手势导致授权失败）
+  await voiceWakeLock(voiceAuto);
+  log(voiceAuto ? "自动录音已开启：每球窗口到达即录 3 秒（保持页面在前台）"
+                : "自动录音已关闭", "log-info");
+});
+$("voiceDevSel").addEventListener("change", e => {
+  voiceDevId = e.target.value || "";
+  if (voiceDevId) localStorage.setItem("nt_voice_dev", voiceDevId);
+  else localStorage.removeItem("nt_voice_dev");
+  log(voiceDevId ? "麦克风已切换（下次录音生效）" : "麦克风已改为默认（下次录音生效）", "log-info");
+});
+$("voiceMicRetry").addEventListener("click", () => voicePrimeMic());
+paintVoiceAuto();
+voiceListDevices();
+voiceUpdateStat();
+if (!window.isSecureContext || !navigator.mediaDevices) {
+  log(`录音不可用：当前 secure=${window.isSecureContext ? "是" : "否"}，`
+      + `接口=${navigator.mediaDevices ? "有" : "无"}；请用 https 地址打开`, "log-warn");
+}
+
+function download(filename, content, mime) {
+  const blob = new Blob([content], { type: mime });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+$("exportJsonBtn").addEventListener("click", () => {
+  const obj = getLabeledMatrix("unlabeled");
+  if (!obj) return;
+  download(`tennis_${obj.seq}_${obj.timestamp}.json`, JSON.stringify(obj, null, 2), "application/json");
+  log(`已导出 JSON seq=${obj.seq}`, "log-info");
+});
+
+$("exportCsvBtn").addEventListener("click", () => {
+  if (!currentWindow) { log("暂无窗口数据", "log-warn"); return; }
+  const m = currentWindow;
+  download(`tennis_${m.meta.seq}_${m.meta.timestamp}.csv`,
+           CSV_HEADER + buildCsvRows(m), "text/csv");
+  log(`已导出 CSV seq=${m.meta.seq} (${PROTO.WINDOW.samples} 行)`, "log-info");
+});
+
+// CSV 表头与行构建（单窗口 / 会话导出共用；impact_type 为固件板判，stroke/spin 移交 AI 暂留空）
+const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note\n";
+function buildCsvRows(m) {
+  const impactType = m.meta.quickClass != null
+    ? ["NORMAL_HIT", "FRAME_HIT", "FOREIGN_IMPACT"][m.meta.quickClass] : "";
+  // 击球/旋转类型：仅 NORMAL_HIT(0) 时有效，旧固件留空
+  const ok = m.meta.quickClass === 0;
+  const strokeType = ok && m.meta.strokeType != null
+    ? ["FOREHAND", "BACKHAND", "SERVE", "VOLLEY"][m.meta.strokeType] : "";
+  const spinType = ok && m.meta.spinType != null
+    ? ["FLAT", "TOPSPIN", "BACKSPIN", "SIDESPIN"][m.meta.spinType] : "";
+  const note = m.meta.note || "";
+  let rows = "";
+  for (let i = 0; i < PROTO.WINDOW.samples; i++) {
+    rows += `${m.meta.seq},${m.meta.timestamp},${i},`;
+    for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) rows += m.data[ch][i].toFixed(6) + ",";
+    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${note}\n`;
+  }
+  return rows;
+}
+
+$("exportSessionCsvBtn").addEventListener("click", () => {
+  if (!sessionWindows.length) { log("本次连接暂无窗口数据", "log-warn"); return; }
+  // 按接收顺序拼接全部窗口（含 FAIL/异物/丢包），Python 端按 seq 列分组即可逐窗口对比
+  let body = "";
+  for (const w of sessionWindows) body += buildCsvRows(w);
+  const tag = sessionTag();
+  download(`tennis_session_${tag}.csv`, CSV_HEADER + body, "text/csv");
+  log(`已导出本次连接全部 ${sessionWindows.length} 个窗口 ` +
+      `(${sessionWindows.length * PROTO.WINDOW.samples} 行)`, "log-info");
+});
+
+// ---------- URL ?mode= 快捷方式（PWA 桌面快捷方式传入）----------
+const urlMode = new URLSearchParams(location.search).get("mode");
+if (urlMode && ["mock", "impact", "step1"].includes(urlMode)) {
+  $("modeSel").value = urlMode;
+  log(`已通过快捷方式选择模式：${urlMode}`, "log-info");
+}
+
+// ---------- 页签切换（页1 击球 / 页2 运行日志）----------
+const tabBtns = Array.from(document.querySelectorAll(".tab"));
+function switchPage(id) {
+  tabBtns.forEach(b => b.classList.toggle("active", b.dataset.page === id));
+  document.querySelectorAll(".page").forEach(p => p.classList.toggle("active", p.id === id));
+  if (id === "page1") {
+    // 页1 隐藏期间 ECharts 容器宽度为 0，切回时必须重算尺寸，否则波形被挤成一条线
+    setTimeout(() => view.resize(), 60);
+  } else {
+    const l = $("log");
+    if (l) l.scrollTop = l.scrollHeight;
+  }
+}
+tabBtns.forEach(b => b.addEventListener("click", () => switchPage(b.dataset.page)));
+
+// ---------- Service Worker 注册（PWA 离线 / 安装）----------
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch((e) =>
+      console.warn("SW 注册失败:", e)
+    );
+  });
+}
+
+// 初始提示
+$("appVer").textContent = APP_BUILD;
+log(`App 版本 ${APP_BUILD}`, "log-info");
+log("选择模式后点击【连接设备】。推荐先选 Mock 模式验证全部功能。", "log-info");
+if (!navigator.bluetooth) {
+  log("提示：当前浏览器不支持 Web Bluetooth。手机请用 Android Chrome，iOS 请用 Bluefy/WebBLE。", "log-warn");
+}
+</script>
+</body>
+</html>
