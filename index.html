@@ -198,14 +198,14 @@
       <button id="voiceExportBtn" class="chip">导出语音包</button>
       <span id="voiceStat">就绪</span>
     </div>
-    <p class="hint">点一下开始录音，说完不必再点（3 秒自动停）；录音自动挂到最近一个窗口。导出 ZIP 内含 clips/ 与 voice_labels.csv，转写后按 (file, seq) 回填 note。</p>
+    <p class="hint">点一下开始录音，说完不必再点（5 秒自动停）；录音自动挂到最近一个窗口。导出 ZIP 内含 clips/ 与 voice_labels.csv，转写后按 (file, seq) 回填 note。</p>
     <div class="voice-row">
       <button id="voiceAutoBtn" class="chip">自动录音：关</button>
       <select id="voiceDevSel"><option value="">麦克风：默认</option></select>
       <button id="voiceMicRetry" class="chip">检测麦克风</button>
     </div>
     <div id="voiceBarWrap"><div id="voiceBar"></div></div>
-    <p class="hint">耳机测试：先点一次录音授予麦克风权限，再在「麦克风」里选耳机；自动录音开启后，每球窗口到达即录 3 秒，无需按键（需保持页面在前台）。</p>
+    <p class="hint">耳机测试：先点一次录音授予麦克风权限，再在「麦克风」里选耳机；自动录音开启后，每球窗口到达即录 5 秒，无需按键（需保持页面在前台，录音期间自动静音语音播报）。</p>
     <p class="hint">配合方式：「录音打标」= 手动补录当前球（自动模式下用于重录，会替换该球旧录音）；「自动录音」= 每球到达自动录，二者不会产生重复条目。没有传感器时，把顶部设备选成 Mock 才会产生窗口来触发录音。</p>
     <!-- 预设标签（批量采集用；note 受控词表与格式见契约 §4.8） -->
     <div class="lbl-group"><span class="lbl-key">击球</span>
@@ -301,7 +301,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B67-20261025";
+const APP_BUILD = "APP-B68-20261025";
 
 // =====================================================================
 // 0. 协议常量（与固件约定）
@@ -716,6 +716,7 @@ class AudioFeedbackEngine {
   // 语音报速（不阻塞暴击音）
   speak(text) {
     if (!("speechSynthesis" in window)) return;
+    if (window.__ttsMuted) return;   // 录音模式：不播报，避免被麦克风录进去
     try {
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
@@ -916,7 +917,7 @@ function onWindow(meta, data) {
   meta.t0Index = findT0Index(data);   // 实测 T0（详情面板读数 + 波形标注 + 验证固件对齐）
   currentWindow = w;
   sessionWindows.push(w);        // 含 FAIL 窗口，全部留存到本次会话结束
-  voiceAutoTrigger(meta);        // 自动录音：击球窗口一到达即录 3 秒（无按键）
+  voiceAutoTrigger(meta);        // 自动录音：击球窗口一到达即录 5 秒（无按键）
   updateWinSelector(true);
   updateQcPanel(res);
   updateDiagnosis(w);
@@ -1575,7 +1576,7 @@ refreshLabelUI();
 // 教练每球说完一句即录一段；App 只存「音频 + 窗口锚点 + 时间」，
 // 课后导出 ZIP（clips/*.webm + voice_labels.csv），转写后按 (file, seq) 回填 note。
 const VOICE_DB = "nt_voice_v1", VOICE_STORE = "clips";
-const VOICE_MAX_MS = 3000;                 // 单段上限（说完不必再点）
+const VOICE_MAX_MS = 5000;                 // 单段上限（说完不必再点）
 
 function sessionTag() {
   const p = n => String(n).padStart(2, "0");
@@ -1740,6 +1741,14 @@ function voiceAutoTrigger(meta) {
   voiceStartRec(true);
 }
 
+// 录音期间静音语音播报：否则 TTS 会被麦克风录进音频，干扰事后转写
+function ttsMute(on) {
+  window.__ttsMuted = !!on;
+  if (on && "speechSynthesis" in window) {
+    try { window.speechSynthesis.cancel(); } catch (e) { /* 忽略 */ }
+  }
+}
+
 async function voiceStartRec(auto = false) {
   if (voiceBusy) {
     if (!auto) log("正在录音，等这一段结束再按（自动模式下每球已自动录）", "log-warn");
@@ -1754,6 +1763,7 @@ async function voiceStartRec(auto = false) {
     return;
   }
   voiceBusy = true;
+  ttsMute(true);                    // 立刻掐掉正在播报的那句，别录进去
   const w = sessionWindows[sessionWindows.length - 1];
   voiceTarget = { index: sessionWindows.length - 1, seq: w.meta.seq,
                   recv: w.meta.receivedAt, note: w.meta.note || "" };
@@ -1772,11 +1782,13 @@ async function voiceStartRec(auto = false) {
         stream = await navigator.mediaDevices.getUserMedia({ audio: baseAudio });
       } catch (e2) {
         voiceBusy = false;
+        ttsMute(voiceAuto);
         voiceMarkFail(e2);
         return;
       }
     } else {
       voiceBusy = false;
+      ttsMute(voiceAuto);
       voiceMarkFail(e);
       return;
     }
@@ -1818,6 +1830,7 @@ async function voiceStartRec(auto = false) {
       log(`录音保存失败：${e.message}`, "log-fail");
     }
     voiceBusy = false;
+    ttsMute(voiceAuto);            // 录完恢复：自动模式下继续静音（每球都要录）
   };
   voiceStart = Date.now();
   voiceLastStart = voiceStart;
@@ -1839,7 +1852,7 @@ async function voiceStartRec(auto = false) {
 
 function voiceStopRec() {
   if (voiceRec && voiceRec.state !== "inactive") voiceRec.stop();
-  else voiceBusy = false;
+  else { voiceBusy = false; ttsMute(voiceAuto); }
 }
 
 async function voiceUndo() {
@@ -1945,9 +1958,10 @@ $("voiceAutoBtn").addEventListener("click", async () => {
   voiceAuto = !voiceAuto;
   localStorage.setItem("nt_voice_auto", voiceAuto ? "1" : "0");
   paintVoiceAuto();
+  ttsMute(voiceAuto);                     // 自动录音开启即静音播报
   if (voiceAuto) await voicePrimeMic();   // 紧接点击调用，保住用户手势（先 await 别的会丢手势导致授权失败）
   await voiceWakeLock(voiceAuto);
-  log(voiceAuto ? "自动录音已开启：每球窗口到达即录 3 秒（保持页面在前台）"
+  log(voiceAuto ? "自动录音已开启：每球窗口到达即录 5 秒（保持页面在前台；语音播报自动静音）"
                 : "自动录音已关闭", "log-info");
 });
 $("voiceDevSel").addEventListener("change", e => {
@@ -1958,6 +1972,7 @@ $("voiceDevSel").addEventListener("change", e => {
 });
 $("voiceMicRetry").addEventListener("click", () => voicePrimeMic());
 paintVoiceAuto();
+ttsMute(voiceAuto);               // 上次开着自动录音的话，开机即静音播报
 voiceListDevices();
 voiceUpdateStat();
 if (!window.isSecureContext || !navigator.mediaDevices) {
