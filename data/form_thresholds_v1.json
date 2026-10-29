@@ -1,0 +1,42 @@
+{
+  "version": "v1-20261028",
+  "source": "20261027 四段 120fps 视频 pose 缓存 + 传感器宏观段；儿童 1 人初值；D7a 到位后升 v2",
+  "backswing_duration_s": {
+    "p10": 0.149,
+    "p50": 0.351,
+    "p90": 0.904,
+    "note": "视频前挥段（顶点→触球），与传感器宏观段 pre_span 同口径"
+  },
+  "followthrough_duration_s": {
+    "p10": 0.034,
+    "p50": 0.109,
+    "p90": 0.284
+  },
+  "k3_prep_ratio": {
+    "p10": 0.049,
+    "p50": 0.329,
+    "p90": 0.757
+  },
+  "k2_shoulder_abduction_deg": {
+    "p10": 111.069,
+    "p50": 124.53,
+    "p90": 154.296
+  },
+  "k2_torso_rotation_deg": {
+    "p10": 1.94,
+    "p50": 6.417,
+    "p90": 11.228
+  },
+  "ft_over_shoulder_rate": 0.375,
+  "video_to_sensor_scale": {
+    "backswing": 0.594,
+    "note": "前挥段同口径比值（替代旧 0.5 的全准备段口径）；≈1.0 为理想"
+  },
+  "forearm_ratio_by_age": {
+    "8-10": null,
+    "11-13": null,
+    "14-16": null
+  },
+  "population": "child_single",
+  "note": "null 字段 = 待回填；App 对 null 回退现有硬编码门限"
+}
