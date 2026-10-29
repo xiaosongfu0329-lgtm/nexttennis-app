@@ -458,7 +458,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B70S4-20261028";   // B70 规则 v2 + Step4（回顾页 / 分享卡片）
+const APP_BUILD = "APP-B70S5-20261029";   // VTI 口径改甜区 + 导出加 sess_state/vti 列
 
 // =====================================================================
 // 0. 协议常量（与固件约定）
@@ -850,16 +850,16 @@ const VOICE_LINES = {
     "把动作做完整，会更漂亮",
   ],
   vti_warn: [
-    "这球很用力，注意放松握拍", "手上稍微松一点，会更舒服", "力气够了，握拍可以再松些",
-    "这拍挺有劲，手腕放松一点", "力量够了，别握那么紧", "放松握拍，球一样能打远",
-    "这球有点冲，放松一点更好", "握拍松一点，护住手腕", "力气足了，让手放松下来",
-    "打得很用力，记得松手",
+    "这球震动稍大，往甜区打会更舒服", "击球点有点偏，往中间靠靠", "球拍震了一下，试试打甜区",
+    "打偏一点也正常，下一球往中间打", "震动偏大，握拍放松加找甜区", "这球打到拍边了，甜区更省力",
+    "拍面偏了一点，往中间打手感更好", "震动有点大，瞄准甜区试试", "这球偏了点，甜区打起来更轻松",
+    "握拍放松，往甜区打更稳",
   ],
   vti_alarm: [
-    "这拍震得有点多，握拍放松些", "球拍震动偏大，先放松手腕", "这一球很震手，握轻一点试试",
-    "震得有点厉害，把手松一松", "拍子震手，先别急着发力", "这球太用力了，放松一点再打",
-    "手会不舒服，握拍再松些", "震动偏大，换成轻一点的握感", "这拍很震，注意保护手腕",
-    "先松手，球拍会更听话",
+    "震动偏大，打甜区会舒服很多", "这拍震得明显，击球点往中间收一收", "可能打偏了，下一球瞄准甜区",
+    "球拍震手，试着用拍面中间击球", "震动比较大，往甜区打能省不少力", "这球打边上啦，甜区更护手",
+    "击球点偏了，往中间打会更顺", "震动明显，握拍放松、瞄准甜区", "偏得有点多，下一球找找甜区",
+    "拍面中间击球，手会舒服很多",
   ],
   combo: [
     "三连击！", "连续三个，节奏起来了！", "又来一个，稳！", "连续好球，保持这个节奏！",
@@ -1216,8 +1216,10 @@ function onWindow(meta, data) {
   meta.t0Index = findT0Index(data);   // 实测 T0（详情面板读数 + 波形标注 + 验证固件对齐）
   meta.strokeFhBh = findStrokeFhBh(data, meta.t0Index);  // 正反手 W2 零校准硬判决（App 端，固件不再下发）
   // K3 个人基线只吃有效击球窗：异物/拍框/丢包窗的时长特征不具语义，无条件入 buf 会把 running P50 拉偏
-  meta.form = isQcOk(res.code, meta) ? formCompute(data) : null;
+  meta.form = isQcOk(res.code, meta)
+    ? formCompute(data, meta.strokeFhBh && meta.strokeFhBh.side) : null;
   meta.vti = vtiEvaluate({ meta, data }); // VTI 三重门限 + 三级分档（与本窗一同留存，回看时直接复用）
+  meta.sessState = sessionState;          // 窗口到达时的会话状态快照（train/pause，供导出后剔除捡球窗）
   currentWindow = w;
   sessionWindows.push(w);        // 含 FAIL 窗口，全部留存到本次会话结束
   // 块级标签自动前缀：activeBlockLabel 存在且当前 note 还没写 → 前缀 [块名]
@@ -1630,8 +1632,10 @@ const FORM = {
   json: null,                     // form_thresholds_v1.json 内容
   jsonSrc: "未加载",              // fetch / 内嵌
   profile: { height: null, age: null, racketIn: null },
-  k3Buf: [],                      // 近 20 球引拍占比（rolling）
-  k3: { p50: null, n: 0 },
+  // K3 基线按击球侧分开维护：正手引拍时长约是反手的 3 倍（20261029 实测 0.50s vs 0.15s），
+  // 混用一条基线会让反手 ratio 恒低于门限 → 全体误判「引拍不足」
+  k3Buf: { "正手": [], "反手": [] },   // 近 20 球引拍占比（rolling，分侧）
+  k3: { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } },
 };
 
 // 拍长系数 K4（未设置按 26" → 1.0，保证默认零改动）
@@ -1735,7 +1739,7 @@ function formArcBounds(t, g) {
   return { i0, kStart, kExt, kEnd };
 }
 // 单窗时长特征 + K3 在线更新（每窗只更新一次，在 onWindow 到达时调用）
-function formCompute(data) {
+function formCompute(data, side) {
   const { t, g } = formSeries(data);
   const b = formArcBounds(t, g);
   const preDur = t[b.i0] - t[b.kStart];
@@ -1743,17 +1747,21 @@ function formCompute(data) {
   const arcDur = t[b.kEnd] - t[b.kStart];
   const ratio = arcDur > 1e-6 ? preDur / arcDur : NaN;
   // K3：近 20 球引拍占比的中位数，再做 EMA(α=0.2) 平滑 → running P50
-  if (isFinite(ratio)) {
-    FORM.k3Buf.push(ratio);
-    if (FORM.k3Buf.length > 20) FORM.k3Buf.shift();
-    const med = diagQuantile(FORM.k3Buf.slice(), 0.5);
-    FORM.k3.p50 = FORM.k3.p50 == null ? med : FORM.k3.p50 + FORM_K3_ALPHA * (med - FORM.k3.p50);
-    FORM.k3.n++;
+  // 按击球侧分别累计：正反手引拍时长量级不同，共用一条基线会把反手整体判成「引拍不足」
+  const k3Key = (side === "正手" || side === "反手") ? side : null;
+  if (k3Key && isFinite(ratio)) {
+    const buf = FORM.k3Buf[k3Key], st = FORM.k3[k3Key];
+    buf.push(ratio);
+    if (buf.length > 20) buf.shift();
+    const med = diagQuantile(buf.slice(), 0.5);
+    st.p50 = st.p50 == null ? med : st.p50 + FORM_K3_ALPHA * (med - st.p50);
+    st.n++;
   }
+  const k3 = k3Key ? FORM.k3[k3Key] : { p50: null, n: 0 };
   return {
     preDur, postDur, arcDur, ratio,
     trunc: b.kEnd >= PROTO.WINDOW.samples - 1,   // 随挥未回基线（窗尾截断），时长不可信
-    k3P50: FORM.k3.p50, k3N: FORM.k3.n,   // 快照：回看历史窗口时用当时基线，不被后续球影响
+    k3Side: k3Key, k3P50: k3.p50, k3N: k3.n,   // 快照：回看历史窗口时用当时基线，不被后续球影响
   };
 }
 
@@ -1840,7 +1848,7 @@ function formRenderThresholds() {
     `引拍时长: ${th.dur ? `P10=${f3(th.dur.p10)}s P50=${f3(th.dur.p50)}s P90=${f3(th.dur.p90)}s` : "—"} — ${th.durSrc}`,
     `随挥时长: ${th.ftDur ? `P10=${f3(th.ftDur.p10)}s P50=${f3(th.ftDur.p50)}s` : "—"} — ${th.ftDurSrc}`,
     `K2 前臂比例: ${th.forearm != null ? th.forearm : "—"} — ${th.forearmSrc}`,
-    `K3 个人引拍占比 P50: ${FORM.k3.p50 != null ? FORM.k3.p50.toFixed(3) : "—"} (n=${FORM.k3.n}, EMA α=${FORM_K3_ALPHA}, 偏移门限 ${(FORM_K3_REL_TOL * 100).toFixed(0)}%)`,
+    `K3 个人引拍占比 P50: 正手 ${f3(FORM.k3["正手"].p50)} (n=${FORM.k3["正手"].n}) · 反手 ${f3(FORM.k3["反手"].p50)} (n=${FORM.k3["反手"].n}) — 分侧维护，EMA α=${FORM_K3_ALPHA}，偏移门限 ${(FORM_K3_REL_TOL * 100).toFixed(0)}%`,
   ];
   // 实测对照：本会话传感器侧 pre_dur 中位 vs 视频 P50×scale（口径比异常时提示核对）
   const obs = [];
@@ -2012,11 +2020,12 @@ function updateDiagnosis(w) {
 }
 
 // ---------- 震动（VTI）行：家庭视图只给正向短句，技术视图给全部数字 ----------
-// 永不给负面措辞（冻结决策）：warn/alarm 都说「放松」，颜色最高只到 warn。
+// 永不给负面措辞（冻结决策）：warn/alarm 都指向「往甜区打」，颜色最高只到 warn。
+// 口径依据 20261029 实测：VTI 与甜区/非甜区 3/3 对齐，与「力度」无关（最用力一球 VTI 最低）。
 const VTI_TEXT = {
   ok:    ["pass", "震动很小"],
-  warn:  ["warn", "注意放松握拍"],
-  alarm: ["warn", "这球很震，放松点"],
+  warn:  ["warn", "震动稍大，往甜区打"],
+  alarm: ["warn", "震动偏大，击球点往中间收"],
 };
 function updateVti(w) {
   const el = $("vtiBadge"), num = $("vtiNum");
@@ -2320,8 +2329,8 @@ $("connectBtn").addEventListener("click", async () => {
   shareCanvas = null;      // 上一次的分享卡片不再复用
   if ($("shareImg")) { $("shareImg").classList.remove("on"); $("shareImg").removeAttribute("src"); }
   // K3 个人基线按会话冷启动（换拍/换人/换天不继承旧基线）
-  FORM.k3Buf = [];
-  FORM.k3 = { p50: null, n: 0 };
+  FORM.k3Buf = { "正手": [], "反手": [] };
+  FORM.k3 = { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } };
   sessionStartTs = Date.now();
   currentWindow = null;
   goodStreak = 0;                 // 连击计数按连接重置
@@ -2917,7 +2926,7 @@ $("exportCsvBtn").addEventListener("click", () => {
 });
 
 // CSV 表头与行构建（单窗口 / 会话导出共用；impact_type 为固件板判，stroke/spin 移交 AI 暂留空）
-const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note\n";
+const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,vti,vti_level\n";
 function buildCsvRows(m) {
   const impactType = m.meta.quickClass != null
     ? ["NORMAL_HIT", "FRAME_HIT", "FOREIGN_IMPACT"][m.meta.quickClass] : "";
@@ -2928,11 +2937,17 @@ function buildCsvRows(m) {
   const spinType = ok && m.meta.spinType != null
     ? ["FLAT", "TOPSPIN", "BACKSPIN", "SIDESPIN"][m.meta.spinType] : "";
   const note = m.meta.note || "";
+  const noteEsc = `"${String(note).replace(/"/g, '""')}"`;   // note 可能含逗号（块名），必须转义否则后置新列会错位
+  // 会话状态 / VTI 快照：导出后可按 sess_state 剔除捡球窗，VTI 列用于按当日会话重锚门限
+  const ss = m.meta.sessState === "pause" ? "pause" : "train";
+  const vv = m.meta.vti || {};
+  const vtiVal = Number.isFinite(vv.vti) ? vv.vti.toFixed(1) : "";
+  const vtiLvl = vv.level || "";
   let rows = "";
   for (let i = 0; i < PROTO.WINDOW.samples; i++) {
     rows += `${m.meta.seq},${m.meta.timestamp},${i},`;
     for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) rows += m.data[ch][i].toFixed(6) + ",";
-    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${note}\n`;
+    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${vtiVal},${vtiLvl}\n`;
   }
   return rows;
 }
@@ -3052,8 +3067,8 @@ function reviewCommentText(s) {
   if (s.rate >= 0.8) txt = "动作整体很稳：引拍和随挥大部分都做到位了，保持这个感觉。";
   else if (s.rate >= 0.5) txt = "大部分球动作到位，个别球收拍偏快。下次提醒孩子把球拍送完整一点。";
   else txt = "这次引拍普遍不够充分。先让孩子把球拍向后拉满再挥，比追求力量更重要。";
-  if (s.vtiAlarm > 0) txt += ` 有 ${s.vtiAlarm} 球震动偏大，提醒孩子握拍松一点，手腕会更舒服。`;
-  else if (s.vtiWarn > 0) txt += " 有几球震动偏大，握拍放松些更好。";
+  if (s.vtiAlarm > 0) txt += ` 有 ${s.vtiAlarm} 球震动偏大，多是击球点偏外，提醒孩子往甜区打，手会舒服很多。`;
+  else if (s.vtiWarn > 0) txt += " 有几球震动稍大，往拍面中间击球会更省力。";
   return txt;
 }
 
