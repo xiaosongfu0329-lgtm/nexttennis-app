@@ -458,7 +458,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B70S5-20261029";   // VTI 口径改甜区 + 导出加 sess_state/vti 列
+const APP_BUILD = "APP-B70S7-20261029";   // VTI 自适应门限 + 甜区口径文案 + 导出加 sess_state/vti 列
 
 // =====================================================================
 // 0. 协议常量（与固件约定）
@@ -1394,9 +1394,47 @@ const VTI = {
   HALF_MS: 20,          // T0±20ms 观察窗
   F1_HALF_MS: 10,       // F1 门限的取峰窗（与 injury_analyzer.f1 同口径）
   GATE_F1_G: 10,        // 三重门限第 3 重：F1>10g 才给反馈（保留打框等高力度事件）
-  TH_FH: [100, 130],    // 正手 (预警, 干预)：20261027 148 窗 P75/P90
-  TH_BH: [50, 60],      // 反手：暂用旧值，等反手 20+ 数据后重定
+  TH_FH: [100, 130],    // 正手 (预警, 干预)：20261027 148 窗 P75/P90 —— 冷启动兜底
+  TH_BH: [50, 60],      // 反手：暂用旧值，等反手 20+ 数据后重定 —— 冷启动兜底
+  // 自适应门限（20261029 实测：VTI 绝对值跨会话漂 5.3× / 0.6×，固定值不可跨硬件硬套）
+  // 本次会话累积 ≥ADAPT_N 球后改用会话内 P75/P90；下限=固定值的 FLOOR_RATIO 倍，防"全员正常却报警"
+  ADAPT_N: 12,
+  BUF_MAX: 100,
+  FLOOR_RATIO: 0.6,
 };
+
+// 会话内 VTI 分布（分侧，滚存最近 BUF_MAX 球）；与 tools/injury_analyzer.py 同口径
+const vtiHist = { FH: [], BH: [] };
+function vtiResetHist() { vtiHist.FH = []; vtiHist.BH = []; }
+
+// 分位数（numpy 默认 linear 插值口径：idx=(n-1)*p）
+function vtiPct(arr, p) {
+  if (!arr.length) return NaN;
+  const a = arr.slice().sort((x, y) => x - y);
+  const i = (a.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? a[lo] : a[lo] + (a[hi] - a[lo]) * (i - lo);
+}
+
+// 解析本球生效门限：冷启动→固定值；热→会话 P75/P90（带绝对下限）
+function vtiResolveTh(side) {
+  const isBh = side === "反手";
+  const base = isBh ? VTI.TH_BH : VTI.TH_FH;
+  const h = isBh ? vtiHist.BH : vtiHist.FH;
+  // 冷启动期（该侧不足 ADAPT_N 球）不判档：只累计分布，门限稳住后再给提示，
+  // 避免"固定兜底值不当"（反手 50/60 明显偏低）在新会话前 12 球集中误报
+  if (h.length < VTI.ADAPT_N) {
+    return { th: base, calib: true, src: `校准中 ${h.length}/${VTI.ADAPT_N} 球` };
+  }
+  const w0 = vtiPct(h, 0.75), a0 = vtiPct(h, 0.90);
+  const th = [Math.max(w0, VTI.FLOOR_RATIO * base[0]), Math.max(a0, VTI.FLOOR_RATIO * base[1])];
+  return { th, src: `会话 P75/P90 ${th[0].toFixed(0)}/${th[1].toFixed(0)}（n=${h.length}）` };
+}
+function vtiPushHist(side, v) {
+  if (!isFinite(v)) return;
+  const h = side === "反手" ? vtiHist.BH : vtiHist.FH;
+  h.push(v);
+  if (h.length > VTI.BUF_MAX) h.shift();
+}
 
 // 转置直接型 II + 初始状态（scipy lfilter 同口径）
 function vtiLfilter(b, a, x, zi) {
@@ -1498,7 +1536,7 @@ function vtiCompute(data, t0) {
 }
 
 // 三重门限 + 三级分档（Python classify_vti 同口径；等级 off = 未启用，不反馈）
-function vtiEvaluate(w) {
+function vtiEvaluate(w, commit = true) {
   const r = { level: "off", vti: NaN, tau: NaN, pkAmp: NaN, f1g: 0, n: 0, gate: [], why: "" };
   if (!w) return r;
   const t0 = w.meta.t0Index != null ? w.meta.t0Index : findT0Index(w.data);
@@ -1514,9 +1552,15 @@ function vtiEvaluate(w) {
   if (r.gate.length) return r;
 
   const side = w.meta.strokeFhBh && w.meta.strokeFhBh.side;
-  const th = side === "反手" ? VTI.TH_BH : VTI.TH_FH;
-  r.level = r.vti > th[1] ? "alarm" : (r.vti > th[0] ? "warn" : "ok");
+  // 先按"不含本球"的会话分布定门限，再把本球计入分布（防止自己抬高自己的门限）
+  const rt = vtiResolveTh(side);
+  const th = rt.th;
+  // 校准中不出结论（不播话术、不给徽章判定），只显示数值与进度
+  r.level = rt.calib ? "calib"
+    : (r.vti > th[1] ? "alarm" : (r.vti > th[0] ? "warn" : "ok"));
   r.th = th;
+  r.thSrc = rt.src;
+  if (commit) vtiPushHist(side, r.vti);   // 重算（如切会话状态）不再重复入分布
   return r;
 }
 
@@ -2023,6 +2067,7 @@ function updateDiagnosis(w) {
 // 永不给负面措辞（冻结决策）：warn/alarm 都指向「往甜区打」，颜色最高只到 warn。
 // 口径依据 20261029 实测：VTI 与甜区/非甜区 3/3 对齐，与「力度」无关（最用力一球 VTI 最低）。
 const VTI_TEXT = {
+  calib: ["idle", "校准中"],
   ok:    ["pass", "震动很小"],
   warn:  ["warn", "震动稍大，往甜区打"],
   alarm: ["warn", "震动偏大，击球点往中间收"],
@@ -2039,7 +2084,9 @@ function updateVti(w) {
   }
   const [cls, txt] = VTI_TEXT[v.level];
   el.innerHTML = `<span class="badge ${cls}">${txt}</span>`;
-  num.textContent = `VTI ${v.vti.toFixed(0)}（${v.level}，门限 ${v.th[0]}/${v.th[1]}）`
+  const thTxt = v.th ? `，门限 ${v.th[0].toFixed(0)}/${v.th[1].toFixed(0)} · ${v.thSrc}` : "";
+  const lvlTxt = v.level === "calib" ? "校准中" : v.level;
+  num.textContent = `VTI ${v.vti.toFixed(0)}（${lvlTxt}${thTxt}）`
     + ` · τ ${isFinite(v.tau) ? v.tau.toFixed(1) + "ms" : "—"}`
     + ` · pk ${v.pkAmp.toFixed(2)}g · F1 ${v.f1g.toFixed(1)}g · n ${v.n}`;
 }
@@ -2052,7 +2099,7 @@ function setSessionState(st) {
   $("sessHint").textContent = st === "train" ? "击球反馈开启" : "捡球中：暂停震动提醒";
   if (currentWindow) {
     // 门限含会话状态 → 历史窗口的 VTI 结论要按当前状态重算
-    currentWindow.meta.vti = vtiEvaluate(currentWindow);
+    currentWindow.meta.vti = vtiEvaluate(currentWindow, false);
     updateVti(currentWindow);
   }
 }
@@ -2331,6 +2378,7 @@ $("connectBtn").addEventListener("click", async () => {
   // K3 个人基线按会话冷启动（换拍/换人/换天不继承旧基线）
   FORM.k3Buf = { "正手": [], "反手": [] };
   FORM.k3 = { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } };
+  vtiResetHist();                 // VTI 会话分位同样按连接冷启动
   sessionStartTs = Date.now();
   currentWindow = null;
   goodStreak = 0;                 // 连击计数按连接重置
