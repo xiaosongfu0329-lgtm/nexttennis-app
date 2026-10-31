@@ -1,468 +1,187 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-<meta name="theme-color" content="#0d1117" />
-<meta name="description" content="网球传感器冲击窗口接收、QC 校验与可视化" />
-<title>Nexttennis V101 — 击球数据接收与 QC 校验台</title>
-<link rel="manifest" href="manifest.json" />
-<link rel="icon" type="image/png" href="favicon.png" />
-<link rel="apple-touch-icon" href="icon-192.png" />
-<meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<meta name="apple-mobile-web-app-title" content="Nexttennis" />
-<meta name="mobile-web-app-capable" content="yes" />
-<!-- ECharts 用于波形渲染 -->
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Nexttennis 安装自检</title>
 <style>
-  :root {
-    --bg: #0d1117; --panel: #161b22; --border: #30363d;
-    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
-    --pass: #3fb950; --fail: #f85149; --warn: #d29922;
+  :root{
+    --bg:#0f1115; --card:#171a20; --card2:#1e222a; --bd:#2a2f38;
+    --tx:#e7e9ed; --mut:#98a0ab; --acc:#22c55e; --warn:#f59e0b; --bad:#ef4444;
   }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
-         background: var(--bg); color: var(--text);
-         padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
-  header { padding: 10px 12px; border-bottom: 1px solid var(--border);
-           display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-  h1 { margin: 0; font-size: 15px; }
-  .conn-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  button { background: var(--panel); color: var(--text); border: 1px solid var(--border);
-           padding: 10px 14px; border-radius: 8px; cursor: pointer; font-size: 14px;
-           min-height: 44px; min-width: 44px; touch-action: manipulation; }
-  button:hover { border-color: var(--accent); }
-  button:active { transform: scale(0.97); }
-  button.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
-  button.pass { background: var(--pass); color: #000; border-color: var(--pass); }
-  button.fail { background: var(--fail); color: #fff; border-color: var(--fail); }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
-  /* ---------- 双页签（页1 核心信息 / 页2 运行日志） ---------- */
-  .tabs { display: flex; gap: 6px; padding: 8px 12px 0; border-bottom: 1px solid var(--border); }
-  .tab { flex: 1; min-height: 40px; font-size: 14px; color: var(--muted);
-         background: var(--panel); border: 1px solid var(--border); border-bottom: none;
-         border-radius: 8px 8px 0 0; }
-  .tab.active { color: var(--text); background: var(--bg); border-color: var(--accent); font-weight: 600; }
-  .page { display: none; padding: 10px 12px 24px; }
-  .page.active { display: block; }
-  /* ---------- 页1：核心信息卡 ---------- */
-  .statrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .statrow + .statrow { margin-top: 8px; }
-  /* 设备名 / 电池：小字一行，不占大卡片 */
-  .infobar { display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
-             padding: 0 4px 6px; font-size: 12px; color: var(--muted); }
-  .infobar .dev { overflow-wrap: anywhere; }
-  .infobar .bat { font-family: ui-monospace, monospace; white-space: nowrap; }
-  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-          padding: 10px 12px; min-width: 0; }
-  .stat .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-  .stat .val { font-size: 18px; font-weight: 700; margin-top: 4px;
-               font-family: ui-monospace, "Cascadia Code", monospace; overflow-wrap: anywhere; }
-  .stat.big .val { font-size: 38px; color: var(--accent); line-height: 1.05; }
-  .stat .val .unit { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 4px; }
-  /* ---------- 动作诊断（引拍 / 随挥）：两行紧凑，不挤占球速卡 ---------- */
-  .diag { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-          padding: 8px 12px; margin-top: 8px; }
-  .diag-row { display: flex; align-items: baseline; gap: 8px; font-size: 14px; padding: 2px 0; }
-  .diag-row .k { color: var(--muted); font-size: 12px; min-width: 34px; }
-  .diag-row .num { margin-left: auto; font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); display: none; }
-  body.tech-mode .diag-row .num { display: block; }
-  .diag .tip { font-size: 12px; margin-top: 4px; color: var(--muted); }
-  /* 会话状态（训练中 / 捡球暂停）：VTI 即刻反馈的第一重门限 */
-  .sessbar { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
-  .sessbar .lbl-key { min-width: 34px; }
-  .form-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
-  .form-row label { min-width: 92px; color: var(--muted); font-size: 13px; }
-  .form-row input, .form-row select { flex: 1; padding: 8px 10px; font-size: 15px;
-    background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; }
-  .thr-box { font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.7; color: var(--muted); white-space: pre-wrap; }
-  .infobar #t0off { display: none; }
-  body.tech-mode .infobar #t0off { display: inline; }
-  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-           padding: 12px; margin-top: 8px; }
-  .panel h2 { margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-  .kv { display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; border-bottom: 1px dashed var(--border); }
-  .kv:last-child { border-bottom: none; }
-  .kv .v { font-family: ui-monospace, "Cascadia Code", monospace; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
-  .badge.pass { background: rgba(63,185,80,.18); color: var(--pass); }
-  .badge.fail { background: rgba(248,81,73,.18); color: var(--fail); }
-  .badge.warn { background: rgba(210,153,34,.18); color: var(--warn); }
-  .badge.idle { background: rgba(139,148,158,.18); color: var(--muted); }
-  #chart { width: 100%; height: 200px; }
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  .actions button { flex: 1 1 30%; }
-  /* ---------- 页2：全窗口运行日志 ---------- */
-  #log { font-family: ui-monospace, monospace; font-size: 12px; overflow-y: auto;
-         background: #010409; border: 1px solid var(--border); border-radius: 6px; padding: 8px;
-         height: calc(100vh - 240px); }
-  .log-line { margin: 0; padding: 1px 0; }
-  .log-pass { color: var(--pass); } .log-fail { color: var(--fail); }
-  .log-info { color: var(--accent); } .log-warn { color: var(--warn); }
-  select { background: var(--panel); color: var(--text); border: 1px solid var(--border);
-           padding: 10px; border-radius: 8px; font-size: 14px; min-height: 44px; }
-  /* ---------- 折叠的技术详情（次要信息） ---------- */
-  details.tech { margin-top: 8px; }
-  details.tech > summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 10px 12px;
-                           background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-                           list-style: none; }
-  details.tech > summary::-webkit-details-marker { display: none; }
-  details.tech > summary::after { content: " ▾"; }
-  details.tech[open] > summary::after { content: " ▴"; }
-  .hint { font-size: 11px; color: var(--muted); margin: 8px 0 0; }
-  /* ---------- 预设打标 chips（批量采集；note 受控词表见契约 §4.8） ---------- */
-  .lbl-group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
-  .lbl-key { font-size: 11px; color: var(--muted); min-width: 54px; letter-spacing: .5px; }
-  .chip { min-height: 34px; min-width: 0; padding: 6px 12px; font-size: 13px; border-radius: 16px; }
-  .chip.on { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
-  #labelSpeed { width: 100px; min-height: 34px; padding: 6px 10px; font-size: 14px;
-                background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; }
-  /* ---------- 语音标注（录音版，不做 ASR；课后导出 ZIP 转写） ---------- */
-  .voice-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
-  .voice-row .chip { min-height: 40px; }
-  #voiceRecBtn.rec { background: var(--fail); color: #fff; border-color: var(--fail); animation: vpulse 1.1s infinite; }
-  @keyframes vpulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
-  #voiceStat { font-size: 11px; color: var(--muted); }
-  #voiceStat.err { color: var(--fail); }
-  #voiceAutoBtn.on { background: var(--pass); color: #000; border-color: var(--pass); }
-  #voiceDevSel { max-width: 190px; min-height: 40px; padding: 4px 8px; font-size: 12px;
-                 background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; }
-  #voiceBarWrap { height: 6px; margin: 6px 0 2px; background: var(--border); border-radius: 3px; overflow: hidden; }
-  #voiceBar { height: 100%; width: 0; background: var(--fail); transition: width 80ms linear; }
-  /* 家长回顾页：结论句 + 分享卡片预览 */
-  .panel .tip { font-size: 13px; margin-top: 8px; line-height: 1.55; }
-  .share-wrap { margin-top: 8px; }
-  .share-wrap img { display: none; width: 100%; border-radius: 10px; border: 1px solid var(--border); }
-  .share-wrap img.on { display: block; }
-  /* 移动端优化 */
-  @media (max-width: 600px) {
-    header { padding: 8px 10px; }
-    h1 { font-size: 14px; }
-    .page { padding: 8px 10px 24px; }
-    .tab { font-size: 13px; min-height: 38px; }
-    .infobar { font-size: 11px; }
-    #chart { height: 170px; }
-    .stat .val { font-size: 17px; }
-    .stat.big .val { font-size: 34px; }
-    #log { height: calc(100vh - 215px); }
-  }
-  @media (max-height: 700px) {
-    #chart { height: 150px; }
-  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--tx);
+    font:14px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+  .wrap{max-width:560px;margin:0 auto;padding:10px 12px 40px}
+  header{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 12px}
+  .hrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .logo{font-size:16px;font-weight:700;letter-spacing:.5px}
+  .build{margin-left:auto;color:var(--mut);font-size:11px;font-variant-numeric:tabular-nums}
+  .dot{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--mut)}
+  .dot i{width:7px;height:7px;border-radius:50%;background:#5b6270;display:inline-block}
+  .dot.on i{background:var(--acc)} .dot.on{color:var(--acc)}
+  .meta{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:8px;font-size:12px;color:var(--mut)}
+  .meta b{color:var(--tx);font-weight:600;font-variant-numeric:tabular-nums}
+  button{border:1px solid var(--bd);background:var(--card2);color:var(--tx);border-radius:9px;
+    padding:9px 14px;font-size:14px;min-height:40px;font-family:inherit}
+  button.primary{background:#1f6f43;border-color:#2a8b55;color:#eafff1;font-weight:600}
+  button.ghost{background:transparent}
+  button:disabled{opacity:.42}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-top:10px}
+  .card h3{margin:0 0 8px;font-size:13px;color:var(--mut);font-weight:600;letter-spacing:.3px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .field{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--mut)}
+  .field input,.field select{width:92px;background:var(--bg);border:1px solid var(--bd);border-radius:7px;
+    color:var(--tx);padding:7px 8px;font-size:13px}
+  .field input#rkLabel{width:110px}
+  .field input[type=checkbox]{width:auto}
+  .guide{font-size:13px;color:#c9ced6;line-height:1.6}
+  .guide b{color:#fff}
+  .now{margin-top:10px;padding:10px 12px;border-radius:10px;background:#13251a;border:1px solid #235137;
+    display:none;align-items:center;gap:10px}
+  .now.show{display:flex}
+  .now .big{font-size:20px;font-weight:700;color:#7ff0a7}
+  .now .sub{font-size:12px;color:#9fd8b6}
+  .bar{height:6px;border-radius:3px;background:#22262e;overflow:hidden;margin-top:10px}
+  .bar>span{display:block;height:100%;width:0;background:var(--acc);transition:width .18s ease}
+  .tblwrap{overflow-x:auto;margin-top:10px}
+  table{border-collapse:collapse;width:100%;font-size:12px;font-variant-numeric:tabular-nums}
+  th,td{padding:6px 8px;border-bottom:1px solid #22262e;text-align:right;white-space:nowrap}
+  th{color:var(--mut);font-weight:600}
+  td:first-child,th:first-child{text-align:left}
+  tr.inv td{color:#7d848f}
+  canvas{width:100%;height:150px;display:block;background:#12151a;border:1px solid var(--bd);border-radius:8px}
+  .verdict{margin-top:10px;padding:14px;border-radius:12px;border:1px solid var(--bd);background:var(--card2);display:none}
+  .verdict.show{display:block}
+  .verdict .v{font-size:20px;font-weight:800;margin-bottom:4px}
+  .verdict .s{font-size:13px;color:var(--mut)}
+  details{margin-top:10px}
+  details>summary{cursor:pointer;color:var(--mut);font-size:13px}
+  .tech{margin-top:8px;font-size:12px;color:#b9c0ca;line-height:1.7}
+  #log{max-height:140px;overflow:auto;font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#8e96a2;
+    white-space:pre-wrap;word-break:break-all}
+  .hint{margin-top:8px;font-size:12px;color:var(--warn);display:none}
+  .hint.show{display:block}
+  .tiny{font-size:11px;color:#6e7682;margin-top:6px}
 </style>
 </head>
 <body>
+<div class="wrap">
 
-<header>
-  <h1>Nexttennis V101 · 击球数据台</h1>
-  <div class="conn-bar">
-    <select id="modeSel">
-      <option value="impact">真实设备 — 冲击窗口 (Tennis_Sensor_01/02/03)</option>
-      <option value="mock">Mock 设备（合成冲击数据）</option>
-      <option value="step1">Step1 桥接 — 实时流 (XIAO-IMU-416)</option>
-    </select>
-    <button id="connectBtn" class="primary">连接设备</button>
-    <button id="disconnectBtn" disabled>断开</button>
-    <span id="connStatus" class="badge idle">未连接</span>
-  </div>
-</header>
+  <header>
+    <div class="hrow">
+      <span class="logo">安装刚性自检</span>
+      <span class="build" id="build">SC-08-20261031</span>
+    </div>
+    <div class="hrow" style="margin-top:8px">
+      <button id="btnConn" class="primary">连接设备</button>
+      <button id="btnDisc" class="ghost" hidden>断开</button>
+      <span id="connState" class="dot"><i></i>未连接</span>
+    </div>
+    <div class="meta">
+      <span>设备 <b id="devName">—</b></span>
+      <span>固件 <b id="devFw">—</b></span>
+      <span>电池 <b id="devBatt">—</b></span>
+      <span>通知 <b id="notifyCount">0</b>（系统 <b id="sysPkt">0</b>／数据 <b id="dataPkt">0</b>）</span>
+      <span>窗口 <b id="winCount">0</b></span>
+      <span>丢窗 <b id="lostCount">0</b></span>
+      <span>末窗 <b id="asm">—</b></span>
+    </div>
+    <div class="hint" id="hint"></div>
+  </header>
 
-<nav class="tabs">
-  <button class="tab active" data-page="page1">击球</button>
-  <button class="tab" data-page="page4">回顾</button>
-  <button class="tab" data-page="page2">运行日志</button>
-  <button class="tab" data-page="page3">设置</button>
-</nav>
+  <section class="card">
+    <h3>球拍与被测件</h3>
+    <div class="row">
+      <div class="field">标识 <input id="rkLabel" placeholder="如 拍A"></div>
+      <div class="field">拍长
+        <select id="rkSize">
+          <option value="25">25"</option>
+          <option value="26" selected>26"</option>
+          <option value="27">27"</option>
+        </select>
+      </div>
+      <div class="field">握把
+        <select id="rkGrip">
+          <option value="0" selected>0</option><option value="1">1</option>
+          <option value="2">2</option><option value="3">3</option>
+        </select>
+      </div>
+      <div class="field">整机重 g <input id="mTotal" type="number" min="3" max="60" step="0.1" value="10"></div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <div class="field"><input type="checkbox" id="ckGrip"><label for="ckGrip">已缠手胶（不缠时 τ 会偏高）</label></div>
+    </div>
+  </section>
 
-<!-- ================= 页1：最重要的信息 ================= -->
-<section id="page1" class="page active">
-  <div class="infobar">
-    <span class="dev" id="devName">—</span>
-    <span id="t0off" style="white-space:nowrap">T0 偏移 —</span>
-    <span class="bat" id="devBatt">—</span>
-  </div>
-  <div class="statrow">
-    <div class="stat big"><div class="label">预估球速</div>
-      <div class="val"><span id="speedVal">—</span><span class="unit">km/h</span></div>
+  <section class="card">
+    <h3>模式</h3>
+    <div class="row">
+      <button id="btnMode">当前：自检模式</button>
+      <button id="btnStart" class="primary">开始自检</button>
+      <button id="btnStop" class="ghost" hidden>中止</button>
     </div>
-    <div class="stat"><div class="label">正手 / 反手</div><div class="val" id="p1StrokeSpin">—</div></div>
-  </div>
+    <div class="guide" style="margin-top:10px">
+      <b>怎么敲：</b>把拍子立起来、尾盖朝上。拿一枚硬币（或钥匙等硬质小物），像敲门那样在尾盖
+      <b>边缘那一圈</b>敲一下、<b>马上抬开</b>——不要按住，也不要敲正中心，不必用力过猛。<br>
+      <b>敲几下：</b>尾盖圆周上前后左右 4 个点，每个点 3 下，共 12 下。不用记方位名，
+      看上面「现在敲」提示当前该敲哪个点即可，先后顺序不影响结论。
+    </div>
+    <div class="now" id="now">
+      <div>
+        <div class="big" id="nowAz">拍面侧</div>
+        <div class="sub" id="nowSub">第 1 / 12 下</div>
+      </div>
+    </div>
+    <div class="bar"><span id="bar"></span></div>
+    <div class="tblwrap">
+      <table>
+        <thead><tr>
+          <th>#</th><th>方位</th><th>峰 g</th><th>τ ms</th><th>pkAmp</th><th>f1 Hz</th><th>prom</th><th>状态</th>
+        </tr></thead>
+        <tbody id="taps"><tr><td colspan="8" style="text-align:center;color:#6e7682">尚无数据</td></tr></tbody>
+      </table>
+    </div>
+    <canvas id="spec"></canvas>
+    <div class="tiny" id="specCap">上一下的高 g 频谱（60~470Hz 为判据带宽）</div>
 
-  <!-- 会话状态：VTI 三重门限第 1 重（训练中才做震动提醒，捡球/暂停时静默） -->
-  <div class="sessbar">
-    <span class="lbl-key">状态</span>
-    <button id="sessTrain" class="chip on">训练中</button>
-    <button id="sessPause" class="chip">捡球/暂停</button>
-    <span id="sessHint" class="hint" style="margin:0;font-size:11px">击球反馈开启</span>
-  </div>
+    <div class="verdict" id="verdict">
+      <div class="v" id="vTitle">—</div>
+      <div class="s" id="vSub">—</div>
+    </div>
 
-  <div class="diag">
-    <div class="diag-row"><span class="k">引拍</span>
-      <span id="diagBack"><span class="badge idle">—</span></span>
-      <span class="num" id="diagBackNum">—</span></div>
-    <div class="diag-row"><span class="k">随挥</span>
-      <span id="diagFollow"><span class="badge idle">—</span></span>
-      <span class="num" id="diagFollowNum">—</span></div>
-    <div class="diag-row"><span class="k">震动</span>
-      <span id="vtiBadge"><span class="badge idle">—</span></span>
-      <span class="num" id="vtiNum">—</span></div>
-    <div class="tip" id="diagTip">—</div>
-  </div>
+    <details>
+      <summary>技术数据 / 阈值来源</summary>
+      <div class="tech" id="tech">—</div>
+    </details>
+  </section>
 
-  <div class="panel">
-    <select id="winSel" style="width:100%"></select>
-    <div id="sessStat" style="font-size:12px;color:var(--muted);margin-top:4px"></div>
-    <h2 style="margin-top:10px">12×396 物理波形（1.77s 混合速率窗口：前1.20s + 后0.57s，LSM6DSV320X）</h2>
-    <div id="chart"></div>
-  </div>
+  <section class="card">
+    <h3>导出与维护</h3>
+    <div class="row">
+      <button id="btnExport">导出 JSON</button>
+      <button id="btnCopy" class="ghost">复制 JSON</button>
+      <button id="btnClearGd" class="ghost">清金标</button>
+      <button id="btnThTmpl" class="ghost">下阈值模板</button>
+    </div>
+  </section>
 
-  <div class="panel">
-    <h2>打标与导出</h2>
-    <!-- 块级标签（映射标定必需）：发球机块间暂停时设一个块名，后续窗口自动挂前缀 -->
-    <div class="voice-row">
-      <span class="lbl-key">块名</span>
-      <input id="blockLabelInput" type="text" placeholder="如 B1-双有" style="min-width:120px;padding:6px 10px;font-size:14px;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px" />
-      <button id="blockLabelStart" class="chip">▶ 开始新块</button>
-      <button id="blockLabelEnd" class="chip">■ 结束</button>
-      <span id="blockLabelStat" class="hint" style="font-family:ui-monospace,monospace">未启用</span>
-    </div>
-    <p class="hint">发球机暂停时，输入块名（如 B1-双有）点「开始新块」；后续到达的窗口 note 自动前缀 [块名]。发球机重开即继续，点「结束」清除。协议要求映射标定必须用此标签 + timestamp gap 双重验证块边界。</p>
-    <!-- 语音标注（录音版）：只存音频 + 窗口锚点，课后导出 ZIP 转写后回填 note -->
-    <div class="voice-row">
-      <span class="lbl-key">语音</span>
-      <button id="voiceRecBtn" class="chip">● 录音打标</button>
-      <button id="voiceUndoBtn" class="chip">撤销上一条</button>
-      <button id="voiceExportBtn" class="chip">导出语音包</button>
-      <span id="voiceStat">就绪</span>
-    </div>
-    <p class="hint">点一下开始录音，说完不必再点（5 秒自动停）；录音自动挂到最近一个窗口。导出 ZIP 内含 clips/ 与 voice_labels.csv，转写后按 (file, seq) 回填 note。</p>
-    <div class="voice-row">
-      <button id="voiceAutoBtn" class="chip">自动录音：关</button>
-      <select id="voiceDevSel"><option value="">麦克风：默认</option></select>
-      <button id="voiceMicRetry" class="chip">检测麦克风</button>
-    </div>
-    <div id="voiceBarWrap"><div id="voiceBar"></div></div>
-    <p class="hint">耳机测试：先点一次录音授予麦克风权限，再在「麦克风」里选耳机；自动录音开启后，每球窗口到达即录 5 秒，无需按键（需保持页面在前台，录音期间自动静音语音播报）。</p>
-    <p class="hint">配合方式：「录音打标」= 手动补录当前球（自动模式下用于重录，会替换该球旧录音）；「自动录音」= 每球到达自动录，二者不会产生重复条目。没有传感器时，把顶部设备选成 Mock 才会产生窗口来触发录音。</p>
-    <!-- 预设标签（批量采集用；note 受控词表与格式见契约 §4.8） -->
-    <div class="lbl-group"><span class="lbl-key">击球</span>
-      <button class="chip" data-k="stroke" data-v="FH">正手</button>
-      <button class="chip" data-k="stroke" data-v="BH">反手</button>
-      <button class="chip" data-k="stroke" data-v="SV">发球</button>
-      <button class="chip" data-k="stroke" data-v="VL">截击</button>
-    </div>
-    <div class="lbl-group"><span class="lbl-key">旋转</span>
-      <button class="chip" data-k="spin" data-v="FLAT">平击</button>
-      <button class="chip" data-k="spin" data-v="TOP">上旋</button>
-      <button class="chip" data-k="spin" data-v="BACK">下旋</button>
-      <button class="chip" data-k="spin" data-v="SIDE">侧旋</button>
-    </div>
-    <div class="lbl-group"><span class="lbl-key">击球点</span>
-      <button class="chip" data-k="spot" data-v="SWEET">甜区</button>
-      <button class="chip" data-k="spot" data-v="OFF">偏心</button>
-      <button class="chip" data-k="spot" data-v="FRAME">打框</button>
-      <button class="chip" data-k="spot" data-v="MISHIT">误击</button>
-    </div>
-    <div class="lbl-group"><span class="lbl-key">技术缺陷</span>
-      <button class="chip" data-k="defect" data-v="LATE">击球点偏后</button>
-      <button class="chip" data-k="defect" data-v="MIN">引拍不足</button>
-      <button class="chip" data-k="defect" data-v="NFT">随挥不足</button>
-    </div>
-    <div class="lbl-group"><span class="lbl-key">非击球</span>
-      <button class="chip" data-k="stroke" data-v="TAP">磕碰</button>
-      <button class="chip" data-k="stroke" data-v="SOFT">轻打</button>
-      <button class="chip" data-k="stroke" data-v="DROP">落球</button>
-      <button class="chip" data-k="stroke" data-v="BOUNCE">颠球</button>
-      <button class="chip" data-k="stroke" data-v="WARMUP">热身</button>
-    </div>
-    <div class="lbl-group"><span class="lbl-key">真值球速</span>
-      <input id="labelSpeed" type="number" inputmode="numeric" min="0" max="250" step="1" placeholder="km/h" />
-      <button class="chip" id="labelClearBtn">清除选择</button>
-    </div>
-    <div id="labelPreview" class="hint" style="font-family:ui-monospace,monospace">打标预览：（未选）</div>
-    <div class="actions" style="margin-top:6px">
-      <button id="labelApplyBtn" class="primary">应用打标</button>
-      <button id="labelPassBtn" class="pass">【合格】</button>
-      <button id="labelFailBtn" class="fail">【废球】</button>
-      <button id="labelNoteBtn">自由文本</button>
-    </div>
-    <div class="actions" style="margin-top:8px">
-      <button id="exportSessionCsvBtn" class="pass">导出本次全部 CSV</button>
-      <button id="exportCsvBtn">导出当前窗口 CSV</button>
-      <button id="exportJsonBtn">导出 JSON</button>
-    </div>
-    <p class="hint">“本次全部”= 自本次点击连接以来的全部窗口（含 PASS/拍框/异物），便于对比标定；“当前窗口”只导出上面下拉框选中的一个窗口</p>
-  </div>
-
-  <details class="tech">
-    <summary>技术详情（连接状态 / QC 引擎 / 声音反馈）</summary>
-    <div class="panel">
-      <h2>连接状态</h2>
-      <div class="kv"><span>模式</span><span class="v" id="devMode">—</span></div>
-      <div class="kv"><span>App 版本</span><span class="v" id="appVer">—</span></div>
-      <div class="kv"><span>MTU / 吞吐</span><span class="v" id="devMtu">—</span></div>
-      <div class="kv"><span>已接收窗口</span><span class="v" id="winCount">0</span></div>
-      <div class="kv"><span>分片重组缓存</span><span class="v" id="reasmStat">—</span></div>
-    </div>
-    <div class="panel">
-      <h2>Sanity Check QC 引擎</h2>
-      <div class="kv"><span>当前判定</span><span id="qcResult"><span class="badge idle">待检测</span></span></div>
-      <div class="kv"><span>板上判决</span><span id="qcQuick">—</span></div>
-      <div class="kv"><span>击球类型</span><span id="qcStroke">—</span></div>
-      <div class="kv"><span>旋转类型</span><span id="qcSpin">—</span></div>
-      <div class="kv"><span>Seq 连续性</span><span class="v" id="qcSeq">—</span></div>
-      <div class="kv"><span>峰值 a_Total</span><span class="v" id="qcPeak">—</span></div>
-      <div class="kv"><span>T0 偏移（实测−名义#186）</span><span class="v" id="qcT0">—</span></div>
-      <div class="kv"><span>Spike 跳变</span><span class="v" id="qcSpike">—</span></div>
-      <div class="kv"><span>饱和削顶</span><span class="v" id="qcSat">—</span></div>
-      <div class="kv"><span>Pass Rate</span><span class="v" id="qcPassRate">—</span></div>
-      <div class="kv"><span>硬件连通</span><span id="qcHw"><span class="badge idle">—</span></span></div>
-    </div>
-    <div class="panel">
-      <h2>声音反馈</h2>
-      <div class="kv"><span>暴击音延迟</span><span class="v" id="audioLat">—</span></div>
-      <div class="kv"><span>语音播报</span><span class="v" id="ttsStat">—</span></div>
-      <div class="kv"><span>话术库</span><span class="v" id="voicePackStat">—</span></div>
-      <div class="kv"><span>最近一句</span><span class="v" id="voiceLastStat">—</span></div>
-    </div>
-    <div class="panel">
-      <h2>形态门限 v2（生效值 / 来源）</h2>
-      <div id="formThrTech" class="thr-box">—</div>
-    </div>
-  </details>
-</section>
-
-<!-- ================= 页4：家长回顾（家庭视图，纯结论，不做横向比较） ================= -->
-<section id="page4" class="page">
-  <div class="panel">
-    <h2>本次训练</h2>
-    <div class="statrow">
-      <div class="stat big"><div class="label">最快球速</div>
-        <div class="val"><span id="rvMaxSpeed">—</span><span class="unit">km/h</span></div></div>
-      <div class="stat"><div class="label">有效击球</div><div class="val" id="rvBalls">—</div></div>
-    </div>
-    <div class="statrow">
-      <div class="stat"><div class="label">正手 / 反手</div><div class="val" id="rvSide">—</div></div>
-      <div class="stat"><div class="label">动作到位</div><div class="val" id="rvRate">—</div></div>
-    </div>
-    <div class="statrow">
-      <div class="stat"><div class="label">最长连击</div><div class="val" id="rvStreak">—</div></div>
-      <div class="stat"><div class="label">震动提醒</div><div class="val" id="rvVti">—</div></div>
-    </div>
-    <div class="tip" id="rvComment">—</div>
-    <div class="tip" id="rvCompare" style="color:var(--muted)">—</div>
-  </div>
-
-  <div class="panel">
-    <h2>分享卡片</h2>
-    <p class="hint">只和自己比：卡片上不出现排名、不出现别的孩子。生成后点「保存图片」；手机上若没有自动下载，长按图片保存到相册。</p>
-    <div class="share-wrap"><img id="shareImg" alt="分享卡片" /></div>
-    <div class="voice-row" style="margin-top:8px">
-      <button id="shareMake" class="chip">生成卡片</button>
-      <button id="shareSave" class="chip">保存图片</button>
-      <button id="rvClear" class="chip">清空历史</button>
-      <span id="shareStat" class="hint">—</span>
-    </div>
-  </div>
-</section>
-
-<!-- ================= 页2：大窗口运行日志 ================= -->
-<section id="page2" class="page">
-  <div class="panel" style="margin-top:0">
-    <h2>运行日志（全窗口，可滚动）</h2>
+  <section class="card">
+    <h3>日志</h3>
     <div id="log"></div>
-  </div>
-</section>
+  </section>
 
-<!-- ================= 页3：设置（个人资料，用于门限归一化） ================= -->
-<section id="page3" class="page">
-  <div class="panel" style="margin-top:0">
-    <h2>孩子资料（30 秒填完）</h2>
-    <div class="form-row">
-      <label for="pfHeight">身高（cm）</label>
-      <input id="pfHeight" type="number" inputmode="numeric" min="90" max="200" step="1" placeholder="如 135" />
-    </div>
-    <div class="form-row">
-      <label for="pfAge">年龄（岁）</label>
-      <input id="pfAge" type="number" inputmode="numeric" min="5" max="60" step="1" placeholder="如 9" />
-    </div>
-    <div class="form-row">
-      <label for="pfRacket">球拍（英寸）</label>
-      <select id="pfRacket">
-        <option value="">未设置（按 26 英寸）</option>
-        <option value="25">25 英寸</option>
-        <option value="26">26 英寸</option>
-        <option value="27">27 英寸</option>
-      </select>
-    </div>
-    <div class="actions" style="margin-top:8px">
-      <button id="pfSave" class="primary">保存</button>
-      <button id="pfAuto" class="chip">按身高推荐拍长</button>
-    </div>
-    <p class="hint" id="pfStat">未填写时按 26 英寸、无年龄分档处理（功能不受影响）。</p>
-  </div>
-  <div class="panel">
-    <h2>当前生效的形态门限</h2>
-    <div id="formThrShort" class="hint">—</div>
-  </div>
-</section>
-
-<!-- 形态门限初值（与 app/data/form_thresholds_v1.json 同内容；file:// 直开时 fetch 不可用，用此内嵌块） -->
-<script type="application/json" id="formThresholdsJson">
-{
-  "version": "v1-20261028",
-  "source": "20261027 四段 120fps 视频 pose 缓存 + 传感器宏观段；儿童 1 人初值；D7a 到位后升 v2",
-  "backswing_duration_s": {
-    "p10": 0.149,
-    "p50": 0.351,
-    "p90": 0.904,
-    "note": "视频前挥段（顶点→触球），与传感器宏观段 pre_span 同口径"
-  },
-  "followthrough_duration_s": {
-    "p10": 0.034,
-    "p50": 0.109,
-    "p90": 0.284
-  },
-  "k3_prep_ratio": {
-    "p10": 0.049,
-    "p50": 0.329,
-    "p90": 0.757
-  },
-  "k2_shoulder_abduction_deg": {
-    "p10": 111.069,
-    "p50": 124.53,
-    "p90": 154.296
-  },
-  "k2_torso_rotation_deg": {
-    "p10": 1.94,
-    "p50": 6.417,
-    "p90": 11.228
-  },
-  "ft_over_shoulder_rate": 0.375,
-  "video_to_sensor_scale": {
-    "backswing": 0.594,
-    "note": "前挥段同口径比值（替代旧 0.5 的全准备段口径）；≈1.0 为理想"
-  },
-  "forearm_ratio_by_age": {
-    "8-10": null,
-    "11-13": null,
-    "14-16": null
-  },
-  "population": "child_single",
-  "note": "null 字段 = 待回填；App 对 null 回退现有硬编码门限"
-}
-</script>
-
+</div>
 <script>
 "use strict";
 
-// App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B70S7-20261029";   // VTI 自适应门限 + 甜区口径文案 + 导出加 sess_state/vti 列
+// ============================================================
+// 0. 协议常量 —— 与主 App app/index.html L466-L501 逐字一致
+//    （若固件契约变更，必须同步此处，不得各自演化）
+// ============================================================
+const BUILD = "SC-08-20261031";
 
-// =====================================================================
-// 0. 协议常量（与固件约定）
-// =====================================================================
 const PROTO = {
   IMPACT: {
     deviceName: "Tennis_Sensor_01",
@@ -470,50 +189,44 @@ const PROTO = {
     serviceUUID: "19b10000-e8f2-537e-4f6c-d104768a1214",
     charUUID:    "19b10001-e8f2-537e-4f6c-d104768a1214",
   },
-  STEP1: {
-    deviceName: "XIAO-IMU-416",
-    serviceUUID: "0000aaaa-0000-1000-8000-00805f9b34fb",
-    charUUID:    "0000aaab-0000-1000-8000-00805f9b34fb",
-    pktBytes: 62,   // [seq u16][5×{ax,ay,az} float]
-  },
+  // Step4 窗口契约：396 样本 × 12 通道 @960Hz（微观段）
   WINDOW: {
-    channels: 12,        // ax,ay,az, gx,gy,gz, roll,pitch,yaw, hx,hy,hz (LSM6DSV320X)
-    samples: 396,        // [B54] 138宏观前(120Hz) + 48微观前 + 162微观后 (960Hz) + 48宏观后(120Hz)
-    sampleRate: 960,     // Hz —— 仅微观段；宏观段为 MACRO_RATE，分段索引见 MICRO_*
-    bytes: 9504,         // 396 × 12 × int16
-    chunks: 41,          // 9504 / 232 → 41 片
-    chunkPayload: 232,   // 每片载荷字节数 (12B 头 + 232B = 244B/片)
-    T0_INDEX: 186,       // 138 + 48：T0 在窗内的固定索引
-    MICRO_START: 138,    // 微观段起始索引（宏观前结束）
-    MICRO_END: 347,      // 微观段结束索引（含）([B54] 138+48+162-1=347）
-    MACRO_RATE: 120,     // 宏观段速率 (Hz)
+    channels: 12,        // ax,ay,az, gx,gy,gz, roll,pitch,yaw, hx,hy,hz
+    samples: 396,
+    sampleRate: 960,
+    bytes: 9504,
+    chunks: 41,
+    chunkPayload: 232,
+    T0_INDEX: 186,
+    MICRO_START: 138,
+    MICRO_END: 347,
+    MACRO_RATE: 120,
   },
-  // Step4 窗口分片包头 (12B)：[chunk_index u8][flags u8][seq u8][total u8][plen u16][crc16 u16][fw u8][rsv×3]
-  // flags: bit[1:0]=chunk_type(0起/1中/2末), bit[3:2]=impact_class(0 NORMAL/1 FRAME/2 FOREIGN)
-  // 系统包(心跳/电池)沿用旧头：[magic u8=0xA5][flags u8][seq u16=0xFFFE][ts u32][off u16][len u16][batt u16]
   SYS_MAGIC: 0xA5,
   CHUNK_HDR: 12,
-  // 原始 int16 → 物理单位换算
   SCALE_A:   0.000488,                 // g/LSB    @ ±16g
   SCALE_G:   0.140 * Math.PI / 180,    // rad/s/LSB @ ±4000dps
-  SCALE_ANG: 0.01,                     // °/LSB    (roll/pitch/yaw, 0.01°)
+  SCALE_ANG: 0.01,                     // °/LSB
   SCALE_HG:  0.010417,                 // g/LSB    @ ±320g
 };
 
-// =====================================================================
-// 1. 日志工具
-// =====================================================================
+// ============================================================
+// 1. 日志
+// ============================================================
 const logEl = document.getElementById("log");
-function log(msg, cls = "") {
+function log(msg, cls) {
   const line = document.createElement("div");
-  line.className = "log-line " + cls;
+  line.className = "log-line" + (cls ? " " + cls : "");
   const t = new Date().toLocaleTimeString("zh-CN", { hour12: false });
   line.textContent = `[${t}] ${msg}`;
   logEl.appendChild(line);
+  if (logEl.childNodes.length > 300) logEl.removeChild(logEl.firstChild);
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-// CRC16-CCITT (poly 0x1021, init 0xFFFF) —— 与固件 crc16_ccitt 必须 1:1
+// ============================================================
+// 2. CRC16-CCITT —— 与主 App L517-L525 逐字一致
+// ============================================================
 function crc16ccitt(bytes) {
   let crc = 0xFFFF;
   for (let i = 0; i < bytes.length; i++) {
@@ -524,26 +237,25 @@ function crc16ccitt(bytes) {
   return crc;
 }
 
-// =====================================================================
-// 2. BLE 数据流解析器（含分片重组）
-// =====================================================================
+// ============================================================
+// 3. BLE 数据流解析器 —— 与主 App L531-L666 逐字一致
+// ============================================================
 class BleStreamParser {
   constructor(onWindow) {
     this.onWindow = onWindow;   // callback(meta, data12x396)
-    this._buf = new Map();      // seq -> { bytes, createdAt, total, fw, filled, crcFail, quickClass, seen }
+    this._buf = new Map();
     this._lastSeq = -1;
-    this._delivered = new Set(); // 已完整交付过的 seq：迟到的重复分片直接忽略
+    this._delivered = new Set();
   }
 
-  // 处理一条特征值通知（Step4 冲击窗口协议的一个分片）
   handleChunk(buf) {
     const dv = new DataView(buf);
     if (buf.byteLength < PROTO.CHUNK_HDR) {
-      log(`分片过短: ${buf.byteLength}B`, "log-warn");
+      log(`分片过短: ${buf.byteLength}B`);
       return;
     }
 
-    // 系统包（心跳/电池）：byte0=0xA5，seq(u16)@2 = 0xFFFE，不进入窗口重组
+    // 系统包（心跳/电池）：byte0=0xA5，seq(u16)@2 = 0xFFFE
     if (dv.getUint8(0) === PROTO.SYS_MAGIC) {
       if (buf.byteLength >= 14 && dv.getUint16(2, true) >= 0xFFF0) {
         const battMv = dv.getUint16(12, true);
@@ -556,22 +268,20 @@ class BleStreamParser {
       return;
     }
 
-    // Step4 窗口分片头：byte0 = chunk_index (0..34)，不再有 magic
     const ci    = dv.getUint8(0);
-    const flags = dv.getUint8(1);   // bit[1:0]=chunk_type 0起/1中/2末; bit[3:2]=impact_class
-    const seq   = dv.getUint8(2);   // 窗口序号 (u8, 255 回绕)
-    const total = dv.getUint8(3);   // 总片数 = 35
+    const flags = dv.getUint8(1);
+    const seq   = dv.getUint8(2);
+    const total = dv.getUint8(3);
     const plen  = dv.getUint16(4, true);
     const crc   = dv.getUint16(6, true);
     const fw    = dv.getUint8(8);
     const ct    = flags & 0x03;
-    const imp   = (flags >> 2) & 0x03;   // 0 NORMAL / 1 FRAME / 2 FOREIGN
+    const imp   = (flags >> 2) & 0x03;
 
     if (plen + PROTO.CHUNK_HDR > buf.byteLength) {
-      log(`分片 #${ci} 声明长度 ${plen} 超出实际 ${buf.byteLength - PROTO.CHUNK_HDR}`, "log-warn");
+      log(`分片 #${ci} 声明长度 ${plen} 超出实际 ${buf.byteLength - PROTO.CHUNK_HDR}`);
       return;
     }
-    // 已交付过的 seq 又来分片 => 多链路堆叠/迟到重传，直接忽略
     if (this._delivered.has(seq)) return;
 
     let slot = this._buf.get(seq);
@@ -581,31 +291,25 @@ class BleStreamParser {
                total, fw, filled: 0, crcFail: 0, quickClass: null, seen: new Set() };
       this._buf.set(seq, slot);
     }
-    // 同 (chunk_index,plen) 的重复分片忽略：防止 filled 虚胖导致"伪完整"PASS
     const dupKey = ci * 65536 + plen;
     if (slot.seen.has(dupKey)) return;
     slot.seen.add(dupKey);
-    // 首片(chunk_index=0) flags bit[3:2] 携带固件判决：0 NORMAL / 1 FRAME / 2 FOREIGN
-    // Step4 flags v2 已把击球/旋转位移交 AI，bit[5:4]/bit[7:6] 恒为 0，App 不再解析
     if (ct === 0) slot.quickClass = imp;
 
-    // CRC16-CCITT 校验（与固件 crc16_ccitt 1:1）
     const payload = new Uint8Array(buf, PROTO.CHUNK_HDR, plen);
     if (crc16ccitt(payload) !== crc) {
       slot.crcFail++;
-      log(`seq=${seq} 分片 #${ci} CRC 不符`, "log-warn");
+      log(`seq=${seq} 分片 #${ci} CRC 不符`);
     }
     slot.bytes.set(payload, ci * PROTO.WINDOW.chunkPayload);
     slot.filled += plen;
 
-    // 末分片(ct=2) 或收满 9504 字节 → 重组交付
     if (ct === 2 || slot.filled >= PROTO.WINDOW.bytes) {
       this._deliver(seq, slot);
     }
   }
 
   _deliver(seq, slot) {
-    // 解析为 12x396：按样本交错 int16（每 12 个 int16 = 一个采样点），再按通道缩放
     const i16 = new Int16Array(slot.bytes.buffer, slot.bytes.byteOffset,
                                PROTO.WINDOW.samples * PROTO.WINDOW.channels);
     const sc = [PROTO.SCALE_A, PROTO.SCALE_A, PROTO.SCALE_A,
@@ -619,25 +323,20 @@ class BleStreamParser {
         data[ch][i] = i16[i * PROTO.WINDOW.channels + ch] * sc[ch];
       }
     }
-    if (slot.filled < PROTO.WINDOW.bytes) {
-      log(`seq=${seq} 窗口不完整: 仅收到 ${slot.filled}/${PROTO.WINDOW.bytes}B`, "log-warn");
-    }
-    if (slot.crcFail > 0) {
-      log(`seq=${seq} 有 ${slot.crcFail} 片 CRC 校验失败`, "log-warn");
-    }
+    if (slot.filled < PROTO.WINDOW.bytes) log(`seq=${seq} 窗口不完整: ${slot.filled}/${PROTO.WINDOW.bytes}B`);
+    if (slot.crcFail > 0) log(`seq=${seq} 有 ${slot.crcFail} 片 CRC 失败`);
+
     const meta = { seq, timestamp: slot.createdAt, source: "impact",
                    recvBytes: slot.filled, total: slot.total, fw: slot.fw,
-                   crcFail: slot.crcFail, quickClass: slot.quickClass,
-                   strokeType: null, spinType: null };   // Step4: 击球/旋转移交 AI 判定
+                   crcFail: slot.crcFail, quickClass: slot.quickClass };
     this._buf.delete(seq);
     this._delivered.add(seq);
-    if (this._delivered.size > 64) {   // 只防近 64 个窗口的迟到副本（seq 为 u8，64 ≪ 256 回绕周期）
+    if (this._delivered.size > 64) {
       this._delivered.delete(this._delivered.values().next().value);
     }
     this.onWindow(meta, data);
   }
 
-  // 给 QC 引擎判断丢包用（seq 为 u8，需处理回绕）
   consumeSeq(seq) {
     let lost = false;
     if (this._lastSeq >= 0) {
@@ -650,13 +349,12 @@ class BleStreamParser {
 
   reset() { this._buf.clear(); this._lastSeq = -1; this._delivered.clear(); }
 
-  // 防止分片丢失导致的缓存泄漏：只保留最近 8 个 seq；丢弃未收齐的窗口要留痕
   _gc(keepSeq) {
     for (const s of this._buf.keys()) {
       if (s !== keepSeq && ((keepSeq - s + 256) & 0xFF) > 8) {
         const slot = this._buf.get(s);
         if (slot && slot.filled > 0) {
-          log(`seq=${s} 分片未收齐被丢弃 (${slot.filled}/${PROTO.WINDOW.bytes}B)`, "log-warn");
+          log(`seq=${s} 分片未收齐被丢弃 (${slot.filled}/${PROTO.WINDOW.bytes}B)`);
         }
         this._buf.delete(s);
       }
@@ -665,683 +363,16 @@ class BleStreamParser {
   get reasmStat() { return `缓存 ${this._buf.size} 个窗口`; }
 }
 
-// =====================================================================
-// 3. Sanity Check QC 引擎
-// =====================================================================
-const QC = {
-  PASS: "PASS",
-  FAIL_PACKET_LOSS: "FAIL_PACKET_LOSS",
-  FAIL_FRAME_HIT:     "FAIL_FRAME_HIT",
-  FAIL_FOREIGN_IMPACT:"FAIL_FOREIGN_IMPACT",
-  FAIL_NO_IMPACT:   "FAIL_NO_IMPACT",
-  FAIL_SPIKE_NOISE: "FAIL_SPIKE_NOISE",
-  FAIL_SATURATION:  "FAIL_SATURATION",
-  FAIL_GYRO_SAT:    "FAIL_GYRO_SAT",
-};
-
-// 「好球·低g削顶」是内部概念：固件板判 NORMAL_HIT，但 App 仅因低g加速度/陀螺削顶而 FAIL。
-// 低g ±16g 打真实击球必然触顶（合模长上限 16g×√3≈27.7g），属已知硬件局限，终端用户无需感知；
-// 高g(±320g)+陀螺通道完好，既不影响击球有效性，也不影响 F1/F2/F3 标定。
-// → 对外一律按 PASS（不拖低 Pass Rate）；硬件细节只在「技术详情」的饱和行露出，供调试。
-function isGoodClip(code, meta) {
-  return (code === QC.FAIL_SATURATION || code === QC.FAIL_GYRO_SAT)
-      && !!meta && meta.quickClass === 0;
-}
-// QC 是否视为通过（数据可用）
-function isQcOk(code, meta) { return code === QC.PASS || isGoodClip(code, meta); }
-// 日志/下拉框文案（削顶好球对外就是 PASS，不暴露硬件细节）
-function qcCodeText(code, meta) { return isGoodClip(code, meta) ? "PASS" : code; }
-
-class SanityCheckEngine {
-  constructor() {
-    this.total = 0; this.passed = 0;
-    this.last = null;
-  }
-  get passRate() { return this.total ? (this.passed / this.total * 100) : 0; }
-  get hwOk() { return this.passRate >= 98; }
-
-  // data: 12x396, meta: {seq, timestamp}
-  check(data, meta) {
-    this.total++;
-    const ax = data[0], ay = data[1], az = data[2];
-    const N = PROTO.WINDOW.samples;
-
-    // --- 合成线加速度（同时统计全零样本：静止也有 ~1g 重力，|a|<=0.02 必是未写入的空洞） ---
-    const aMag = new Float32Array(N);
-    let peakIdx = 0, peakVal = 0, zeroSamples = 0;
-    for (let i = 0; i < N; i++) {
-      aMag[i] = Math.hypot(ax[i], ay[i], az[i]);
-      if (aMag[i] > peakVal) { peakVal = aMag[i]; peakIdx = i; }
-      if (aMag[i] <= 0.02) zeroSamples++;
-    }
-
-    // --- 规则 A：丢包（seq 跳号 / 字节未收满 / 重复分片把 filled 抬满但数据有空洞） ---
-    const incomplete = meta.recvBytes != null && meta.recvBytes < PROTO.WINDOW.bytes;
-    const hasHoles = zeroSamples > N * 0.05;   // >5% 全零样本：必然不完整
-    if (meta.packetLoss || incomplete || hasHoles) {
-      return this._record(QC.FAIL_PACKET_LOSS,
-        { peakIdx, peakVal, zeroSamples }, data, meta);
-    }
-
-    // --- 规则 A2：固件刚体判决（与固件 quickAnalyzeImpact 对齐） ---
-    // FRAME_HIT：Step4 由微观段高频振动能量 E_hf 判决（台架标定前 FRAME_DETECT_ENABLE=0，暂不产生）。
-    // FOREIGN_IMPACT：无挥拍背景 或 持续能量不足（dwellN < 4）。
-    // quickClass 为 null（Step1/首片缺失）或 0（NORMAL/Mock）时不门控。
-    if (meta.quickClass === 1) {
-      return this._record(QC.FAIL_FRAME_HIT, { peakIdx, peakVal }, data, meta);
-    }
-    if (meta.quickClass === 2) {
-      return this._record(QC.FAIL_FOREIGN_IMPACT, { peakIdx, peakVal }, data, meta);
-    }
-
-    // --- 规则 B：阈值（无冲击） ---
-    if (peakVal < 5.0) {
-      return this._record(QC.FAIL_NO_IMPACT, { peakIdx, peakVal }, data, meta);
-    }
-
-    // --- 规则 C：孤立毛刺噪声（区分物理 ringing 与单点电气噪声） ---
-    // 高速冲击会激发连续多样本的结构阻尼振荡(ringing)，属真实信号；
-    // 电气/焊接噪声的特征是“宽度仅 1 个样本的孤立尖峰”。
-    // 用 ±2 点(5点)中值作为局域稳健电平：单点毛刺残差≈整个毛刺幅度，
-    // 连续振荡的中值会跟随波形、残差仅一个采样步长，从而区分二者。
-    // 阈值随冲击峰值自适应（ringing 幅度与冲击强度成正比，电气噪声不会）。
-    // 豁免窗非对称：上升沿很陡只需峰前 ~29ms，峰后结构 ringing 可持续 ~100ms。
-    const sr = PROTO.WINDOW.sampleRate;
-    const guardPre  = Math.round(0.03 * sr); // 峰前 ~12 点
-    const guardPost = Math.round(0.10 * sr); // 峰后 ~42 点，覆盖 ringing 主体
-    const spikeThr = Math.max(3.0, peakVal * 0.35);
-    let spikeCount = 0, maxJump = 0;
-    for (let i = 2; i < N - 2; i++) {
-      if (i >= peakIdx - guardPre && i <= peakIdx + guardPost) continue;
-      const w = [aMag[i-2], aMag[i-1], aMag[i], aMag[i+1], aMag[i+2]].sort((x, y) => x - y);
-      const resid = Math.abs(aMag[i] - w[2]); // 相对 5 点中值的偏离
-      if (resid > maxJump) maxJump = resid;
-      if (resid > spikeThr) spikeCount++;
-    }
-    // 偶发 1 个孤立点可容忍（量化抖动）；≥2 个才判定为硬件噪声
-    if (spikeCount >= 2) {
-      return this._record(QC.FAIL_SPIKE_NOISE,
-        { peakIdx, peakVal, maxJump, spikeCount, spikeThr }, data, meta);
-    }
-
-    // --- 规则 D：单轴“平顶削顶”（加速度 ±16g / 陀螺 ±4000dps） ---
-    // 真正的 ADC 削顶是原始码被钉在数值满量程，特征是：
-    //   幅值贴近满量程 且 连续样本几乎完全相等（平顶，无抖动）。
-    // 只是幅值大但样本仍在正常变化，属真实高量程冲击，不能判削顶；
-    // 多轴合成超限也不算，必须某一根轴被钉死。
-    // 加速度满量程码 32767×0.488mg≈15.99g；
-    // 陀螺满量程码 32767×140mdps≈4586.7dps≈80.06rad/s（本板配 ±4000dps 档；
-    // 标称 ±4000dps≈69.81rad/s 只是数据手册保证线性区的上限，超出仍可读但线性度不保证）。
-    // 一旦陀螺削顶，球速会被低估，必须判废，不能播报错误球速）。
-    const flatRun = (a, rail, flat) => {
-      let run = 0, best = 0;
-      for (let i = 0; i < a.length; i++) {
-        if (Math.abs(a[i]) < rail) { run = 0; continue; }
-        const prevNear = i > 0 && Math.abs(a[i - 1]) >= rail &&
-                         Math.sign(a[i - 1]) === Math.sign(a[i]);
-        run = prevNear ? ((Math.abs(a[i] - a[i - 1]) <= flat) ? run + 1 : 1) : 1;
-        if (run > best) best = run;
-      }
-      return best;
-    };
-    const RAIL_G = 15.90, FLAT_G = 0.05;     // 加速度 g
-    const RAIL_W = 79.60, FLAT_W = 0.12;     // 陀螺 rad/s（±4000dps 档码满≈80.06，取 99.4%）
-    let accSatRun = 0, accSatAxis = -1;
-    for (let ch = 0; ch < 3; ch++) {
-      const r = flatRun(data[ch], RAIL_G, FLAT_G);
-      if (r > accSatRun) { accSatRun = r; accSatAxis = ch; }
-    }
-    let gyroSatRun = 0, gyroSatAxis = -1;
-    for (let ch = 3; ch < 6; ch++) {
-      const r = flatRun(data[ch], RAIL_W, FLAT_W);
-      if (r > gyroSatRun) { gyroSatRun = r; gyroSatAxis = ch - 3; }
-    }
-    const maxSatRun = Math.max(accSatRun, gyroSatRun);
-    if (accSatRun >= 3) {
-      return this._record(QC.FAIL_SATURATION,
-        { peakIdx, peakVal, maxSatRun, satAxis: accSatAxis,
-          accSatRun, gyroSatRun, satSensor: gyroSatRun >= 3 ? "acc+gyro" : "acc" },
-        data, meta);
-    }
-    if (gyroSatRun >= 3) {
-      return this._record(QC.FAIL_GYRO_SAT,
-        { peakIdx, peakVal, maxSatRun, satAxis: gyroSatAxis,
-          accSatRun, gyroSatRun, satSensor: "gyro" }, data, meta);
-    }
-
-    return this._record(QC.PASS,
-      { peakIdx, peakVal, maxJump, spikeCount, spikeThr,
-        maxSatRun: 0, accSatRun: 0, gyroSatRun: 0 }, data, meta);
-  }
-
-  _record(code, info, data, meta) {
-    if (isQcOk(code, meta)) this.passed++;
-    this.last = { code, info, data, meta };
-    return { code, info, passRate: this.passRate, hwOk: this.hwOk };
-  }
-}
-
-// =====================================================================
-// 4. 声音反馈引擎（<10ms 暴击音 + 连击/达成音效 + 固定话术）
-// =====================================================================
-// 话术库：7 类 × 10 条（占位文本）。正式录音包到位后：
-//   ① 把音频放进 app/audio/voice/<类别>_<序号>.mp3（如 speed_1.mp3）
-//   ② 把 VOICE_PACK_READY 置 true → 优先播音轨，缺失才回退 TTS
-// 冻结决策：正式版不用浏览器 TTS；占位期用 TTS 兜底，技术视图标注「占位」。
-// 家庭视图红线：零术语、不说数字（球速除外，球速是产品主指标）、永不负面。
-const VOICE_PACK_READY = false;
-const VOICE_LINES = {
-  speed: [
-    "这一球 {v} 公里！", "球速 {v} 公里，不错！", "{v} 公里，继续保持！",
-    "这拍打出 {v} 公里！", "球速 {v}，节奏很好！", "{v} 公里，稳稳的！",
-    "漂亮的 {v} 公里！", "{v} 公里，手上有感觉！", "又一拍 {v} 公里！",
-    "{v} 公里，越来越顺！",
-  ],
-  backswing: [
-    "球拍再往后拉一点，蓄力更足", "引拍再充分一点，球会更重", "先把拍子带到位，再发力",
-    "引拍稍微赶了点，慢半拍试试", "拍子多留一会儿，力量就有了", "向后多准备一点，击球更从容",
-    "把拍子拉满，再送出去", "慢一点起手，快一点出手", "引拍再深一点，更容易打中甜区",
-    "起手别太急，拍子先到位",
-  ],
-  followthrough: [
-    "收拍再送远一点，动作会更好看", "击球后把拍子带完整", "跟着球走，收拍别停",
-    "随挥再长一点，球更稳", "打完这一拍，把拍子送出去", "收拍稍快，慢一点更容易控制落点",
-    "拍子跟着挥到底", "收拍慢一点，节奏更好", "挥到最后别着急停",
-    "把动作做完整，会更漂亮",
-  ],
-  vti_warn: [
-    "这球震动稍大，往甜区打会更舒服", "击球点有点偏，往中间靠靠", "球拍震了一下，试试打甜区",
-    "打偏一点也正常，下一球往中间打", "震动偏大，握拍放松加找甜区", "这球打到拍边了，甜区更省力",
-    "拍面偏了一点，往中间打手感更好", "震动有点大，瞄准甜区试试", "这球偏了点，甜区打起来更轻松",
-    "握拍放松，往甜区打更稳",
-  ],
-  vti_alarm: [
-    "震动偏大，打甜区会舒服很多", "这拍震得明显，击球点往中间收一收", "可能打偏了，下一球瞄准甜区",
-    "球拍震手，试着用拍面中间击球", "震动比较大，往甜区打能省不少力", "这球打边上啦，甜区更护手",
-    "击球点偏了，往中间打会更顺", "震动明显，握拍放松、瞄准甜区", "偏得有点多，下一球找找甜区",
-    "拍面中间击球，手会舒服很多",
-  ],
-  combo: [
-    "三连击！", "连续三个，节奏起来了！", "又来一个，稳！", "连续好球，保持这个节奏！",
-    "三球连中，很棒！", "手感来了，继续！", "连着打好几个，太厉害了！",
-    "稳稳的连续，真不错！", "一口气连着打，漂亮！", "连续击球，节奏很稳！",
-  ],
-  achieve: [
-    "连续十个！太厉害了！", "十连击达成，今天的进步看得见！", "又是一个里程碑！",
-    "连成一片了，继续保持！", "十球连击，专注力满分！", "达成新纪录，为你骄傲！",
-    "连续好多球，越来越稳！", "这个坚持，了不起！", "又达成一个目标，继续！",
-    "纪录刷新，节奏完美！",
-  ],
-};
-
-class AudioFeedbackEngine {
-  constructor() {
-    this.ctx = null;
-    this.impactBuf = null;
-    this.comboBuf = null;
-    this.achBuf = null;
-    this.enabled = true;
-    this.lastVoice = null;
-  }
-
-  async init() {
-    if (this.ctx) return;
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    this.ctx = new Ctx();
-    // 合成短促冲击音（噪声爆发 + 低频 thump）
-    this.impactBuf = this._synthImpact();
-    this.comboBuf = this._synthNotes([660, 990]);
-    this.achBuf = this._synthNotes([523, 659, 784, 1047]);
-    log("暴击音已合成", "log-info");
-  }
-
-  // 合成短促冲击音（噪声爆发 + 低频 thump，指数衰减）
-  _synthImpact() {
-    const sr = this.ctx.sampleRate;
-    const len = Math.floor(sr * 0.18);
-    const buf = this.ctx.createBuffer(1, len, sr);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) {
-      const t = i / len;
-      const noise = (Math.random() * 2 - 1) * Math.exp(-t * 22);
-      const thump = Math.sin(2 * Math.PI * 90 * t) * Math.exp(-t * 14) * 0.7;
-      d[i] = (noise * 0.65 + thump * 0.45) * (1 - t * 0.25);
-    }
-    return buf;
-  }
-
-  // 合成连续音符（连击 / 达成：短促上行，叠在暴击音之后）
-  _synthNotes(freqs, noteDur = 0.075) {
-    const sr = this.ctx.sampleRate;
-    const per = Math.floor(sr * noteDur);
-    const buf = this.ctx.createBuffer(1, per * freqs.length, sr);
-    const d = buf.getChannelData(0);
-    freqs.forEach((f, n) => {
-      for (let i = 0; i < per; i++) {
-        const t = i / per;
-        const env = Math.min(1, t * 30) * Math.exp(-t * 3.5);
-        d[n * per + i] += Math.sin(2 * Math.PI * f * (i / sr)) * env * 0.5;
-      }
-    });
-    return buf;
-  }
-
-  // 通用缓冲播放（delay 秒，用于错开暴击音）
-  _play(buf, gain, delay = 0) {
-    if (!this.enabled || !this.ctx || !buf) return;
-    if (this.ctx.state === "suspended") this.ctx.resume();
-    const src = this.ctx.createBufferSource();
-    src.buffer = buf;
-    const g = this.ctx.createGain();
-    g.gain.value = gain;
-    src.connect(g).connect(this.ctx.destination);
-    src.start(this.ctx.currentTime + delay);
-  }
-
-  // 暴击音：必须 <10ms 触发
-  playImpact() {
-    if (!this.enabled || !this.ctx || !this.impactBuf) return;
-    if (this.ctx.state === "suspended") this.ctx.resume();
-    const t0 = this.ctx.currentTime;
-    const src = this.ctx.createBufferSource();
-    src.buffer = this.impactBuf;
-    const g = this.ctx.createGain();
-    g.gain.value = 0.9;
-    src.connect(g).connect(this.ctx.destination);
-    src.start(0);
-    const lat = (this.ctx.currentTime - t0) * 1000;
-    return lat; // ms
-  }
-
-  playCombo() { this._play(this.comboBuf, 0.5, 0.20); }
-  playAchieve() { this._play(this.achBuf, 0.55, 0.20); }
-
-  // 一句固定话术：音频包优先，缺失/未就位回退 TTS（占位期）
-  say(cat, vars) {
-    const lines = VOICE_LINES[cat];
-    if (!lines || !lines.length) return null;
-    const i = Math.floor(Math.random() * lines.length);
-    const text = lines[i].replace(/\{v\}/g, vars && vars.v != null ? String(vars.v) : "");
-    const src = `audio/voice/${cat}_${i + 1}.mp3`;
-    const rec = { cat, text, src, placeholder: !VOICE_PACK_READY };
-    this.lastVoice = rec;
-    if (VOICE_PACK_READY) this._playVoiceFile(src, text);
-    else this.speak(text);
-    return rec;
-  }
-
-  _playVoiceFile(src, fallbackText) {
-    try {
-      const a = new Audio(src);
-      let done = false;
-      const fb = () => { if (!done) { done = true; this.speak(fallbackText); } };
-      a.onerror = fb;
-      const p = a.play();
-      if (p && p.catch) p.catch(fb);
-    } catch (e) { this.speak(fallbackText); }
-  }
-
-  // 语音播报（不阻塞暴击音）
-  speak(text) {
-    if (!("speechSynthesis" in window)) return;
-    if (window.__ttsMuted) return;   // 录音模式：不播报，避免被麦克风录进去
-    try {
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = "zh-CN"; u.rate = 1.15; u.volume = 1;
-      window.speechSynthesis.speak(u);
-    } catch (e) { log("TTS 失败: " + e.message, "log-warn"); }
-  }
-}
-
-// =====================================================================
-// 5. 波形渲染（ECharts）
-// =====================================================================
-class WaveformView {
-  constructor(el) {
-    this.el = el;
-    this.chart = echarts.init(el, "dark");
-    this._renderEmpty();
-  }
-
-  // 始终下发“完整 option”，避免 notMerge 全量替换时丢失 yAxis/grid/轴类型
-  _buildOption(series, xData) {
-    const names = ["Ax","Ay","Az","Gx","Gy","Gz","Roll","Pitch","Yaw","Hx","Hy","Hz"];
-    return {
-      backgroundColor: "transparent",
-      animation: false,
-      tooltip: { trigger: "axis" },
-      legend: { data: names, textStyle: { color: "#8b949e" }, top: 0 },
-      grid: { left: 55, right: 24, top: 38, bottom: 52 },
-      xAxis: {
-        type: "category", data: xData || [], name: "sample idx",
-        boundaryGap: false, axisLabel: { color: "#8b949e" },
-      },
-      yAxis: {
-        type: "value", name: "g / rad/s / °", scale: true,
-        axisLabel: { color: "#8b949e" },
-        splitLine: { lineStyle: { color: "#21262d" } },
-      },
-      dataZoom: [
-        { type: "inside", xAxisIndex: 0 },
-        { type: "slider", xAxisIndex: 0, height: 18, bottom: 12 },
-      ],
-      series: series || [],
-    };
-  }
-
-  _renderEmpty() {
-    this.chart.setOption(this._buildOption([], []), true);
-  }
-
-  render(data12x396, peakIdx, t0Idx) {
-    const names = ["Ax","Ay","Az","Gx","Gy","Gz","Roll","Pitch","Yaw","Hx","Hy","Hz"];
-    const colors = ["#f85149","#d29922","#3fb950","#58a6ff","#bc8cff","#f778ba","#79c0ff","#56d364","#ffa657","#ff7b72","#e3b341","#7ee787"];
-    const xData = Array.from({ length: PROTO.WINDOW.samples }, (_, i) => i);
-    const series = names.map((n, ch) => ({
-      name: n, type: "line", showSymbol: false,
-      lineStyle: { width: 1.2, color: colors[ch] },
-      data: Array.from(data12x396[ch]),
-    }));
-    // 垂直标注线（挂在 Ax 系列上，随类目轴定位）：T0 = 微观段起点+48，PEAK = 冲击峰值
-    if (series[0]) {
-      const mlines = [];
-      // 名义 T0 参考线（蓝虚线）—— 仅当与实测 T0 不重合时画，避免标签叠在一起
-      if (PROTO.WINDOW.T0_INDEX != null && t0Idx !== PROTO.WINDOW.T0_INDEX)
-        mlines.push({ xAxis: PROTO.WINDOW.T0_INDEX,
-          lineStyle: { color: "#58a6ff", type: "dashed", width: 1 },
-          label: { color: "#79c0ff", formatter: `名义T0 #${PROTO.WINDOW.T0_INDEX}` } });
-      // 实测 T0（绿实线）—— 始终画；与名义 186 重合即代表固件对齐成功
-      if (t0Idx != null) {
-        const off = windowTimeMs(t0Idx);
-        mlines.push({ xAxis: t0Idx,
-          lineStyle: { color: "#3fb950", type: "solid", width: 2 },
-          label: { color: "#3fb950",
-                   formatter: `实测T0 #${t0Idx} ${off >= 0 ? "+" : ""}${off.toFixed(0)}ms${Math.abs(off) <= 10 ? " ✓" : ""}` } });
-      }
-      // 峰值线（红虚线）—— 与实测 T0 相距 ≤4 样本时省略，避免两个标签叠在一起
-      if (peakIdx != null && (t0Idx == null || Math.abs(peakIdx - t0Idx) > 4))
-        mlines.push({ xAxis: peakIdx,
-          lineStyle: { color: "#ff4444", type: "dashed", width: 1 },
-          label: { color: "#ff6666", formatter: `PEAK #${peakIdx}` } });
-      series[0].markLine = { silent: true, symbol: "none", data: mlines };
-    }
-
-    this.chart.setOption(this._buildOption(series, xData), true);
-  }
-
-  resize() { this.chart.resize(); }
-}
-
-// =====================================================================
-// 6. Mock 设备（合成冲击数据，端到端验证）
-// =====================================================================
-class MockDevice {
-  constructor(onChunk) {
-    this.onChunk = onChunk;
-    this.seq = 0;
-    this.running = false;
-  }
-  start() {
-    this.running = true;
-    this._tick();
-  }
-  stop() { this.running = false; }
-  _tick() {
-    if (!this.running) return;
-    this._emitImpact();
-    // 每 1.2~2.5 秒一次"击球"
-    setTimeout(() => this._tick(), 1200 + Math.random() * 1300);
-  }
-  _emitImpact() {
-    const N = PROTO.WINDOW.samples, C = PROTO.WINDOW.channels;
-    const i16 = new Int16Array(N * C);
-    const T0 = PROTO.WINDOW.T0_INDEX;                 // 冲击固定在 T0=idx186
-    const invA = 1 / PROTO.SCALE_A, invG = 1 / PROTO.SCALE_G, invHg = 1 / PROTO.SCALE_HG;
-    const peakA = 8 + Math.random() * 6;              // 8~14g
-    for (let i = 0; i < N; i++) {
-      // 名义微观时间轴（宏观段只是 8 点平均，包络近似不变，直接按微观时间算）
-      const dt = (i - T0) / PROTO.WINDOW.sampleRate;
-      // 高斯冲击包络
-      const env = Math.exp(-(dt * dt) / (2 * 0.008 * 0.008)) * peakA;
-      const noise = (Math.random() - 0.5) * 0.05;     // 单位: g
-      // ax,ay,az (g)
-      i16[i*C+0] = Math.round((env * 0.6 + noise) * invA);
-      i16[i*C+1] = Math.round((env * 0.3 + noise) * invA);
-      i16[i*C+2] = Math.round((env * 0.8 + noise + 1.0) * invA);   // 含重力
-      // gx,gy,gz (rad/s)
-      const w = env * 8;
-      i16[i*C+3] = Math.round((w * 0.5 + noise) * invG);
-      i16[i*C+4] = Math.round((w * 0.8 + noise) * invG);
-      i16[i*C+5] = Math.round((w * 0.3 + noise) * invG);
-      // roll,pitch,yaw (0.01°)
-      i16[i*C+6] = Math.round(dt * 300 / PROTO.SCALE_ANG);
-      i16[i*C+7] = Math.round(dt * 200 / PROTO.SCALE_ANG);
-      i16[i*C+8] = 0;
-      // hx,hy,hz (高g加速度 g, 可超 ±16g)
-      i16[i*C+9]  = Math.round((env * 0.6 + noise) * invHg);
-      i16[i*C+10] = Math.round((env * 0.3 + noise) * invHg);
-      i16[i*C+11] = Math.round((env * 0.8 + noise + 1.0) * invHg);
-    }
-    const bytes = new Uint8Array(i16.buffer);
-    // 分片发送（Step4: 每片载荷 232B，共 41 片，12B 头含 chunk_index/CRC16）
-    const payloadPerChunk = PROTO.WINDOW.chunkPayload;
-    const totalChunks = PROTO.WINDOW.chunks;
-    const seq = this.seq++ & 0xFF;                    // seq 为 u8
-    for (let ci = 0; ci < totalChunks; ci++) {
-      const off = ci * payloadPerChunk;
-      const len = Math.min(payloadPerChunk, bytes.length - off);
-      const payload = bytes.subarray(off, off + len);
-      const chunk = new ArrayBuffer(PROTO.CHUNK_HDR + len);
-      const dv = new DataView(chunk);
-      dv.setUint8(0, ci);                                                     // chunk_index
-      dv.setUint8(1, ci === 0 ? 0 : (ci === totalChunks - 1 ? 2 : 1));        // chunk_type 0起/1中/2末
-      dv.setUint8(2, seq);                                                    // seq u8
-      dv.setUint8(3, totalChunks);                                            // total
-      dv.setUint16(4, len, true);                                             // plen
-      dv.setUint16(6, crc16ccitt(payload), true);                             // crc16
-      dv.setUint8(8, 39);                                                     // fw build
-      new Uint8Array(chunk, PROTO.CHUNK_HDR).set(payload);
-      // 模拟分片间微小间隔
-      setTimeout(() => this.onChunk(chunk), ci * 4);
-    }
-  }
-}
-
-// =====================================================================
-// 7. App 控制器
-// =====================================================================
-const parser = new BleStreamParser(onWindow);
-const qc = new SanityCheckEngine();
-const audio = new AudioFeedbackEngine();
-const view = new WaveformView(document.getElementById("chart"));
-window.addEventListener("resize", () => view.resize());
-
-let btDevice = null, btServer = null, btChar = null;
-let mockDev = null;
-let step1Samples = null, step1Seq = -1;
-let currentWindow = null; // {meta, data, qc}
-// 本次连接以来的全部窗口（含拍框/异物/丢包），断开后保留，下次点【连接设备】时重置
-let sessionWindows = [];
-let sessionStartTs = 0;
-let labeledCount = 0;
-let activeBlockLabel = null;   // 块级标签（映射标定必需）。非 null 时，新窗口 note 自动前缀 [块名]。
-// 会话状态：VTI 三重门限第 1 重。训练中才做震动提醒；捡球/暂停时静默（操作态过滤捡球弹响）
-let sessionState = "train";    // train | pause
-let goodStreak = 0;            // 连续有效击球计数（连击 / 达成音效与话术）
-
-// ---------- 技术演示视图 toggle ----------
-// 家庭视图（默认）：零术语，只显示正手/反手徽章、引拍/随挥徽章、球速大字
-// 技术演示视图：额外显示 score 数字、gy_mean 原始值、校准入口
-let techModeOn = false;
-let _headerClickCount = 0, _headerClickTimer = null;
-function setupTechModeToggle() {
-  const header = document.querySelector('header');
-  if (!header) return;
-  header.style.cursor = 'pointer';
-  header.addEventListener('click', () => {
-    _headerClickCount++;
-    clearTimeout(_headerClickTimer);
-    _headerClickTimer = setTimeout(() => { _headerClickCount = 0; }, 2000);
-    if (_headerClickCount >= 5) {
-      _headerClickCount = 0;
-      techModeOn = !techModeOn;
-      applyTechModeClass();
-      // 重渲染当前窗口以刷新数字行显隐
-      if (currentWindow) { updateQcPanel(currentWindow.qc); updateDiagnosis(currentWindow); }
-      log(`技术演示视图: ${techModeOn ? 'ON' : 'OFF'}（header 连点 5 次切换）`, "log-info");
-    }
-  });
-}
-function applyTechModeClass() {
-  document.body.classList.toggle('tech-mode', techModeOn);
-}
-
-const $ = id => document.getElementById(id);
-const connBadge = $("connStatus");
-
-function setConn(text, cls) {
-  connBadge.textContent = text;
-  connBadge.className = "badge " + cls;
-}
-
-// ---------- 窗口到达（冲击协议 / mock 共用） ----------
-function onWindow(meta, data) {
-  let res;
-  try {
-  meta.packetLoss = parser.consumeSeq(meta.seq);
-  meta.receivedAt = new Date();   // 本地到达时刻（HH:MM:SS，供会话列表/导出）
-  res = qc.check(data, meta);
-  const w = { meta, data, qc: res };
-  meta.t0Index = findT0Index(data);   // 实测 T0（详情面板读数 + 波形标注 + 验证固件对齐）
-  meta.strokeFhBh = findStrokeFhBh(data, meta.t0Index);  // 正反手 W2 零校准硬判决（App 端，固件不再下发）
-  // K3 个人基线只吃有效击球窗：异物/拍框/丢包窗的时长特征不具语义，无条件入 buf 会把 running P50 拉偏
-  meta.form = isQcOk(res.code, meta)
-    ? formCompute(data, meta.strokeFhBh && meta.strokeFhBh.side) : null;
-  meta.vti = vtiEvaluate({ meta, data }); // VTI 三重门限 + 三级分档（与本窗一同留存，回看时直接复用）
-  meta.sessState = sessionState;          // 窗口到达时的会话状态快照（train/pause，供导出后剔除捡球窗）
-  currentWindow = w;
-  sessionWindows.push(w);        // 含 FAIL 窗口，全部留存到本次会话结束
-  // 块级标签自动前缀：activeBlockLabel 存在且当前 note 还没写 → 前缀 [块名]
-  if (activeBlockLabel && !w.meta.note) {
-    w.meta.note = `[${activeBlockLabel}]`;
-  }
-  voiceAutoTrigger(meta);        // 自动录音：击球窗口一到达即录 5 秒（无按键）
-  updateWinSelector(true);
-  updateQcPanel(res);
-  updateDiagnosis(w);
-  formRenderThresholds();        // 刷新技术视图里的生效门限 / K3 基线 / 实测对照
-
-  view.render(data, res.info.peakIdx, meta.t0Index);
-  } catch (err) { log(`[DBG] onWindow 异常: ${err.message}\n${err.stack}`, "log-fail"); return; }
-
-  // ---- 声音反馈：暴击音必触发（任何一球都不允许沉默）----
-  // 音效与话术分层：音效 <10ms 出手（含连击/达成）；话术每球最多一句，按优先级取。
-  const vtiRes = meta.vti || { level: "off" };
-  let spd = null;
-  if (isQcOk(res.code, meta)) {
-    spd = estimateSpeed(data);
-    meta.speedKmh = spd.kmh;          // 存进 meta：回顾页/分享卡直接复用，无需重算
-    $("speedVal").textContent = spd.kmh.toFixed(0);
-  }
-  meta.milestone = updateStreak(res, meta);   // combo / achieve / null
-  audio.init().then(() => {
-    const lat = audio.playImpact();
-    $("audioLat").textContent = lat != null ? lat.toFixed(1) + " ms" : "—";
-    if (meta.milestone === "combo") audio.playCombo();
-    else if (meta.milestone === "achieve") audio.playAchieve();
-  });
-  if (spd) {
-    const [cat, vars] = pickVoice(currentWindow, vtiRes, spd);
-    const rec = audio.say(cat, vars);
-    if (rec) {
-      $("ttsStat").textContent = rec.placeholder ? "占位·TTS" : "录音包";
-      $("voiceLastStat").textContent = rec.text + (rec.placeholder ? "（占位）" : "");
-    }
-  } else {
-    $("ttsStat").textContent = "（未通过，不播报）";
-  }
-
-  $("winCount").textContent = (parseInt($("winCount").textContent) || 0) + 1;
-  $("reasmStat").textContent = parser.reasmStat;
-  const qkName = meta.quickClass === 1 ? "FRAME"
-                : meta.quickClass === 2 ? "FOREIGN"
-                : meta.quickClass === 0 ? "NORMAL" : "N/A";
-  log(`窗口 seq=${meta.seq} ${qcCodeText(res.code, meta)} 板判=${qkName} peak=${res.info.peakVal.toFixed(2)}g`,
-      isQcOk(res.code, meta) ? "log-pass" : "log-fail");
-}
-
-// ---------- 本次连接窗口选择器（回看含 FAIL 在内的任意窗口） ----------
-function hhmmss(d) {
-  const p = n => String(n).padStart(2, "0");
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-
-function updateWinSelector(selectLatest) {
-  const sel = $("winSel");
-  sel.innerHTML = "";
-  sessionWindows.forEach((w, i) => {
-    const o = document.createElement("option");
-    o.value = i;
-    const qk = w.meta.quickClass === 1 ? "FRAME"
-             : w.meta.quickClass === 2 ? "FOREIGN"
-             : w.meta.quickClass === 0 ? "NORMAL" : "—";
-    o.textContent = `#${i + 1} ${hhmmss(w.meta.receivedAt)} seq=${w.meta.seq} ` +
-                    `${qcCodeText(w.qc.code, w.meta)} 板判=${qk} ${w.qc.info.peakVal.toFixed(1)}g` +
-                    (w.meta.note ? ` 🏷${w.meta.note}` : "");
-    sel.appendChild(o);
-  });
-  if (selectLatest) sel.value = sessionWindows.length - 1;
-  updateSessStat();
-}
-
-function updateSessStat() {
-  const n = sessionWindows.length;
-  const passN = sessionWindows.filter(w => isQcOk(w.qc.code, w.meta)).length;
-  const el = $("sessStat");
-  if (!n) { el.textContent = ""; return; }
-  el.textContent = `本次连接共 ${n} 个窗口（PASS ${passN}，其余 ${n - passN}）`;
-}
-
-// 选择历史窗口：重新载入图表 + QC 面板（currentWindow 同步切换，单窗口导出即导出所选）
-$("winSel").addEventListener("change", () => {
-  const i = parseInt($("winSel").value);
-  const w = sessionWindows[i];
-  if (!w) return;
-  currentWindow = w;
-  updateQcPanel(w.qc);
-  updateDiagnosis(w);
-  view.render(w.data, w.qc.info.peakIdx, w.meta.t0Index);
-  if (isQcOk(w.qc.code, w.meta)) {
-    const spd = estimateSpeed(w.data);
-    $("speedVal").textContent = spd.kmh.toFixed(0);
-  }
-});
-
-// 球速估算（碰撞物理模型，Brody/Cross）：
-//   1) 入射拍头速：取 T0 前 30ms 角速度峰 × 拍长 —— 不能取全窗峰，T0 瞬间球的
-//      冲量会使拍体角速度阶跃 +600~2000dps（实测 seq23 701→2695），那不是拍速
-//   2) 出球速 = 拍头速 × (1+e)/(1+m球/M拍) ≈ ×1.42：球在拍床上被弹性反弹，
-//      v_ball > v_racket；忽略来球速度（快对拉另加 10~20km/h，测不了不估）
-const SPEED_R_M         = 0.76;    // [B55] 有效挥拍半径 = 拍长 27in(0.685) + 旋转中心后移 ~7.5cm。
-                                   //   0.685→0.76（≈+11%）：2026-10-19 球场复核「球速大致准，再高 ~10km/h」
-const SPEED_PRE_WIN_N   = 48;      // 入射拍速取 T0 前 48 点 @960Hz ≈ 50ms
-const SPEED_LEAD_N      = 10;      // [B54] 排除 T0 前 ~10.4ms 接触区：碰撞给拍体的角速度阶跃/振铃
-                                   //   （实测 Gz 在 T0 前 8ms 反号剧烈振荡）会翻倍高估球速——
-                                   //   2026-10-19 seq8/9 取到 45.9/52.1 rad/s，恰好复现用户报的 170/193km/h
-const SPEED_COLLISION_K = 1.5;     // 2.0→1.5：2026-10-15 球场实测估值偏高30%+，除以1.33校正
-const SPEED_T0_BACKTRACK_MS = 20;  // 与固件 B51 同规则（固件 T0_HG_BACKTRACK_N=19×1.0417ms≈20ms）
-
-// 窗内样本相对名义 T0（idx186）的时间（ms）—— 按三段非均匀速率映射（契约 §4.4，B54）
+// ============================================================
+// 4. 时间映射与 T0 —— 与主 App L1336-L1357 逐字一致
+// ============================================================
 function windowTimeMs(i) {
   const r = PROTO.WINDOW.sampleRate;
-  if (i < PROTO.WINDOW.MICRO_START) return (-1148.5 + 8 * i) / r * 1000;             // 宏观前 120Hz
-  if (i <= PROTO.WINDOW.MICRO_END)  return (i - PROTO.WINDOW.T0_INDEX) / r * 1000;   // 微观 960Hz
-  return (165.5 + 8 * (i - 348)) / r * 1000;                                         // 宏观后 120Hz
+  if (i < PROTO.WINDOW.MICRO_START) return (-1148.5 + 8 * i) / r * 1000;
+  if (i <= PROTO.WINDOW.MICRO_END)  return (i - PROTO.WINDOW.T0_INDEX) / r * 1000;
+  return (165.5 + 8 * (i - 348)) / r * 1000;
 }
 
-// 实测 T0：与固件 relocateT0 同规则 —— 取高g合模长峰值，回追 20ms 取最大正向跃变（碰撞前沿）。
-// 用高g（Hx,Hy,Hz）而非低g：真实击球低g ±16g 削顶，跃变被削平会导致定位失真。
 function findT0Index(data) {
   const hx = data[9], hy = data[10], hz = data[11];
   const mag = i => Math.hypot(hx[i], hy[i], hz[i]);
@@ -1350,93 +381,24 @@ function findT0Index(data) {
   for (let i = 0; i < N; i++) { const v = mag(i); if (v > peakM) { peakM = v; peakIdx = i; } }
   const tPeak = windowTimeMs(peakIdx);
   let t0 = peakIdx, bestJump = -Infinity;
-  for (let i = peakIdx; i >= 0 && (tPeak - windowTimeMs(i)) <= SPEED_T0_BACKTRACK_MS; i--) {
+  const BACK_MS = 20;
+  for (let i = peakIdx; i >= 0 && (tPeak - windowTimeMs(i)) <= BACK_MS; i--) {
     if (i > 0) { const j = mag(i) - mag(i - 1); if (j > bestJump) { bestJump = j; t0 = i; } }
   }
   return t0;
 }
 
-function estimateSpeed(data) {
-  const gx = data[3], gy = data[4], gz = data[5];
-  const t0 = findT0Index(data);   // 实测真实触球点（固件 B51 已按同规则对齐 idx186）
-  // 入射拍速峰：T0 前 ~50ms(48点) .. T0-SPEED_LEAD_N（整段排除接触区，避开碰撞阶跃/振铃），
-  // 下限夹到微观段起点
-  let wPeak = 0;
-  const lo = Math.max(PROTO.WINDOW.MICRO_START, t0 - SPEED_PRE_WIN_N);
-  const hi = t0 - SPEED_LEAD_N;
-  for (let i = lo; i <= hi && i >= 0; i++) {
-    const w = Math.hypot(gx[i], gy[i], gz[i]);
-    if (w > wPeak) wPeak = w;
-  }
-  const ballSpeedKmh = wPeak * SPEED_R_M * 3.6 * SPEED_COLLISION_K;
-  let comment = "引拍非常及时！";
-  if (ballSpeedKmh < 45) comment = "发力稍弱，继续加速！";
-  else if (ballSpeedKmh > 100) comment = "暴力击球，注意控制落点！";
-  return { kmh: ballSpeedKmh, comment, t0 };
-}
-
-// =====================================================================
-// 3.5 VTI（击球震动传递指数）—— 与 tools/injury_analyzer.py::vti 逐位一致
-// =====================================================================
-// 定义：T0±20ms 内 Hx/Hy/Hz 经 100~200Hz 零相位带通 → 三轴合模长能量 e(t) →
-//       VTI = 峰值幅值 × τ（τ = T0 后 ln(e)~t 线性拟合斜率倒数的绝对值，ms）
-// 滤波器：scipy butter(2,[100,200],btype='band',fs=960) 的 4 阶 b/a 系数（硬编码），
-//       lfilter_zi 稳态初值 + odd 反射补边 14 点 + 前后向双滤波 = scipy filtfilt。
-// 验证：tools/_vti_filter_check.py 回放 data/球场实测_20261027 的 148 个 NORMAL_HIT，
-//       比值 App/scipy = 1.000000，分档不一致 0/148（门槛值可直接沿用 Python 标定）。
-// 宏观段 T0（120Hz < 200Hz Nyquist）无法解析该频段 → 返回 NaN，不参与反馈。
+// ============================================================
+// 5. VTI 带通滤波器 —— 与主 App L1388-L1399 / L1440-L1475 逐字一致
+// ============================================================
 const VTI = {
   B: [0.0722308753257532, 0, -0.1444617506515064, 0, 0.0722308753257532],
   A: [1, -1.8242053040886, 1.9723313677328869, -1.1179891643895472, 0.3981522939214399],
   ZI: [-0.0722308753257532, -0.0722308753257532,
         0.0722308753257532,  0.0722308753257532],
-  PAD_MAX: 14,          // = 3*max(len(b),len(a))-1
-  HALF_MS: 20,          // T0±20ms 观察窗
-  F1_HALF_MS: 10,       // F1 门限的取峰窗（与 injury_analyzer.f1 同口径）
-  GATE_F1_G: 10,        // 三重门限第 3 重：F1>10g 才给反馈（保留打框等高力度事件）
-  TH_FH: [100, 130],    // 正手 (预警, 干预)：20261027 148 窗 P75/P90 —— 冷启动兜底
-  TH_BH: [50, 60],      // 反手：暂用旧值，等反手 20+ 数据后重定 —— 冷启动兜底
-  // 自适应门限（20261029 实测：VTI 绝对值跨会话漂 5.3× / 0.6×，固定值不可跨硬件硬套）
-  // 本次会话累积 ≥ADAPT_N 球后改用会话内 P75/P90；下限=固定值的 FLOOR_RATIO 倍，防"全员正常却报警"
-  ADAPT_N: 12,
-  BUF_MAX: 100,
-  FLOOR_RATIO: 0.6,
+  PAD_MAX: 14,
 };
 
-// 会话内 VTI 分布（分侧，滚存最近 BUF_MAX 球）；与 tools/injury_analyzer.py 同口径
-const vtiHist = { FH: [], BH: [] };
-function vtiResetHist() { vtiHist.FH = []; vtiHist.BH = []; }
-
-// 分位数（numpy 默认 linear 插值口径：idx=(n-1)*p）
-function vtiPct(arr, p) {
-  if (!arr.length) return NaN;
-  const a = arr.slice().sort((x, y) => x - y);
-  const i = (a.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
-  return lo === hi ? a[lo] : a[lo] + (a[hi] - a[lo]) * (i - lo);
-}
-
-// 解析本球生效门限：冷启动→固定值；热→会话 P75/P90（带绝对下限）
-function vtiResolveTh(side) {
-  const isBh = side === "反手";
-  const base = isBh ? VTI.TH_BH : VTI.TH_FH;
-  const h = isBh ? vtiHist.BH : vtiHist.FH;
-  // 冷启动期（该侧不足 ADAPT_N 球）不判档：只累计分布，门限稳住后再给提示，
-  // 避免"固定兜底值不当"（反手 50/60 明显偏低）在新会话前 12 球集中误报
-  if (h.length < VTI.ADAPT_N) {
-    return { th: base, calib: true, src: `校准中 ${h.length}/${VTI.ADAPT_N} 球` };
-  }
-  const w0 = vtiPct(h, 0.75), a0 = vtiPct(h, 0.90);
-  const th = [Math.max(w0, VTI.FLOOR_RATIO * base[0]), Math.max(a0, VTI.FLOOR_RATIO * base[1])];
-  return { th, src: `会话 P75/P90 ${th[0].toFixed(0)}/${th[1].toFixed(0)}（n=${h.length}）` };
-}
-function vtiPushHist(side, v) {
-  if (!isFinite(v)) return;
-  const h = side === "反手" ? vtiHist.BH : vtiHist.FH;
-  h.push(v);
-  if (h.length > VTI.BUF_MAX) h.shift();
-}
-
-// 转置直接型 II + 初始状态（scipy lfilter 同口径）
 function vtiLfilter(b, a, x, zi) {
   const N = Math.max(b.length, a.length);
   const bb = new Float64Array(N), aa = new Float64Array(N);
@@ -1452,17 +414,14 @@ function vtiLfilter(b, a, x, zi) {
   return y;
 }
 
-// scipy.signal.filtfilt(method='pad', padtype='odd') 同口径
 function vtiFiltfilt(x) {
   const n = x.length;
   const pl = Math.max(0, Math.min(VTI.PAD_MAX, n - 1));
-  // 稳态初值 = lfilter_zi × 该次输入的首样本
   const run = (inp, x0) => vtiLfilter(VTI.B, VTI.A, inp, VTI.ZI.map(v => v * x0));
   if (pl === 0) {
     const yf = run(x, x[0]);
     return Array.from(run(Array.from(yf).reverse(), yf[n - 1])).reverse();
   }
-  // odd 反射：左 = 2*x[0]-x[pl..1]，右 = 2*x[-1]-x[-2..-(pl+1)]
   const ext = new Float64Array(n + 2 * pl);
   for (let k = 0; k < pl; k++) {
     ext[k] = 2 * x[0] - x[pl - k];
@@ -1474,52 +433,177 @@ function vtiFiltfilt(x) {
   return Array.from(yb).reverse().slice(pl, pl + n);
 }
 
-// 窗口内 T0±halfMs 的高g合模长峰值（= Python f1 的峰值）
-function vtiHPeak(data, t0, halfMs) {
-  const t0t = windowTimeMs(t0);
-  let pk = 0;
-  for (let i = 0; i < PROTO.WINDOW.samples; i++) {
-    if (Math.abs(windowTimeMs(i) - t0t) <= halfMs) {
-      const v = Math.hypot(data[9][i], data[10][i], data[11][i]);
-      if (v > pk) pk = v;
+// ============================================================
+// 6. 数学小工具（FFT / 统计）
+// ============================================================
+function fftMag(x, NFFT) {
+  const re = new Float64Array(NFFT), im = new Float64Array(NFFT);
+  const n = Math.min(x.length, NFFT);
+  for (let i = 0; i < n; i++) re[i] = x[i];
+  // 位反转
+  let j = 0;
+  for (let i = 0; i < NFFT; i++) {
+    if (i < j) { const t = re[i]; re[i] = re[j]; re[j] = t;
+                 const u = im[i]; im[i] = im[j]; im[j] = u; }
+    let m = NFFT >> 1;
+    while (m > 1 && j >= m) { j -= m; m >>= 1; }
+    j += m;
+  }
+  for (let len = 2; len <= NFFT; len <<= 1) {
+    const ang = -2 * Math.PI / len;
+    const wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < NFFT; i += len) {
+      let cr = 1, ci = 0;
+      const half = len >> 1;
+      for (let k = 0; k < half; k++) {
+        const ur = re[i + k], ui = im[i + k];
+        const vr = re[i + k + half] * cr - im[i + k + half] * ci;
+        const vi = re[i + k + half] * ci + im[i + k + half] * cr;
+        re[i + k] = ur + vr; im[i + k] = ui + vi;
+        re[i + k + half] = ur - vr; im[i + k + half] = ui - vi;
+        const ncr = cr * wr - ci * wi;
+        ci = cr * wi + ci * wr;
+        cr = ncr;
+      }
     }
   }
-  return pk;
+  const out = new Float64Array(NFFT >> 1);
+  for (let k = 0; k < (NFFT >> 1); k++) out[k] = Math.hypot(re[k], im[k]);
+  return out;
 }
 
-function vtiCompute(data, t0) {
-  const nan = { vti: NaN, tau: NaN, pkAmp: NaN, n: 0, why: "—" };
-  if (!(t0 >= PROTO.WINDOW.MICRO_START && t0 <= PROTO.WINDOW.MICRO_END)) {
-    return { ...nan, why: "宏观段T0" };
+function mean(a) { if (!a.length) return NaN; let s = 0; for (const v of a) s += v; return s / a.length; }
+function std(a) {
+  if (a.length < 2) return NaN;
+  const m = mean(a);
+  let s = 0;
+  for (const v of a) s += (v - m) * (v - m);
+  return Math.sqrt(s / (a.length - 1));
+}
+function median(a) {
+  if (!a.length) return NaN;
+  const b = a.slice().sort((x, y) => x - y);
+  const i = (b.length - 1) / 2, lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? b[lo] : (b[lo] + b[hi]) / 2;
+}
+
+// ============================================================
+// 7. 阈值（内嵌兜底，可被 ./install_check_v1.json 覆盖）
+//    null 字段 = 待台架标定；此处数值只为让功能可跑，不是标定值
+// ============================================================
+const TH_DEFAULT = {
+  version: "embedded-20261031",
+  m_total_g: 10,
+  band_hz: [60, 470],
+  float_peak: { prom: 6.0 },
+  tau_band_hz: [100, 200],
+  tau_obs_ms: [20, 160],
+  tau_valid_range_ms: [5, 120],
+  tau_tol_drift: 0.20,
+  reliability: { cv_max: 0.05, tau_ok_min: 0.90, tau_ok_fail: 0.60 },
+  azimuth: { range_max: 0.15 },
+  golden: { peak_shift_hz: 5, peak_shift_pct: 0.05, new_peak_prom_rel: 1.5 },
+};
+let TH = JSON.parse(JSON.stringify(TH_DEFAULT));
+let TH_SRC = "内嵌兜底（待台架标定）";
+
+function mergeNonNull(dst, src) {
+  for (const k in src) {
+    if (src[k] === null || src[k] === undefined) continue;
+    if (typeof src[k] === "object" && !Array.isArray(src[k]) && typeof dst[k] === "object") {
+      mergeNonNull(dst[k], src[k]);
+    } else {
+      dst[k] = src[k];
+    }
   }
+}
+async function loadTh() {
+  try {
+    const r = await fetch("./install_check_v1.json", { cache: "no-store" });
+    if (!r.ok) return;
+    const j = await r.json();
+    mergeNonNull(TH, j);
+    TH_SRC = "install_check_v1.json (" + (j.version || "?") + ")";
+    log(`阈值已加载：${TH_SRC}`);
+  } catch (_) { /* 无文件时静默，用内嵌兜底 */ }
+}
+
+// ============================================================
+// 8. 特征提取
+// ============================================================
+const NFFT = 1024;
+const FS = PROTO.WINDOW.sampleRate;
+
+function freqOf(k) { return k * FS / NFFT; }
+
+// post 段（T0 之后到微观段末）的幅值谱：去均值 + Hann + 零填充 FFT
+function spectrumOf(magArr) {
+  const n = magArr.length;
+  let m = 0;
+  for (let i = 0; i < n; i++) m += magArr[i];
+  m /= n;
+  const x = new Float64Array(Math.min(n, NFFT));
+  for (let i = 0; i < x.length; i++) {
+    const w = n > 1 ? 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (n - 1)) : 1;
+    x[i] = (magArr[i] - m) * w;
+  }
+  return fftMag(x, NFFT);
+}
+
+// 60~470Hz 内取前 maxN 个窄带峰（prom = 峰幅 / 该频段中位数）
+function findPeaks(spec, fLo, fHi, maxN) {
+  const k0 = Math.max(1, Math.ceil(fLo * NFFT / FS));
+  const k1 = Math.min(spec.length - 2, Math.floor(fHi * NFFT / FS));
+  const band = [];
+  for (let k = k0; k <= k1; k++) band.push(spec[k]);
+  const med = median(band) || 1e-9;
+  const cand = [];
+  for (let k = k0; k <= k1; k++) {
+    if (spec[k] > spec[k - 1] && spec[k] >= spec[k + 1]) {
+      cand.push({ f: freqOf(k), v: spec[k], prom: spec[k] / med });
+    }
+  }
+  cand.sort((a, b) => b.prom - a.prom);
+  return cand.slice(0, maxN);
+}
+
+// 100~200Hz 带通后的包络衰减常数 τ（与 VTI 同滤波器、同拟合方式，只换观察窗）
+// 返回 { tau, pkAmp, ok, n }
+function bandTau(data, t0, chans) {
+  const S = PROTO.WINDOW.MICRO_START, E = PROTO.WINDOW.MICRO_END;
+  const n = E - S + 1;
   const t0t = windowTimeMs(t0);
-  const ids = [];
-  for (let i = 0; i < PROTO.WINDOW.samples; i++) {
-    if (Math.abs(windowTimeMs(i) - t0t) <= VTI.HALF_MS) ids.push(i);
-  }
-  if (ids.length < 4) return { ...nan, why: "窗内点不足" };
-
-  // 三轴带通 → 平方和 → 合模长能量
-  const e2 = [[], [], []];
+  const comp = [];
   for (let c = 0; c < 3; c++) {
-    const seg = new Float64Array(ids.length);
-    for (let k = 0; k < ids.length; k++) seg[k] = data[9 + c][ids[k]];
-    const f = vtiFiltfilt(seg);
-    for (let k = 0; k < ids.length; k++) e2[c].push(f[k] * f[k]);
+    const seg = new Float64Array(n);
+    const ch = data[chans[c]];
+    for (let k = 0; k < n; k++) seg[k] = ch[S + k];
+    comp.push(vtiFiltfilt(seg));
   }
-  const et = [];
-  for (let k = 0; k < ids.length; k++) et.push(Math.sqrt(e2[0][k] + e2[1][k] + e2[2][k]));
-  let ki = 0;
-  for (let k = 1; k < et.length; k++) if (et[k] > et[ki]) ki = k;
-  const pkAmp = Math.sqrt(et[ki]);
+  const env = new Float64Array(n);
+  for (let k = 0; k < n; k++) {
+    const a = comp[0][k], b = comp[1][k], c = comp[2][k];
+    env[k] = Math.sqrt(a * a + b * b + c * c);
+  }
 
-  // τ：T0 之后 ln(e)~t 线性拟合，slope<0 → τ = -1/slope
-  const ts = [], le = [];
-  for (let k = 0; k < ids.length; k++) {
-    const t = windowTimeMs(ids[k]) - t0t;
-    if (t > 0 && et[k] > 0) { ts.push(t); le.push(Math.log(et[k])); }
+  // pkAmp：T0+0..20ms 包络峰值
+  let pkAmp = 0;
+  for (let i = Math.max(S, t0); i <= E; i++) {
+    const t = windowTimeMs(i) - t0t;
+    if (t >= 0 && t <= 20) { const e = env[i - S]; if (e > pkAmp) pkAmp = e; }
   }
-  if (ts.length < 3) return { vti: NaN, tau: NaN, pkAmp, n: ids.length, why: "τ样本不足" };
+
+  // τ：T0+20..160ms，ln(e) 对 t 线性拟合，τ = -1/slope
+  const ts = [], le = [];
+  for (let i = Math.max(S, t0); i <= E; i++) {
+    const t = windowTimeMs(i) - t0t;
+    if (t > TH.tau_obs_ms[0] && t <= TH.tau_obs_ms[1]) {
+      const e = env[i - S];
+      if (e > 0) { ts.push(t); le.push(Math.log(e)); }
+    }
+  }
+  if (ts.length < 3) return { tau: NaN, pkAmp, ok: false, n: ts.length };
+
   const m = ts.length;
   let mt = 0, me = 0;
   for (let k = 0; k < m; k++) { mt += ts[k]; me += le[k]; }
@@ -1529,1803 +613,853 @@ function vtiCompute(data, t0) {
     sxx += (ts[k] - mt) * (ts[k] - mt);
     sxy += (ts[k] - mt) * (le[k] - me);
   }
-  const slope = sxx !== 0 ? sxy / sxx : 0;
+  if (sxx <= 0) return { tau: NaN, pkAmp, ok: false, n: m };
+  const slope = sxy / sxx;               // 单位 1/ms
   const tau = slope < 0 ? -1 / slope : NaN;
-  const vti = isFinite(tau) ? pkAmp * tau : NaN;
-  return { vti, tau, pkAmp, n: ids.length, why: isFinite(vti) ? "" : "τ拟合失败" };
+  const [lo, hi] = TH.tau_valid_range_ms;
+  const ok = isFinite(tau) && tau >= lo && tau <= hi;
+  return { tau, pkAmp, ok, n: m };
 }
 
-// 三重门限 + 三级分档（Python classify_vti 同口径；等级 off = 未启用，不反馈）
-function vtiEvaluate(w, commit = true) {
-  const r = { level: "off", vti: NaN, tau: NaN, pkAmp: NaN, f1g: 0, n: 0, gate: [], why: "" };
-  if (!w) return r;
-  const t0 = w.meta.t0Index != null ? w.meta.t0Index : findT0Index(w.data);
-  const v = vtiCompute(w.data, t0);
-  r.vti = v.vti; r.tau = v.tau; r.pkAmp = v.pkAmp; r.n = v.n; r.why = v.why;
-  r.f1g = vtiHPeak(w.data, t0, VTI.F1_HALF_MS);
+// 单元敲击的全部特征
+function extractFeatures(data, t0) {
+  const E = PROTO.WINDOW.MICRO_END;
 
-  // 三重门限：① 会话状态=训练中 ② 固件板判 NORMAL_HIT ③ F1>10g
-  if (sessionState !== "train") r.gate.push("非训练中");
-  if (w.meta.quickClass !== 0) r.gate.push("非NORMAL_HIT");
-  if (!(r.f1g > VTI.GATE_F1_G)) r.gate.push("F1≤10g");
-  if (!isFinite(r.vti)) r.gate.push("VTI不可算");
-  if (r.gate.length) return r;
+  // 高 g 幅值（T0 之后）
+  const n = E - t0 + 1;
+  const magArr = new Float64Array(n);
+  let peakG = 0, hgClip = 0;
+  for (let i = t0; i <= E; i++) {
+    const a = data[9][i], b = data[10][i], c = data[11][i];
+    const v = Math.sqrt(a * a + b * b + c * c);
+    magArr[i - t0] = v;
+    if (v > peakG) peakG = v;
+    if (v >= 300) hgClip++;
+  }
 
-  const side = w.meta.strokeFhBh && w.meta.strokeFhBh.side;
-  // 先按"不含本球"的会话分布定门限，再把本球计入分布（防止自己抬高自己的门限）
-  const rt = vtiResolveTh(side);
-  const th = rt.th;
-  // 校准中不出结论（不播话术、不给徽章判定），只显示数值与进度
-  r.level = rt.calib ? "calib"
-    : (r.vti > th[1] ? "alarm" : (r.vti > th[0] ? "warn" : "ok"));
-  r.th = th;
-  r.thSrc = rt.src;
-  if (commit) vtiPushHist(side, r.vti);   // 重算（如切会话状态）不再重复入分布
-  return r;
-}
-
-// =====================================================================
-// 3.6 动作诊断（引拍 / 随挥）—— 与 tools/followthrough_rule_check.py 1:1
-// =====================================================================
-// 只用陀螺角量，与传感器安装朝向无关（重力方向由前窗逐轴中位数估计）。
-// 引拍：固定窗 [T0−600, T0−200]ms
-//       tb_score = min(转角/95°, 平均角速度/240dps)
-//       判定：≥0.93 有 / 0.83~0.93 不确定 / <0.83 无（门限 0.88，2026-10-24 由 196 窗重标定）
-// 随挥：[T0+40, T0+400]ms（跳过碰撞瞬态），角速度矢量积分 R 按重力方向分解：
-//       perp = 垂直于重力的模长（拍头由下往上）；par = 沿重力轴的有符号分量（绕过身体）
-//       post_total = hypot(perp, |par|)  ÷100° → ≥1.05 完整 / 0.95~1.05 不确定 / <0.95 不足
-// 注：keep / keep200 / brake50 只作诊断，不参与判决（实测会把完整随挥误杀）。
-const DIAG = {
-  RAD2DEG: 180 / Math.PI,
-  FT_LO_MS: 40, FT_HI_MS: 400, FT_TOTAL_DEG: 100,   // 随挥窗与几何总转角门限（度）
-  TB_LO_MS: -600, TB_HI_MS: -200,                    // 引拍窗（ms，相对实测 T0）
-  TB_ARC_DEG: 95, TB_MEAN_DPS: 240,                  // 引拍转角 / 平均角速度归一（score=1 的基准）
-  TB_SCORE_THR: 0.88,                                // 引拍门限（与 Python TB_SCORE_THR 同值）
-  FT_SCORE_THR: 1.00,                                // 随挥门限（等价几何总转角 100°）
-  BAND: 0.05,                                        // 三态「不确定」带半宽（与 Python BAND 同值）
-  GYRO_ALIVE_DPS: 1.0,                               // 全窗陀螺最大模长低于此值 → 无陀螺数据
-};
-
-// 与 Python ia._quantile 同口径（线性插值分位数；偶数样本取中间两点插值）
-function diagQuantile(vals, q) {
-  const xs = vals.slice().sort((a, b) => a - b);
-  if (!xs.length) return NaN;
-  if (xs.length === 1) return xs[0];
-  const pos = (xs.length - 1) * q;
-  const lo = Math.floor(pos), hi = Math.ceil(pos);
-  return xs[lo] + (xs[hi] - xs[lo]) * (pos - lo);
-}
-
-function diagTau(i, t0) { return windowTimeMs(i) - windowTimeMs(t0); }
-function diagOmegaDps(data, i) {
-  const k = DIAG.RAD2DEG;
-  return [data[3][i] * k, data[4][i] * k, data[5][i] * k];
-}
-function diagOmegaMag(data, i) {
-  return Math.hypot(data[3][i], data[4][i], data[5][i]) * DIAG.RAD2DEG;
-}
-function diagSegIds(t0, lo, hi) {
-  const out = [];
+  // 窗口完整性 / 低 g 削顶（低 g 不参与算法，只统计记录）
+  let zeroSamples = 0, lowClip = 0;
   for (let i = 0; i < PROTO.WINDOW.samples; i++) {
-    const t = diagTau(i, t0);
-    if (t >= lo && t <= hi) out.push(i);
+    const ax = data[0][i], ay = data[1][i], az = data[2][i];
+    if (Math.sqrt(ax * ax + ay * ay + az * az) <= 0.02) zeroSamples++;
+    if (Math.abs(ax) >= 15.5 || Math.abs(ay) >= 15.5 || Math.abs(az) >= 15.5) lowClip++;
   }
-  return out;
-}
-// 重力方向：宏观前段（idx 0..min(t0,MICRO_START)）逐轴中位数 → 单位矢量
-function diagGravityHat(data, t0) {
-  const n = Math.min(t0, PROTO.WINDOW.MICRO_START);
-  if (n < 8) return { gh: [0, 0, 1], ok: false };
-  const m = [];
-  for (let c = 0; c < 3; c++) {
-    const vals = [];
-    for (let i = 0; i < n; i++) vals.push(data[c][i]);
-    m.push(diagQuantile(vals, 0.5));
-  }
-  const mag = Math.hypot(m[0], m[1], m[2]);
-  if (mag < 1e-6) return { gh: [0, 0, 1], ok: false };
-  return { gh: [m[0] / mag, m[1] / mag, m[2] / mag], ok: mag >= 0.75 && mag <= 1.30 };
-}
-// 角速度矢量在给定索引序列上的梯形积分（deg，传感器坐标系）
-function diagRotVecIds(data, t0, ids) {
-  const R = [0, 0, 0];
-  for (let a = 0; a < ids.length - 1; a++) {
-    const i = ids[a], j = ids[a + 1];
-    const dt = (diagTau(j, t0) - diagTau(i, t0)) / 1000;
-    const oa = diagOmegaDps(data, i), ob = diagOmegaDps(data, j);
-    for (let k = 0; k < 3; k++) R[k] += 0.5 * (oa[k] + ob[k]) * dt;
-  }
-  return R;
-}
-// 按重力分解：(垂直于重力的模长, 沿重力轴的有符号分量)
-function diagDecompose(R, gh) {
-  const par = R[0] * gh[0] + R[1] * gh[1] + R[2] * gh[2];
-  const perp = Math.sqrt(Math.max(0, R[0] * R[0] + R[1] * R[1] + R[2] * R[2] - par * par));
-  return { perp, par };
-}
-// 转角（|ω| 的梯形积分，deg）
-function diagArc(data, t0, ids) {
-  if (ids.length < 2) return NaN;
-  let s = 0;
-  for (let a = 0; a < ids.length - 1; a++) {
-    const i = ids[a], j = ids[a + 1];
-    s += 0.5 * (diagOmegaMag(data, i) + diagOmegaMag(data, j)) *
-         ((diagTau(j, t0) - diagTau(i, t0)) / 1000);
-  }
-  return s;
+
+  const spec = spectrumOf(magArr);
+  const peaks = findPeaks(spec, TH.band_hz[0], TH.band_hz[1], 3);
+  const t = bandTau(data, t0, [9, 10, 11]);
+  const tw = bandTau(data, t0, [3, 4, 5]);   // 陀螺副通道，只展示与导出
+
+  return {
+    t0, peakG, hgClip, lowClip, zeroSamples,
+    tau: t.tau, pkAmp: t.pkAmp, tauOk: t.ok, tauN: t.n,
+    tauW: tw.tau,
+    spec, peaks,
+    p1: peaks[0] ? peaks[0].f : NaN, prom1: peaks[0] ? peaks[0].prom : NaN,
+    p2: peaks[1] ? peaks[1].f : NaN, prom2: peaks[1] ? peaks[1].prom : NaN,
+    p3: peaks[2] ? peaks[2].f : NaN, prom3: peaks[2] ? peaks[2].prom : NaN,
+  };
 }
 
-// =====================================================================
-// 3.7 形态门限 v2（APP-B70）—— 视频大样本分布 + K 变量归一化
-// 依据 docs/APP-B70任务书_视频校准规则v2_20261028.md：
-//   K1 身高（像素级归一化，±10% 残余可接受）
-//   K2 前臂长比例（分年龄档，待分析侧回填 → 当前 null 不参与）
-//   K3 在线校准：引拍占比 running P50（EMA α=0.2），判决看相对个人基线的偏移
-//   K4 拍长系数 = 拍长英寸 ÷ 26，用于引拍弧线类幅度门限归一化
-// 时长通道门限一律来自 app/data/form_thresholds_v1.json（不硬编码数值）；
-// null 字段 → 回退现有硬编码门限，功能不阻塞（任务书 §3 回退规则）。
-// 幅度通道：现有 tb_score / ft_score 判据原样保留，换算函数待下次采集标定。
-// =====================================================================
-const FORM_PROFILE_KEY = "nt_profile_v1";
-const FORM_K3_ALPHA = 0.2;      // K3 running P50 的 EMA 系数（任务书 §2.3）
-const FORM_K3_MIN_N = 10;       // 冷启动：每会话前 10 球只更新 P50、不参与判决（任务书 §2.3）
-const FORM_K3_REL_TOL = 0.6;    // 相对个人 P50 偏移超过 60% 视为「引拍偏赶」
-const FORM_BASE_INCH = 26;      // 拍长基准（26" → 系数 1.0）
+// ============================================================
+// 9. 金标指纹（localStorage，按 设备名 + 拍标识 分组）
+// ============================================================
+const GD_KEY = "nt_selfcheck_fp_v1";
 
-const FORM = {
-  json: null,                     // form_thresholds_v1.json 内容
-  jsonSrc: "未加载",              // fetch / 内嵌
-  profile: { height: null, age: null, racketIn: null },
-  // K3 基线按击球侧分开维护：正手引拍时长约是反手的 3 倍（20261029 实测 0.50s vs 0.15s），
-  // 混用一条基线会让反手 ratio 恒低于门限 → 全体误判「引拍不足」
-  k3Buf: { "正手": [], "反手": [] },   // 近 20 球引拍占比（rolling，分侧）
-  k3: { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } },
+function gdAll() { try { return JSON.parse(localStorage.getItem(GD_KEY) || "{}"); } catch (_) { return {}; } }
+function gdId() { return `${SC.devName || "?"}|${SC.racket.label || "默认"}`; }
+function gdLoad() { return gdAll()[gdId()] || null; }
+function gdSave(fp) {
+  const all = gdAll();
+  all[gdId()] = fp;
+  try { localStorage.setItem(GD_KEY, JSON.stringify(all)); } catch (_) {}
+}
+function gdClear() {
+  const all = gdAll();
+  delete all[gdId()];
+  try { localStorage.setItem(GD_KEY, JSON.stringify(all)); } catch (_) {}
+  log(`已清除金标：${gdId()}`);
+}
+
+// ============================================================
+// 10. 判决
+// ============================================================
+function evalVerdict() {
+  const valid = SC.taps.filter(t => t.valid);
+  // 注意：taps 里的字段名是 tau_ms（onWin 推送时即此命名），不是 tau；
+  // 曾误写 t.tau 导致 12 下全部判「τ 不可算」。
+  const taus = valid.map(t => t.tau_ms).filter(v => isFinite(v));
+  const cv = taus.length >= 2 ? std(taus) / mean(taus) : NaN;
+
+  const byAz = {};
+  for (const t of valid) {
+    if (!isFinite(t.tau_ms)) continue;
+    (byAz[t.azimuth] = byAz[t.azimuth] || []).push(t.tau_ms);
+  }
+  const azMed = {};
+  for (const k in byAz) azMed[k] = median(byAz[k]);
+  const azVals = Object.values(azMed).filter(v => isFinite(v));
+  const azRange = azVals.length >= 2
+    ? (Math.max(...azVals) - Math.min(...azVals)) / median(azVals) : NaN;
+
+  const okRatio = valid.length ? taus.length / SC.taps.length : 0;
+  const gd = gdLoad();
+  const reasons = [];
+  let fail = false, marg = false;
+  const cvMax = TH.reliability.cv_max, azMax = TH.azimuth.range_max;
+
+  // 样本量
+  if (valid.length < 4) { fail = true; reasons.push("有效敲击不足（<4）"); }
+  else if (valid.length < 12) { marg = true; reasons.push(`有效敲击 ${valid.length}/12，建议补测`); }
+
+  // 重复性
+  if (!isFinite(cv)) { fail = true; reasons.push("τ 不可算，无法评估重复性"); }
+  else if (cv > cvMax * 1.5) { fail = true; reasons.push(`τ 离散度 CV ${(cv * 100).toFixed(1)}%，明显偏大`); }
+  else if (cv > cvMax) { marg = true; reasons.push(`τ 离散度 CV ${(cv * 100).toFixed(1)}%，略偏大`); }
+
+  // 方位极差（环粘局部脱粘）
+  if (!isFinite(azRange)) { fail = true; reasons.push("方位数据不足，无法判定环向一致性"); }
+  else if (azRange > azMax * 1.5) { fail = true; reasons.push(`方位极差 ${(azRange * 100).toFixed(0)}%，疑似局部脱粘`); }
+  else if (azRange > azMax) { marg = true; reasons.push(`方位极差 ${(azRange * 100).toFixed(0)}%，略偏大`); }
+
+  // 有效比例
+  if (okRatio < TH.reliability.tau_ok_fail) { fail = true; reasons.push("多数敲击无法算出 τ（信号不足或窗口不完整）"); }
+  else if (okRatio < TH.reliability.tau_ok_min) { marg = true; reasons.push(`有效比例 ${(okRatio * 100).toFixed(0)}%`); }
+
+  // 新窄带峰（浮离峰）
+  let newPeak = false, peakDrift = false;
+  if (gd && Array.isArray(gd.peaks) && gd.peaks.length) {
+    for (const t of valid) {
+      const ps = t.peaks || [];
+      for (const p of ps) {
+        if (!isFinite(p.f) || p.prom < TH.float_peak.prom) continue;
+        const near = gd.peaks.some(g => Math.abs(g.f - p.f) <= TH.golden.peak_shift_hz);
+        if (!near) newPeak = true;
+      }
+    }
+    for (const g of gd.peaks) {
+      let best = Infinity;
+      for (const t of valid) for (const p of (t.peaks || [])) {
+        const d = Math.abs(p.f - g.f) / g.f;
+        if (d < best) best = d;
+      }
+      if (isFinite(best) && best > TH.golden.peak_shift_pct) peakDrift = true;
+    }
+    if (newPeak) { fail = true; reasons.push("出现新的窄带峰（疑似浮离/界面松动）"); }
+    else if (peakDrift) { marg = true; reasons.push("峰频相对金标漂移 >5%"); }
+    else reasons.push("峰形与金标一致");
+  } else {
+    reasons.push("首次测量：无金标，只判绝对项（重复性/方位/有效比例）");
+  }
+
+  // τ 相对金标漂移
+  let tauDrift = NaN;
+  if (gd && isFinite(gd.tau_mean) && isFinite(mean(taus)) && gd.tau_mean > 0) {
+    tauDrift = Math.abs(mean(taus) - gd.tau_mean) / gd.tau_mean;
+    if (tauDrift > TH.tau_tol_drift * 1.5) { fail = true; reasons.push(`τ 相对金标偏移 ${(tauDrift * 100).toFixed(0)}%`); }
+    else if (tauDrift > TH.tau_tol_drift) { marg = true; reasons.push(`τ 相对金标偏移 ${(tauDrift * 100).toFixed(0)}%`); }
+  }
+
+  const verdict = fail ? "FAIL" : (marg ? "MARGINAL" : "PASS");
+  return {
+    verdict, reasons, cv, azRange, azMed, okRatio,
+    tauMean: mean(taus), tauMedian: median(taus),
+    newPeak, peakDrift, tauDrift,
+    validCount: valid.length, total: SC.taps.length,
+    golden: gd,
+  };
+}
+
+function buildGolden(res) {
+  const peaks = [];
+  for (const t of SC.taps.filter(x => x.valid)) {
+    for (const p of (t.peaks || [])) {
+      if (!isFinite(p.f) || p.prom < TH.float_peak.prom) continue;
+      if (!peaks.some(g => Math.abs(g.f - p.f) <= TH.golden.peak_shift_hz)) {
+        peaks.push({ f: Math.round(p.f * 10) / 10, prom: Math.round(p.prom * 10) / 10 });
+      }
+    }
+  }
+  return {
+    v: 1, device: SC.devName, racket: { ...SC.racket }, ts: new Date().toISOString(),
+    tau_mean: res.tauMean, tau_median: res.tauMedian, cv: res.cv,
+    az_median: res.azMed, peaks, build: BUILD,
+    m_total_g: SC.racket.m,
+  };
+}
+
+// ============================================================
+// 11. 界面状态
+// ============================================================
+const AZ = [["A", "拍面侧"], ["B", "右棱"], ["C", "反面侧"], ["D", "左棱"]];
+const TAPS_TOTAL = 12;
+const RK_KEY = "nt_selfcheck_racket_v1";
+
+const SC = {
+  mode: "check",            // check = 自检（12 下自动收官 + PASS 写金标）；collect = 采集（手动收官）
+  running: false,
+  step: 0,                  // 下一个待敲的编号（0..），同时决定当前方位
+  taps: [],
+  lastWinAt: 0,
+  winCount: 0, lostCount: 0, missStreak: 0, notifyCount: 0,
+  sysPkt: 0, dataPkt: 0, ciSeen: {}, lastDataAt: 0, stallTimer: null,
+  firstChunkLogged: false, idleWinLogged: false, subscribedAt: 0,
+  device: null, char: null, onChar: null, onGatt: null,
+  devName: "", fw: null,
+  lastRes: null, lastFeat: null,
+  racket: { label: "", size: 26, grip: 0, m: 10, gripTape: true },
 };
 
-// 拍长系数 K4（未设置按 26" → 1.0，保证默认零改动）
-function formK4() {
-  const inch = FORM.profile.racketIn != null ? FORM.profile.racketIn : FORM_BASE_INCH;
-  return inch / FORM_BASE_INCH;
-}
-// 年龄分档（8~10 / 11~13 / 14~16），超出返回 null
-function formAgeBand(age) {
-  if (age == null) return null;
-  if (age >= 8 && age <= 10) return "8-10";
-  if (age >= 11 && age <= 13) return "11-13";
-  if (age >= 14 && age <= 16) return "14-16";
-  return null;
-}
+const $ = id => document.getElementById(id);
+const parser = new BleStreamParser(onWin);
 
-// ---- 生效门限解析（带来源标注，供技术演示视图展示）----
-function formResolveThresholds() {
-  const j = FORM.json || {};
-  const sc = j.video_to_sensor_scale || {};
-  const out = {
-    jsonVersion: j.version || null,
-    k4: formK4(),
-    // 幅度通道（K4 归一化；幅度换算待标定）
-    arcDeg: DIAG.TB_ARC_DEG / formK4(),
-    meanDps: DIAG.TB_MEAN_DPS / formK4(),
-    arcSrc: "硬编码基线 + K4 归一化（幅度换算待下次采集标定）",
-    dur: null, durSrc: "",
-    ftDur: null, ftDurSrc: "",
-    forearm: null, forearmSrc: "待回填",
-  };
-  // 引拍时长（视频分布分位 × 视频→传感器标定系数）
-  const bw = j.backswing_duration_s;
-  if (bw && bw.p10 != null && bw.p50 != null && sc.backswing != null) {
-    out.dur = {
-      p10: bw.p10 * sc.backswing,
-      p50: bw.p50 * sc.backswing,
-      p90: bw.p90 != null ? bw.p90 * sc.backswing : null,
-    };
-    out.durSrc = `视频分布 ${j.version || ""} × ${sc.backswing}`;
-  } else {
-    out.durSrc = "未启用（JSON backswing 分位或 scale 为 null → 回退硬编码）";
+// ============================================================
+// 12. 窗口回调
+// ============================================================
+function onWin(meta, data) {
+  SC.winCount++;
+  $("winCount").textContent = SC.winCount;
+  if (parser.consumeSeq(meta.seq)) {
+    SC.lostCount++;
+    $("lostCount").textContent = SC.lostCount;
   }
-  // 随挥时长（同理；当前 scale 为 null → 不启用，避免无依据翻转判决）
-  const fo = j.followthrough_duration_s;
-  if (fo && fo.p10 != null && fo.p50 != null && sc.followthrough != null) {
-    out.ftDur = {
-      p10: fo.p10 * sc.followthrough,
-      p50: fo.p50 * sc.followthrough,
-      p90: fo.p90 != null ? fo.p90 * sc.followthrough : null,
-    };
-    out.ftDurSrc = `视频分布 ${j.version || ""} × ${sc.followthrough}`;
-  } else {
-    out.ftDurSrc = "未启用（JSON followthrough scale 为 null → 回退）";
+  SC.lastWinAt = Date.now();
+  SC.missStreak = 0;
+  if (SC.winCount <= 3) {
+    log(`收到窗口 seq=${meta.seq} · ${meta.recvBytes}/${PROTO.WINDOW.bytes}B · 片 ${meta.total} · CRC 失败 ${meta.crcFail}`);
   }
-  // K2 前臂长比例（分年龄档）
-  const band = formAgeBand(FORM.profile.age);
-  const fr = j.forearm_ratio_by_age || {};
-  if (band && fr[band] != null) {
-    out.forearm = fr[band];
-    out.forearmSrc = `年龄档 ${band}`;
-  } else {
-    out.forearmSrc = band ? `年龄档 ${band} 未回填（待标定）` : "未设置年龄（不参与）";
+  const complete = meta.recvBytes >= PROTO.WINDOW.bytes;
+  if (complete && typeof meta.fw === "number" && meta.fw !== SC.fw) {
+    SC.fw = meta.fw;
+    $("devFw").textContent = String(meta.fw);
   }
-  return out;
-}
-
-// ---- 时长通道：与 tools/sensor_cp_phase.py 1:1 ----
-// 时间轴以名义 T0（idx186）为 0；|g| 单位 dps；阈值 = max(前40点|g| P60 × 1.5, 150dps)
-function formSeries(data) {
-  const N = PROTO.WINDOW.samples;
-  const t = new Float64Array(N), g = new Float64Array(N);
-  const R2D = DIAG.RAD2DEG;
-  for (let i = 0; i < N; i++) {
-    t[i] = windowTimeMs(i) / 1000;
-    g[i] = Math.hypot(data[3][i], data[4][i], data[5][i]) * R2D;
-  }
-  return { t, g };
-}
-function formArcBounds(t, g) {
-  const N = t.length;
-  let i0 = 0;
-  for (let i = 1; i < N; i++) if (Math.abs(t[i]) < Math.abs(t[i0])) i0 = i;
-  const pre40 = [];
-  for (let i = 0; i < Math.min(40, N); i++) pre40.push(g[i]);
-  const th = Math.max(diagQuantile(pre40, 0.6) * 1.5, 150);
-  let kStart = 0;
-  for (let j = i0; j >= 0; j--) { if (g[j] < th) { kStart = j; break; } }
-  let kEnd = N - 1;
-  let j = 0;
-  while (j < N && t[j] < 0.02) j++;
-  for (; j < N; j++) { if (g[j] < th) { kEnd = j; break; } }
-  // 引拍最深点（|g| 谷底）：区间 [kStart, T0-30ms]
-  let hi = 0;
-  for (let i = 1; i < N; i++) if (Math.abs(t[i] + 0.03) < Math.abs(t[hi] + 0.03)) hi = i;
-  let kExt = kStart;
-  if (hi - kStart >= 5) {
-    let m = Infinity;
-    for (let i = kStart; i <= hi; i++) if (g[i] < m) { m = g[i]; kExt = i; }
-  }
-  return { i0, kStart, kExt, kEnd };
-}
-// 单窗时长特征 + K3 在线更新（每窗只更新一次，在 onWindow 到达时调用）
-function formCompute(data, side) {
-  const { t, g } = formSeries(data);
-  const b = formArcBounds(t, g);
-  const preDur = t[b.i0] - t[b.kStart];
-  const postDur = t[b.kEnd] - t[b.i0];
-  const arcDur = t[b.kEnd] - t[b.kStart];
-  const ratio = arcDur > 1e-6 ? preDur / arcDur : NaN;
-  // K3：近 20 球引拍占比的中位数，再做 EMA(α=0.2) 平滑 → running P50
-  // 按击球侧分别累计：正反手引拍时长量级不同，共用一条基线会把反手整体判成「引拍不足」
-  const k3Key = (side === "正手" || side === "反手") ? side : null;
-  if (k3Key && isFinite(ratio)) {
-    const buf = FORM.k3Buf[k3Key], st = FORM.k3[k3Key];
-    buf.push(ratio);
-    if (buf.length > 20) buf.shift();
-    const med = diagQuantile(buf.slice(), 0.5);
-    st.p50 = st.p50 == null ? med : st.p50 + FORM_K3_ALPHA * (med - st.p50);
-    st.n++;
-  }
-  const k3 = k3Key ? FORM.k3[k3Key] : { p50: null, n: 0 };
-  return {
-    preDur, postDur, arcDur, ratio,
-    trunc: b.kEnd >= PROTO.WINDOW.samples - 1,   // 随挥未回基线（窗尾截断），时长不可信
-    k3Side: k3Key, k3P50: k3.p50, k3N: k3.n,   // 快照：回看历史窗口时用当时基线，不被后续球影响
-  };
-}
-
-// ---- 个人资料存取（localStorage，重装不丢）----
-function formLoadProfile() {
-  try {
-    const p = JSON.parse(localStorage.getItem(FORM_PROFILE_KEY) || "null");
-    if (p && typeof p === "object") {
-      FORM.profile.height = p.height != null ? Number(p.height) : null;
-      FORM.profile.age = p.age != null ? Number(p.age) : null;
-      FORM.profile.racketIn = p.racketIn != null ? Number(p.racketIn) : null;
+  if (!SC.running) {   // 未开始自检：不记录，但留一条痕迹，便于区分「没数据」和「没开始」
+    if (!SC.idleWinLogged) {
+      SC.idleWinLogged = true;
+      log(`收到窗口 seq=${meta.seq}，但还没点「开始自检」——数据不进表`);
     }
-  } catch (_) {}
-  const h = $("pfHeight"), a = $("pfAge"), r = $("pfRacket");
-  if (h) h.value = FORM.profile.height != null ? FORM.profile.height : "";
-  if (a) a.value = FORM.profile.age != null ? FORM.profile.age : "";
-  if (r) r.value = FORM.profile.racketIn != null ? String(FORM.profile.racketIn) : "";
-  formUpdateProfileStat();
-}
-function formSaveProfile() {
-  const h = parseFloat($("pfHeight").value), a = parseFloat($("pfAge").value);
-  const r = parseFloat($("pfRacket").value);
-  FORM.profile.height = isFinite(h) ? h : null;
-  FORM.profile.age = isFinite(a) ? a : null;
-  FORM.profile.racketIn = isFinite(r) ? r : null;
-  try { localStorage.setItem(FORM_PROFILE_KEY, JSON.stringify(FORM.profile)); } catch (_) {}
-  formUpdateProfileStat();
-  formRenderThresholds();
-}
-function formUpdateProfileStat() {
-  const el = $("pfStat");
-  if (!el) return;
-  const parts = [];
-  parts.push(FORM.profile.height != null ? `身高 ${FORM.profile.height}cm` : "身高未填");
-  parts.push(FORM.profile.age != null ? `年龄 ${FORM.profile.age} 岁` : "年龄未填");
-  parts.push(`拍长系数 K4=${formK4().toFixed(3)}`);
-  el.textContent = `已保存：${parts.join(" · ")}。资料只用于门限归一化，不影响正常使用。`;
-}
-// 按身高推荐拍长（25/26/27 三档），用户可改
-function formSuggestRacket() {
-  const h = parseFloat($("pfHeight").value);
-  if (!isFinite(h)) { $("pfStat").textContent = "先填身高，再点「按身高推荐拍长」。"; return; }
-  const inch = h < 120 ? 25 : (h <= 145 ? 26 : 27);
-  $("pfRacket").value = String(inch);
-  formSaveProfile();
+    return;
+  }
+
+  let t0 = PROTO.WINDOW.T0_INDEX;
+  let f = null;
+  try {
+    t0 = findT0Index(data);
+    f = extractFeatures(data, t0);
+  } catch (err) {
+    log(`特征提取失败：${err.message}`);
+    return;
+  }
+  SC.lastFeat = f;
+  drawSpec(f);
+
+  let status = "有效", valid = true;
+  if (!complete)            { valid = false; status = "窗口不完整"; }
+  else if (meta.crcFail > 0) { valid = false; status = `CRC ×${meta.crcFail}`; }
+  else if (f.zeroSamples > 0) { valid = false; status = "含空样本"; }
+  else if (f.hgClip > 0)     { valid = false; status = "高g削顶"; }
+  else if (f.peakG < 6)      { valid = false; status = "信号过弱"; }
+  else if (!isFinite(f.tau)) { status = "τ 不可算"; }
+  else if (!f.tauOk)         { status = "τ 超范围"; }
+
+  const az = AZ[Math.min(3, Math.floor(SC.step / 3))];
+
+  SC.taps.push({
+    n: SC.taps.length + 1,
+    azimuth: az[0], az_name: az[1],
+    peak_g: f.peakG, tau_ms: f.tau, pk_amp: f.pkAmp,
+    f1_hz: f.p1, prom1: f.prom1, f2_hz: f.p2, prom2: f.prom2,
+    peaks: (f.peaks || []).slice(0, 3),
+    low_clip: f.lowClip, hg_clip: f.hgClip,
+    valid, status, at: new Date().toISOString(),
+  });
+
+  if (valid) SC.step++;
+  log(`第 ${SC.taps.length} 下 · 方位 ${az[0]} · 峰 ${f.peakG.toFixed(0)}g · τ ${fmt(f.tau, 1)}ms · ${status}`);
+  renderTaps();
+  updateProgress();
+
+  if (SC.mode === "check" && SC.step >= TAPS_TOTAL) finishCheck(true);
 }
 
-// ---- JSON 载入：优先 app/data 文件，失败用内嵌同内容块（file:// 直开场景）----
-function formLoadJson() {
-  const applyJson = (obj, src) => {
-    FORM.json = obj;
-    FORM.jsonSrc = src;
-    formRenderThresholds();
-  };
-  const embedded = () => {
-    const el = document.getElementById("formThresholdsJson");
-    if (!el) return null;
-    try { return JSON.parse(el.textContent); } catch (_) { return null; }
-  };
-  applyJson(embedded(), "内嵌");
-  // 异步尝试外置文件（部署形态下以文件为准，便于分析侧更新而不改代码）
-  if (typeof fetch === "function") {
-    const emb = FORM.json;
-    fetch("data/form_thresholds_v1.json", { cache: "no-store" })
-      .then(r => (r.ok ? r.json() : null))
-      .then(obj => {
-        if (!obj) return;
-        if (emb && obj.version && emb.version && obj.version !== emb.version) {
-          log(`⚠ 内嵌门限 ${emb.version} 与 data 文件 ${obj.version} 不一致，已以文件为准（需同步内嵌块）`, "log-warn");
-        }
-        applyJson(obj, "data/form_thresholds_v1.json");
-      })
-      .catch(() => {});
+// ============================================================
+// 13. 渲染
+// ============================================================
+function fmt(v, d) {
+  return (typeof v === "number" && isFinite(v)) ? v.toFixed(d) : "—";
+}
+
+function renderTaps() {
+  const tb = $("taps");
+  if (!SC.taps.length) {
+    tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#6e7682">尚无数据</td></tr>';
+    return;
+  }
+  tb.innerHTML = SC.taps.map(t => `<tr class="${t.valid ? "" : "inv"}">
+    <td>${t.n}</td><td>${t.azimuth}</td>
+    <td>${fmt(t.peak_g, 1)}</td><td>${fmt(t.tau_ms, 1)}</td>
+    <td>${fmt(t.pk_amp, 3)}</td><td>${fmt(t.f1_hz, 0)}</td>
+    <td>${fmt(t.prom1, 2)}</td><td>${t.status}</td></tr>`).join("");
+}
+
+function updateProgress() {
+  const st = Math.min(SC.step, TAPS_TOTAL);
+  $("bar").style.width = (st / TAPS_TOTAL * 100).toFixed(1) + "%";
+  const az = AZ[Math.min(3, Math.floor(SC.step / 3))];
+  $("nowAz").textContent = SC.running ? `方位 ${az[0]} · ${az[1]}` : "—";
+  $("nowSub").textContent = SC.running
+    ? `第 ${Math.min(SC.step + 1, TAPS_TOTAL)} / ${TAPS_TOTAL} 下`
+    : "未开始";
+  $("now").classList.toggle("show", SC.running);
+}
+
+function drawSpec(f) {
+  const cv = $("spec");
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth || 320, H = cv.clientHeight || 150;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  }
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+
+  const padL = 26, padR = 6, padT = 8, padB = 18;
+  const pw = W - padL - padR, ph = H - padT - padB;
+  const fmax = 480;
+  const xOf = f => padL + Math.min(1, Math.max(0, f / fmax)) * pw;
+
+  // 判据带宽底带（60~470Hz）
+  g.fillStyle = "rgba(34,197,94,.10)";
+  g.fillRect(xOf(TH.band_hz[0]), padT, xOf(TH.band_hz[1]) - xOf(TH.band_hz[0]), ph);
+
+  g.strokeStyle = "#232830"; g.lineWidth = 1; g.beginPath();
+  for (let f = 0; f <= fmax; f += 100) {
+    const x = Math.round(xOf(f)) + 0.5;
+    g.moveTo(x, padT); g.lineTo(x, padT + ph);
+  }
+  g.stroke();
+  g.fillStyle = "#6e7682"; g.font = "9px ui-monospace,Menlo,Consolas,monospace"; g.textAlign = "center";
+  for (let f = 0; f <= fmax; f += 200) g.fillText(String(f), xOf(f), H - 5);
+
+  if (!f || !f.spec) {
+    g.fillStyle = "#5b6270"; g.font = "11px sans-serif"; g.textAlign = "center";
+    g.fillText("等待敲击…", W / 2, padT + ph / 2);
+    return;
+  }
+
+  const spec = f.spec;
+  let vmax = 0;
+  for (let k = 1; k < spec.length; k++) if (spec[k] > vmax) vmax = spec[k];
+  vmax = vmax || 1;
+  const yOf = v => padT + ph - Math.min(1, Math.max(0, v / vmax)) * ph * 0.92;
+
+  g.strokeStyle = "#22c55e"; g.lineWidth = 1.2; g.beginPath();
+  let started = false;
+  for (let k = 1; k < spec.length; k++) {
+    const fr = freqOf(k);
+    if (fr > fmax) break;
+    const x = xOf(fr), y = yOf(spec[k]);
+    if (!started) { g.moveTo(x, y); started = true; } else g.lineTo(x, y);
+  }
+  g.stroke();
+
+  g.fillStyle = "#f5c05a"; g.font = "9px ui-monospace,Menlo,Consolas,monospace"; g.textAlign = "left";
+  for (const p of (f.peaks || []).slice(0, 2)) {
+    if (!isFinite(p.f) || p.prom < TH.float_peak.prom) continue;
+    const x = xOf(p.f), y = yOf(p.v);
+    g.beginPath(); g.arc(x, y, 2.4, 0, 2 * Math.PI); g.fill();
+    g.fillText(`${p.f.toFixed(0)}Hz(${p.prom.toFixed(1)})`, Math.min(W - 58, x + 4), Math.max(10, y - 4));
   }
 }
 
-// ---- 门限展示（技术演示视图 + 设置页）----
-function formRenderThresholds() {
-  const th = formResolveThresholds();
-  const f3 = v => (v == null ? "—" : v.toFixed(3));
+function renderVerdict(res) {
+  const box = $("verdict"), t = $("vTitle"), s = $("vSub");
+  const style = {
+    PASS:     ["安装牢固，可以开始练了", "#7ff0a7"],
+    MARGINAL: ["这次测得的数值有点散，再敲一轮看看", "#f5c05a"],
+    FAIL:     ["安装可能松动了，请按说明重新粘接一次", "#ff8a8a"],
+  }[res.verdict] || ["—", "#e7e9ed"];
+  t.textContent = style[0];
+  t.style.color = style[1];
+  s.textContent = res.reasons.join("；");
+  box.classList.add("show");
+}
+
+function renderTech(res) {
+  const gd = gdLoad();
+  const k = kEst();
+  const kN = (SC.racket.m / 1000) * Math.pow(2 * Math.PI * 600, 2) / 1000;
   const lines = [
-    `JSON v1 来源: ${FORM.jsonSrc}${th.jsonVersion ? " (" + th.jsonVersion + ")" : ""}`,
-    `引拍幅度: score≥${DIAG.TB_SCORE_THR} [${th.arcDeg.toFixed(1)}° / ${th.meanDps.toFixed(0)}dps ÷ K4=${th.k4.toFixed(3)}] — ${th.arcSrc}`,
-    `引拍时长: ${th.dur ? `P10=${f3(th.dur.p10)}s P50=${f3(th.dur.p50)}s P90=${f3(th.dur.p90)}s` : "—"} — ${th.durSrc}`,
-    `随挥时长: ${th.ftDur ? `P10=${f3(th.ftDur.p10)}s P50=${f3(th.ftDur.p50)}s` : "—"} — ${th.ftDurSrc}`,
-    `K2 前臂比例: ${th.forearm != null ? th.forearm : "—"} — ${th.forearmSrc}`,
-    `K3 个人引拍占比 P50: 正手 ${f3(FORM.k3["正手"].p50)} (n=${FORM.k3["正手"].n}) · 反手 ${f3(FORM.k3["反手"].p50)} (n=${FORM.k3["反手"].n}) — 分侧维护，EMA α=${FORM_K3_ALPHA}，偏移门限 ${(FORM_K3_REL_TOL * 100).toFixed(0)}%`,
+    `阈值来源：${TH_SRC}`,
+    `判据带宽 ${TH.band_hz[0]}~${TH.band_hz[1]}Hz · 浮离峰 prom ≥ ${TH.float_peak.prom} · τ 有效 ${TH.tau_valid_range_ms[0]}~${TH.tau_valid_range_ms[1]}ms`,
+    `整机 ${SC.racket.m.toFixed(1)}g：600Hz 浮离峰 ⇒ 界面刚度需 ≥ ${kN.toFixed(0)} kN/m`,
+    `有效 ${res.validCount}/${res.total}（比例 ${(res.okRatio * 100).toFixed(0)}%）`,
+    `τ 均值 ${fmt(res.tauMean, 1)}ms · 中位 ${fmt(res.tauMedian, 1)}ms · CV ${fmt(res.cv * 100, 1)}%`,
+    `方位极差 ${isFinite(res.azRange) ? (res.azRange * 100).toFixed(0) + "%" : "—"} · 各方位 τ ${Object.entries(res.azMed).map(([a, v]) => a + ":" + fmt(v, 1)).join(" ") || "—"}`,
+    `k 估算（最高 prom 峰 ${fmt(k && k.peak_hz, 1)}Hz）${k ? "≈ " + (k.k_npm / 1000).toFixed(0) + " kN/m" : "—"}`,
+    gd
+      ? `金标：τ ${fmt(gd.tau_mean, 1)}ms · CV ${fmt((gd.cv || 0) * 100, 1)}% · 峰 ${(gd.peaks || []).map(p => p.f + "Hz").join(" ") || "无"} · ${gd.ts}`
+      : `金标：无（首次测量后 PASS 会自动记录）`,
+    `金标键：${gdId()} · m_total_g=${TH.m_total_g}`,
   ];
-  // 实测对照：本会话传感器侧 pre_dur 中位 vs 视频 P50×scale（口径比异常时提示核对）
-  const obs = [];
-  if (typeof sessionWindows !== "undefined") {
-    for (const w of sessionWindows) {
-      const f = w.meta && w.meta.form;
-      if (f && isFinite(f.preDur)) obs.push(f.preDur);
-    }
-  }
-  if (th.dur && obs.length >= 5) {
-    const med = diagQuantile(obs, 0.5);
-    const r = med / th.dur.p50;
-    lines.push(`本会话实测 pre_dur P50=${med.toFixed(3)}s vs 视频 P50×scale=${th.dur.p50.toFixed(3)}s`
-      + `（口径比 ${r.toFixed(2)}×${r > 1.5 || r < 0.67 ? " ⚠ 时长口径疑似不一致，请分析侧核对" : ""}）`);
-  }
-  const tech = $("formThrTech");
-  if (tech) tech.textContent = lines.join("\n");
-  const shortEl = $("formThrShort");
-  if (shortEl) {
-    shortEl.innerHTML = th.dur
-      ? `引拍时长门限 <b>${th.dur.p10.toFixed(3)}s</b>（视频分布 × 标定系数）· 幅度门限 <b>${th.arcDeg.toFixed(0)}°</b>（K4=${th.k4.toFixed(2)}）`
-      : `引拍时长门限未启用（回退硬编码）· 幅度门限 <b>${th.arcDeg.toFixed(0)}°</b>（K4=${th.k4.toFixed(2)}）`;
-  }
+  $("tech").innerHTML = lines.map(x => `<div>${x}</div>`).join("");
 }
 
-// ---------- 正反手硬判决（零校准！） ----------
-// 特征: W2 = mean(gy[微观击球窗]) × mean(Ay[微观击球窗])
-// 准确率 86.8%（单球员单天 190 窗，FH 109/133 正 / BH 56/57 负）
-// 物理自洽性: Ay 在击球瞬间永远朝一个方向（FH 133/133 正, BH 57/57 正），
-//   所以 W2 符号 = sign(gy_mean) × sign(Ay_seg) = sign(gy_mean)。
-//   传感器翻转 180°: gy→-gy, Ay→-Ay → (-gy)×(-Ay)=gy×Ay → 符号不变！
-//   真正实现了零校准，不需要 localStorage 或固件额外字段。
-function findStrokeFhBh(data, t0Idx) {
-  const GY_CH = 4, AY_CH = 1;              // gy=4, Ay=1
-  const MS = PROTO.WINDOW.MICRO_START;    // 138
-  const ME = PROTO.WINDOW.MICRO_END;       // 347
-  const t0_t = windowTimeMs(t0Idx);
-
-  // 微观击球窗: T0-50ms ~ T0+150ms
-  let lo = MS, hi = ME;
-  for (let i = MS; i <= ME; i++) if (windowTimeMs(i) >= t0_t - 50) { lo = i; break; }
-  for (let i = ME; i >= MS; i--) if (windowTimeMs(i) <= t0_t + 150) { hi = i; break; }
-
-  let gySum = 0, aySum = 0, n = 0;
-  for (let i = lo; i <= hi; i++) { gySum += data[GY_CH][i]; aySum += data[AY_CH][i]; n++; }
-  if (n < 3) return { side: '—', gyMean: NaN, ayMean: NaN, w2: NaN, n };
-
-  const gyMean = gySum / n;
-  const ayMean = aySum / n;
-  const w2 = gyMean * ayMean;   // 零校准核心特征
-
-  return { side: w2 > 0 ? '正手' : '反手', gyMean, ayMean, w2, n };
+let hintTimer = null;
+function flash(msg) {
+  const h = $("hint");
+  h.textContent = msg;
+  h.classList.add("show");
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => h.classList.remove("show"), 4500);
 }
 
-function diagnoseSwing(data, t0, form) {
-  // 陀螺通道全零（Step1 桥接只送加速度）→ 判据无意义
-  let gyroMax = 0;
-  for (let i = 0; i < PROTO.WINDOW.samples; i++) {
-    const v = diagOmegaMag(data, i);
-    if (v > gyroMax) gyroMax = v;
-  }
-  if (!(gyroMax >= DIAG.GYRO_ALIVE_DPS)) return { alive: false };
-
-  const grav = diagGravityHat(data, t0);
-
-  // K4 拍长归一化（拍长越短，同样的挥拍角速度下拍头线速度越低 → 门限按比例收紧）
-  const k4 = formK4();
-  const arcDegThr = DIAG.TB_ARC_DEG / k4;
-  const meanDpsThr = DIAG.TB_MEAN_DPS / k4;
-
-  const tbIds = diagSegIds(t0, DIAG.TB_LO_MS, DIAG.TB_HI_MS);
-  const tbArc = diagArc(data, t0, tbIds);
-  let tbMean = NaN;
-  if (tbIds.length) {
-    let s = 0;
-    for (const i of tbIds) s += diagOmegaMag(data, i);
-    tbMean = s / tbIds.length;
-  }
-  const tbScore = Number.isNaN(tbMean) ? 0
-                  : Math.min(tbArc / arcDegThr, tbMean / meanDpsThr);
-
-  const postIds = diagSegIds(t0, DIAG.FT_LO_MS, DIAG.FT_HI_MS);
-  const R = diagRotVecIds(data, t0, postIds);
-  const d = diagDecompose(R, grav.gh);
-  const postTotal = Math.hypot(d.perp, Math.abs(d.par));
-  const ftScore = postTotal / DIAG.FT_TOTAL_DEG;
-
-  // ---- 幅度通道判决（v1 口径，冻结；幅度换算函数待标定）----
-  const tbAmpVerdict = tbScore >= DIAG.TB_SCORE_THR + DIAG.BAND ? "有"
-                     : (tbScore >= DIAG.TB_SCORE_THR - DIAG.BAND ? "不确定" : "无");
-  const ftAmpVerdict = ftScore >= DIAG.FT_SCORE_THR + DIAG.BAND ? "完整"
-                     : (ftScore >= DIAG.FT_SCORE_THR - DIAG.BAND ? "不确定" : "不足");
-
-  // ---- 时长通道（v2）：绝对（视频分布×scale）与相对（个人 K3 P50）取更敏感者 ----
-  // 只做「降级」不做「升级」：幅度已判不合格时不会被时长抬成合格，避免无依据放宽。
-  const th = formResolveThresholds();
-  let tbGate = "";
-  if (form && th.dur) {
-    if (isFinite(form.preDur) && form.preDur < th.dur.p10) tbGate = "时长<P10";
-  }
-  if (!tbGate && form && form.k3P50 != null && form.k3N >= FORM_K3_MIN_N
-      && isFinite(form.ratio) && form.ratio < form.k3P50 * (1 - FORM_K3_REL_TOL)) {
-    tbGate = "低于个人基线";
-  }
-  let tbVerdict = tbAmpVerdict;
-  if (tbGate && tbVerdict === "有") tbVerdict = "不确定";
-
-  // 随挥时长同理；截断窗（随挥未回基线）不做时长降级，否则系统性误判
-  let ftGate = "";
-  if (form && th.ftDur && !form.trunc
-      && isFinite(form.postDur) && form.postDur < th.ftDur.p10) ftGate = "时长<P10";
-  let ftVerdict = ftAmpVerdict;
-  if (ftGate && ftVerdict === "完整") ftVerdict = "不确定";
-
-  return {
-    alive: true, gravOk: grav.ok, k4,
-    tbArc, tbMean, tbScore,
-    tbVerdict, tbVerdictV1: tbAmpVerdict, tbGate,
-    postTotal, ftScore, perp: d.perp, par: d.par,
-    ftVerdict, ftVerdictV1: ftAmpVerdict, ftGate,
-  };
+// ============================================================
+// 14. 流程
+// ============================================================
+function startCheck() {
+  if (!SC.devName) { flash("请先连接设备再开始自检"); return; }
+  SC.taps = []; SC.step = 0; SC.missStreak = 0;
+  SC.lastWinAt = Date.now();
+  SC.idleWinLogged = false;
+  SC.running = true;
+  $("verdict").classList.remove("show");
+  $("btnStart").hidden = true;
+  $("btnStop").hidden = false;
+  $("btnStart").disabled = true;
+  renderTaps();
+  updateProgress();
+  log(`开始${SC.mode === "check" ? "自检" : "采集"}：共 4 方位 × 3 下`);
+  if (SC.mode === "check") flash("请按提示敲第 1 下（拍面侧，端面外圈）");
 }
 
-const VERDICT_CLS = { "有": "pass", "完整": "pass", "不确定": "warn", "无": "fail", "不足": "fail" };
-
-function updateDiagnosis(w) {
-  updateVti(w);   // 震动行独立于引拍/随挥，先刷（无效窗口也要清空）
-  const tbEl = $("diagBack"), ftEl = $("diagFollow");
-  const tbNum = $("diagBackNum"), ftNum = $("diagFollowNum"), tipEl = $("diagTip");
-  const idle = (txt) => {
-    tbEl.innerHTML = `<span class="badge idle">—</span>`;
-    ftEl.innerHTML = `<span class="badge idle">—</span>`;
-    tbNum.textContent = "—"; ftNum.textContent = "—";
-    tipEl.textContent = txt; tipEl.style.color = "";
-  };
-  if (!w) { idle("—"); return; }
-  // 无效窗口（丢包/拍框/异物/无冲击等）不做动作诊断
-  if (!isQcOk(w.qc.code, w.meta)) { idle("（非有效击球窗，不做动作诊断）"); return; }
-
-  const t0 = w.meta.t0Index != null ? w.meta.t0Index : findT0Index(w.data);
-  const d = diagnoseSwing(w.data, t0, w.meta.form);
-  w.diag = d;
-  if (!d.alive) { idle("（本窗无陀螺数据，无法诊断引拍/随挥）"); return; }
-
-  tbEl.innerHTML = `<span class="badge ${VERDICT_CLS[d.tbVerdict]}">${d.tbVerdict}</span>`;
-  ftEl.innerHTML = `<span class="badge ${VERDICT_CLS[d.ftVerdict]}">${d.ftVerdict}</span>`;
-  // score 行默认在家庭视图隐藏；技术演示视图显示判决通道来源（幅度 / 时长 / 个人基线）
-  const f = w.meta.form || {};
-  tbNum.textContent = `score ${d.tbScore.toFixed(2)}（${d.tbArc.toFixed(0)}° / ${d.tbMean.toFixed(0)}dps, K4=${d.k4.toFixed(2)}）`
-    + ` · 幅度判${d.tbVerdictV1}` + (d.tbGate ? ` · ${d.tbGate}` : "")
-    + (isFinite(f.preDur) ? ` · pre ${f.preDur.toFixed(3)}s` : "")
-    + (f.k3P50 != null ? ` · 个人P50 ${f.k3P50.toFixed(2)}` : "");
-  ftNum.textContent = `score ${d.ftScore.toFixed(2)}（${d.postTotal.toFixed(0)}°）`
-    + ` · 幅度判${d.ftVerdictV1}` + (d.ftGate ? ` · ${d.ftGate}` : "")
-    + (isFinite(f.postDur) ? ` · post ${f.postDur.toFixed(3)}s${f.trunc ? "(截断)" : ""}` : "");
-
-  // 一次只报最严重一项：引拍缺失是根本原因，此时不重复报随挥不足
-  // 家庭视图话术：零术语、正向、不说数字
-  let tip, col = "";
-  if (d.tbVerdict === "无") { tip = "引拍不足：球拍没有充分向后拉开，先解决引拍"; col = "var(--fail)"; }
-  else if (d.ftVerdict === "不足") { tip = "随挥不足：触球后没有把球拍送完整"; col = "var(--fail)"; }
-  else if (d.tbGate) { tip = "这一球引拍有点赶，试着把拍子再向后拉一点"; col = "var(--warn)"; }
-  else if (d.ftGate) { tip = "这一球收拍稍快，把动作送完整会更稳"; col = "var(--warn)"; }
-  else if (d.tbVerdict === "不确定" || d.ftVerdict === "不确定") {
-    tip = "动作幅度落在门限附近，本球不下结论"; col = "var(--warn)";
-  } else { tip = "引拍与随挥都在合格区间"; col = "var(--pass)"; }
-  tipEl.textContent = tip;
-  tipEl.style.color = col;
-}
-
-// ---------- 震动（VTI）行：家庭视图只给正向短句，技术视图给全部数字 ----------
-// 永不给负面措辞（冻结决策）：warn/alarm 都指向「往甜区打」，颜色最高只到 warn。
-// 口径依据 20261029 实测：VTI 与甜区/非甜区 3/3 对齐，与「力度」无关（最用力一球 VTI 最低）。
-const VTI_TEXT = {
-  calib: ["idle", "校准中"],
-  ok:    ["pass", "震动很小"],
-  warn:  ["warn", "震动稍大，往甜区打"],
-  alarm: ["warn", "震动偏大，击球点往中间收"],
-};
-function updateVti(w) {
-  const el = $("vtiBadge"), num = $("vtiNum");
-  if (!el || !num) return;
-  const v = (w && w.meta && w.meta.vti) || { level: "off", gate: [] };
-  if (!w || v.level === "off") {
-    el.innerHTML = `<span class="badge idle">—</span>`;
-    const why = (v.gate && v.gate.length) ? v.gate.join(" / ") : (v.why || "");
-    num.textContent = "—" + (why ? `（未启用：${why}）` : "");
+function finishCheck(auto) {
+  if (SC.taps.length === 0) {
+    SC.running = false;
+    $("btnStart").hidden = false; $("btnStop").hidden = true;
+    $("btnStart").disabled = false;
+    updateProgress();
+    flash("还没有收到敲击数据");
     return;
   }
-  const [cls, txt] = VTI_TEXT[v.level];
-  el.innerHTML = `<span class="badge ${cls}">${txt}</span>`;
-  const thTxt = v.th ? `，门限 ${v.th[0].toFixed(0)}/${v.th[1].toFixed(0)} · ${v.thSrc}` : "";
-  const lvlTxt = v.level === "calib" ? "校准中" : v.level;
-  num.textContent = `VTI ${v.vti.toFixed(0)}（${lvlTxt}${thTxt}）`
-    + ` · τ ${isFinite(v.tau) ? v.tau.toFixed(1) + "ms" : "—"}`
-    + ` · pk ${v.pkAmp.toFixed(2)}g · F1 ${v.f1g.toFixed(1)}g · n ${v.n}`;
-}
+  SC.running = false;
+  $("btnStart").hidden = false; $("btnStop").hidden = true;
+  $("btnStart").disabled = false;
+  updateProgress();
 
-// ---------- 会话状态（VTI 三重门限第 1 重） ----------
-function setSessionState(st) {
-  sessionState = st;
-  $("sessTrain").classList.toggle("on", st === "train");
-  $("sessPause").classList.toggle("on", st === "pause");
-  $("sessHint").textContent = st === "train" ? "击球反馈开启" : "捡球中：暂停震动提醒";
-  if (currentWindow) {
-    // 门限含会话状态 → 历史窗口的 VTI 结论要按当前状态重算
-    currentWindow.meta.vti = vtiEvaluate(currentWindow, false);
-    updateVti(currentWindow);
-  }
-}
-
-// ---------- 连击计数：只统计有效击球；拍框球/丢包清零，异物与无冲击（捡球、落球）不计 ----------
-function updateStreak(res, meta) {
-  if (meta.quickClass === 1 || res.code === QC.FAIL_PACKET_LOSS) { goodStreak = 0; return null; }
-  if (!isQcOk(res.code, meta)) return null;
-  goodStreak++;
-  if (goodStreak % 10 === 0) return "achieve";
-  if (goodStreak === 3 || goodStreak === 5) return "combo";
-  return null;
-}
-
-// ---------- 每球一句话术：安全 > 技术根因 > 力度 > 激励 > 球速（保证不沉默） ----------
-// 一次只报最严重一项：引拍缺失是根本原因，此时不再提随挥（与 updateDiagnosis 同原则）
-function pickVoice(w, vtiRes, spd) {
-  const d = (w && w.diag) || {};
-  if (vtiRes.level === "alarm") return ["vti_alarm", null];
-  if (d.tbVerdict === "无" || d.tbGate) return ["backswing", null];
-  if (d.ftVerdict === "不足" || d.ftGate) return ["followthrough", null];
-  if (vtiRes.level === "warn") return ["vti_warn", null];
-  if (w && w.meta && w.meta.milestone) return [w.meta.milestone, null];
-  return ["speed", { v: spd.kmh.toFixed(0) }];
-}
-
-function updateQcPanel(res) {
-  const badge = (code, meta) => {
-    if (isQcOk(code, meta)) return `<span class="badge pass">PASS</span>`;
-    if (code === QC.FAIL_PACKET_LOSS) return `<span class="badge fail">丢包</span>`;
-    if (code === QC.FAIL_FRAME_HIT) return `<span class="badge fail">拍框球</span>`;
-    if (code === QC.FAIL_FOREIGN_IMPACT) return `<span class="badge warn">异物/轻敲</span>`;
-    if (code === QC.FAIL_NO_IMPACT) return `<span class="badge warn">无冲击</span>`;
-    if (code === QC.FAIL_SPIKE_NOISE) return `<span class="badge fail">Spike</span>`;
-    if (code === QC.FAIL_SATURATION) return `<span class="badge fail">饱和</span>`;
-    if (code === QC.FAIL_GYRO_SAT) return `<span class="badge fail">陀螺饱和</span>`;
-    return `<span class="badge idle">${code}</span>`;
-  };
-  $("qcResult").innerHTML = badge(res.code, currentWindow && currentWindow.meta);
-
-  // 板上判决（固件 quickAnalyzeImpact 原始结果，独立于 App 最终判定）
-  const qk = currentWindow ? currentWindow.meta.quickClass : null;
-  $("qcQuick").innerHTML =
-    qk === 1 ? `<span class="badge fail">FRAME_HIT</span>` :
-    qk === 2 ? `<span class="badge warn">FOREIGN_IMPACT</span>` :
-    qk === 0 ? `<span class="badge pass">NORMAL_HIT</span>` : "—";
-  // 击球/旋转类型：Step4 flags v2 起固件不再下发（已移交 App 端 AI）
-  const st = currentWindow ? currentWindow.meta.strokeType : null;
-  const sp = currentWindow ? currentWindow.meta.spinType : null;
-  const fhbhStroke = currentWindow ? currentWindow.meta.strokeFhBh : null;
-  // qcStroke 优先用 App 端 gy_sign 硬判决，Phase 2 再加发球/截击细分
-  if (fhbhStroke && fhbhStroke.side && fhbhStroke.side !== '—') {
-    $("qcStroke").innerHTML = `<span class="badge pass">${fhbhStroke.side}</span>`;
-  } else {
-    $("qcStroke").innerHTML = st != null
-      ? `<span class="badge pass">${["正手","反手","发球","截击"][st]}</span>`
-      : `<span class="badge idle">—（AI）</span>`;
-  }
-  $("qcSpin").innerHTML = sp != null
-    ? `<span class="badge pass">${["平击","上旋","下旋","侧旋"][sp]}</span>`
-    : `<span class="badge idle">—（AI，Phase 2）</span>`;
-  // 页1 核心信息卡：正反手（App 端 W2 零校准硬规则判决，Phase 2 加旋转）
-  const fhbh = currentWindow ? currentWindow.meta.strokeFhBh : null;
-  const p1 = $("p1StrokeSpin");
-  if (p1) {
-    if (fhbh && fhbh.side && fhbh.side !== '—') {
-      p1.innerHTML = `<span class="badge ${fhbh.side === '正手' ? 'pass' : 'warn'}">${fhbh.side}</span>`
-                   + (techModeOn ? `<span style="color:var(--muted);font-size:11px;margin-left:6px">W2=${fhbh.w2.toFixed(0)} · gy=${fhbh.gyMean.toFixed(0)}dps · Ay=${fhbh.ayMean.toFixed(2)}g · n=${fhbh.n}</span>` : '');
-    } else {
-      p1.textContent = '—';
+  const res = evalVerdict();
+  SC.lastRes = res;
+  if (SC.mode === "check") {
+    renderVerdict(res);
+    log(`${auto ? "自动" : "手动"}收官：${res.verdict}（有效 ${res.validCount}/${res.total}）`);
+    if (res.verdict === "PASS") {
+      gdSave(buildGolden(res));
+      log(`已记录金标：${gdId()}`);
     }
-  }
-  $("qcSeq").textContent = res.code === QC.FAIL_PACKET_LOSS ? "断层" : "连续";
-  $("qcPeak").textContent = res.info.peakVal.toFixed(3) + " g";
-  // T0 偏移 = 实测 T0 − 名义 186（ms）。 >0 表示窗口仍前移（固件未对齐）；|偏移|≤10ms 视为对齐成功。
-  const t0i = currentWindow ? currentWindow.meta.t0Index : null;
-  const t0offEl = $("t0off");
-  if (t0i != null) {
-    const off = windowTimeMs(t0i);
-    const ok = Math.abs(off) <= 10;
-    const col = ok ? "var(--pass)" : "var(--fail)";
-    $("qcT0").textContent = `${off >= 0 ? "+" : ""}${off.toFixed(0)}ms（实测 #${t0i}）${ok ? "✓ 对齐" : "✗ 偏移"}`;
-    $("qcT0").style.color = col;
-    if (t0offEl) { t0offEl.textContent = `T0 偏移 ${off >= 0 ? "+" : ""}${off.toFixed(0)}ms ${ok ? "✓" : "✗"}`; t0offEl.style.color = col; }
   } else {
-    $("qcT0").textContent = "—"; $("qcT0").style.color = "";
-    if (t0offEl) { t0offEl.textContent = "T0 偏移 —"; t0offEl.style.color = ""; }
+    // 采集模式：只存数据，不给结论（避免把未标定的绝对值当判决）
+    $("verdict").classList.remove("show");
+    log(`采集模式收了 ${res.total} 下（有效 ${res.validCount}），不输出结论，可导出 JSON`);
   }
-  $("qcSpike").textContent = res.info.maxJump != null
-    ? (res.code === QC.FAIL_SPIKE_NOISE ? "FAIL " : "") +
-      res.info.maxJump.toFixed(2) + "g / 阈" +
-      (res.info.spikeThr != null ? res.info.spikeThr.toFixed(1) : "3.0") +
-      (res.info.spikeCount != null ? " ×" + res.info.spikeCount : "")
-    : "—";
-  const axisName = ["X", "Y", "Z"];
-  const satFail = res.code === QC.FAIL_SATURATION || res.code === QC.FAIL_GYRO_SAT;
-  const goodClip = isGoodClip(res.code, currentWindow && currentWindow.meta);
-  if (res.info.accSatRun != null) {
-    let txt = "";
-    if (res.info.accSatRun >= 3) txt += `加速度${axisName[res.info.satAxis]}轴 连${res.info.accSatRun}点`;
-    if (res.info.gyroSatRun >= 3) txt += (txt ? "；" : "") + `陀螺${axisName[res.info.satAxis]}轴 连${res.info.gyroSatRun}点`;
-    $("qcSat").textContent = txt
-      ? (goodClip ? "低g削顶(不影响好球判定)：" : (satFail ? "FAIL " : "")) + txt
-      : "无削顶";
-  } else {
-    $("qcSat").textContent = "—";
-  }
-  $("qcPassRate").textContent = res.passRate.toFixed(1) + "%";
-  $("qcHw").innerHTML = res.hwOk
-    ? `<span class="badge pass">合格 ≥98%</span>`
-    : `<span class="badge warn">${res.passRate.toFixed(0)}%</span>`;
+  renderTech(res);
 }
 
-// ---------- Web Bluetooth 连接（冲击窗口协议） ----------
-async function connectImpact() {
-  if (!navigator.bluetooth) { log("当前浏览器不支持 Web Bluetooth，请用 Chrome/Edge", "log-fail"); return; }
-  // 防多连接堆叠：旧连接未断开时再点连接，会产生多条并存 GATT 链路，
-  // 每条通知被同一 parser 消费 N 次 => 每个窗口被重复交付（2026-10-09 会话 39=13x3 实测）
-  if (btDevice && btDevice.gatt && btDevice.gatt.connected) {
-    log("设备仍在连接中，请先点【断开】再重新连接", "log-warn");
+function watchdog() {
+  if (!SC.running) return;
+  const idle = Math.floor((Date.now() - SC.lastWinAt) / 1000);
+  if (idle >= 60) {
+    log("60 秒未收到窗口，自动中止（避免界面假在检测中）");
+    finishCheck(false);
     return;
   }
+  if (idle > 0 && idle % 15 === 0) {
+    SC.missStreak++;
+    log(`15 秒未收到窗口（第 ${SC.missStreak} 次）· 通知 ${SC.notifyCount}（系统 ${SC.sysPkt}／数据 ${SC.dataPkt}）· ${parser.reasmStat}`);
+    flash(SC.dataPkt === 0
+      ? "没收到任何窗口数据片：设备没触发（拍上那块板可能没在采样）"
+      : "数据片到了但没拼成整窗：多半是丢片，靠近手机/换 USB 蓝牙再试");
+  }
+}
+
+function toggleMode() {
+  if (SC.running) finishCheck(false);
+  SC.mode = SC.mode === "check" ? "collect" : "check";
+  $("btnMode").textContent = SC.mode === "check" ? "当前：自检模式" : "当前：采集模式";
+  log(SC.mode === "check"
+    ? "切换到自检模式：12 下自动收官；PASS 时记录金标"
+    : "切换到采集模式：手动收官；不自动写金标（便于反复观察）");
+}
+
+// ============================================================
+// 15. BLE
+// ============================================================
+async function connect() {
+  if (!navigator.bluetooth) { flash("此浏览器不支持 Web Bluetooth，请用安卓 Chrome"); return; }
+  $("btnConn").disabled = true;
   try {
-    btDevice = await navigator.bluetooth.requestDevice({
+    const dev = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: PROTO.IMPACT.namePrefix }],
       optionalServices: [PROTO.IMPACT.serviceUUID],
     });
-    btDevice.addEventListener("gattserverdisconnected", onDisconnect);
-    // 连接重试：链路刚释放时首次 connect 仍可能被 Chrome 拒绝，退避后重试 2 次
-    for (let attempt = 0; ; attempt++) {
-      try { btServer = await btDevice.gatt.connect(); break; }
-      catch (err) {
-        if (attempt >= 2) throw err;
-        log(`连接重试 ${attempt + 1}/3 …`, "log-warn");
-        await new Promise(r => setTimeout(r, 700));
-      }
+    await attach(dev);
+  } catch (e) {
+    if (e && e.name === "NotFoundError") log("已取消选择设备");
+    else { log("连接失败：" + (e && e.message)); flash("连接失败：" + (e && e.message)); }
+  } finally {
+    $("btnConn").disabled = false;
+  }
+}
+
+// 释放旧链路。Chrome 的 GATT 拆链是异步的：未真正释放就再次 gatt.connect()，
+// 会拿到一个「陈旧特征值引用」，startNotifications() 静默不生效 → 固件侧收不到
+// CCCD → g_cccdOn=0 → 整窗 SKIP → 怎么敲都收不到数据（本项目已实测踩过）。
+async function releaseLink() {
+  const oldDev = SC.device, oldChar = SC.char, oldOnChar = SC.onChar, oldOnGatt = SC.onGatt;
+  SC.device = null; SC.char = null; SC.onChar = null; SC.onGatt = null;
+  parser.reset();
+  SC.firstChunkLogged = false;
+  SC.idleWinLogged = false;
+  if (oldChar && oldOnChar) {
+    try { oldChar.removeEventListener("characteristicvaluechanged", oldOnChar); } catch (_) {}
+    try { oldChar.stopNotifications(); } catch (_) {}   // 不 await：陈旧引用会把清理挂死
+  }
+  if (!oldDev) return;
+  try { if (oldOnGatt) oldDev.removeEventListener("gattserverdisconnected", oldOnGatt); } catch (_) {}
+  if (oldDev.gatt && oldDev.gatt.connected) {
+    await new Promise(res => {
+      let done = false;
+      const fin = () => { if (!done) { done = true; clearTimeout(t); res(); } };
+      const t = setTimeout(fin, 2000);   // 兜底 2s
+      oldDev.addEventListener("gattserverdisconnected", fin, { once: true });
+      try { oldDev.gatt.disconnect(); } catch (_) { fin(); }
+    });
+  }
+}
+
+// 把缺失片号压成区间串： [9,10,..,40] → "9-40"
+function ciRanges(arr) {
+  const out = [];
+  let s = arr[0], p = arr[0];
+  for (let i = 1; i <= arr.length; i++) {
+    if (i < arr.length && arr[i] === p + 1) { p = arr[i]; continue; }
+    out.push(s === p ? String(s) : `${s}-${p}`);
+    if (i < arr.length) { s = p = arr[i]; }
+  }
+  return out.join(",");
+}
+
+// 每条通知：计数 + 分片诊断，再交给解析器（复制缓冲，避免底层缓冲复用）
+// SC-04 诊断：逐窗统计已到片号，每 10 片打印一次；停片 1.2s 后列出缺失的 ci，
+//   用于定位「窗口片到了但没拼成整窗」到底缺哪几片。
+function onNotify(u8) {
+  SC.notifyCount++;
+  $("notifyCount").textContent = SC.notifyCount;
+
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const isSys = u8.byteLength >= 14 && dv.getUint8(0) === PROTO.SYS_MAGIC &&
+                dv.getUint16(2, true) >= 0xFFF0;
+  if (isSys) {
+    SC.sysPkt++;
+    $("sysPkt").textContent = SC.sysPkt;
+  } else if (u8.byteLength < PROTO.CHUNK_HDR) {
+    log(`数据片过短 ${u8.byteLength}B`);
+  } else {
+    SC.dataPkt++;
+    $("dataPkt").textContent = SC.dataPkt;
+
+    const ci = dv.getUint8(0), ct = dv.getUint8(1) & 0x03;
+    const seq = dv.getUint8(2), total = dv.getUint8(3);
+    const now = Date.now();
+    const dt = SC.lastDataAt ? now - SC.lastDataAt : 0;
+    SC.lastDataAt = now;
+
+    let w = SC.ciSeen[seq];
+    if (!w) {
+      w = SC.ciSeen[seq] = { set: new Set(), t0: now };
+      log(`窗口 seq=${seq} 起：total=${total} 片，首片 ci=${ci} ct=${ct}`);
     }
-    const svc = await btServer.getPrimaryService(PROTO.IMPACT.serviceUUID);
-    btChar = await svc.getCharacteristic(PROTO.IMPACT.charUUID);
-    // 先监听后订阅（经验教训）
-    let _dbgChunks = 0;
-    btChar.addEventListener("characteristicvaluechanged", e => {
-      try {
-        const dv = e.target.value;
-        const buf = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
-        parser.handleChunk(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
-      } catch (err) {
-        log(`[DBG] 处理通知异常: ${err.message}`, "log-fail");
-      }
-    });
-    await btChar.startNotifications();
-    setConn("已连接", "pass");
-    $("devName").textContent = btDevice.name;
-    $("t0off").textContent = "T0 偏移 —"; $("t0off").style.color = "";
-    $("devMode").textContent = "冲击窗口协议";
-    $("devMtu").textContent = "BLE 5.3 DLE";
-    log(`已连接 ${btDevice.name}，监听 0x19B10001`, "log-pass");
-  } catch (e) {
-    log("连接失败: " + e.message, "log-fail");
-    setConn("连接失败", "fail");
+    if (!w.set.has(ci)) w.set.add(ci);
+    const n = w.set.size;
+
+    // 页头常显：末窗收片进度 + 缺失片号（连续段压缩成 a-b，避免长列表撑爆版面）
+    let missNow = [];
+    for (let k = 0; k < total; k++) if (!w.set.has(k)) missNow.push(k);
+    $("asm").textContent = `seq=${seq} ${n}/${total}` + (missNow.length ? ` · 缺 ${ciRanges(missNow)}` : " 齐");
+
+    if (n % 10 === 0 || ct === 2) {
+      log(`seq=${seq} 片 ${n}/${total}（ci=${ci} ct=${ct} Δt=${dt}ms）`);
+    }
+
+    // 停片 1.2s 后补齐缺口清单
+    if (SC.stallTimer) clearTimeout(SC.stallTimer);
+    SC.stallTimer = setTimeout(() => {
+      if (n >= total) return;
+      const miss = [];
+      for (let k = 0; k < total; k++) if (!w.set.has(k)) miss.push(k);
+      log(`seq=${seq} 收片停止：${n}/${total}，缺 ${miss.length} 片（ci=${ciRanges(miss)}）`);
+      flash(`末窗只收到 ${n}/${total} 片，之后设备没再发片`);
+    }, 1200);
+
+    // 只打印首片完整包头，确认 plen/crc/fw 与契约一致
+    if (SC.dataPkt === 1) {
+      const head = Array.from(u8.slice(0, 12)).map(b => b.toString(16).padStart(2, "0")).join(" ");
+      log(`首数据片 ${u8.byteLength}B · 头 [${head}] · plen=${dv.getUint16(4, true)}`);
+    }
   }
+
+  if (!SC.firstChunkLogged) {
+    SC.firstChunkLogged = true;
+    const head = Array.from(u8.slice(0, Math.min(12, u8.length)))
+      .map(b => b.toString(16).padStart(2, "0")).join(" ");
+    log(`首包 ${u8.byteLength}B · 头 [${head}]`);
+  }
+  parser.handleChunk(u8.slice().buffer);
 }
 
-// ---------- Step1 桥接：XIAO-IMU-416 实时 62B 流 ----------
-async function connectStep1() {
-  if (!navigator.bluetooth) { log("当前浏览器不支持 Web Bluetooth", "log-fail"); return; }
-  try {
-    btDevice = await navigator.bluetooth.requestDevice({
-      filters: [{ name: PROTO.STEP1.deviceName }],
-      optionalServices: [PROTO.STEP1.serviceUUID],
-    });
-    btDevice.addEventListener("gattserverdisconnected", onDisconnect);
-    btServer = await btDevice.gatt.connect();
-    const svc = await btServer.getPrimaryService(PROTO.STEP1.serviceUUID);
-    btChar = await svc.getCharacteristic(PROTO.STEP1.charUUID);
-    step1Samples = [];
-    btChar.addEventListener("characteristicvaluechanged", e => handleStep1Pkt(e.target.value.buffer));
-    await btChar.startNotifications();
-    setConn("已连接", "pass");
-    $("devName").textContent = btDevice.name;
-    $("t0off").textContent = "T0 偏移 —"; $("t0off").style.color = "";
-    $("devMode").textContent = "Step1 实时流桥接";
-    $("devMtu").textContent = "62B/pkt ~83Hz";
-    log(`已连接 ${btDevice.name}，将 3 轴流重组为 12x396 窗口`, "log-pass");
-  } catch (e) {
-    log("连接失败: " + e.message, "log-fail");
-    setConn("连接失败", "fail");
-  }
-}
+async function attach(dev) {
+  await releaseLink();   // 等旧链路真正释放，否则订阅会静默失效
 
-function handleStep1Pkt(buf) {
-  const dv = new DataView(buf);
-  const seq = dv.getUint16(0, true);
-  // 5 个采样点 × 3 轴 float
-  for (let s = 0; s < 5; s++) {
-    const off = 2 + s * 12;
-    const ax = dv.getFloat32(off, true);
-    const ay = dv.getFloat32(off + 4, true);
-    const az = dv.getFloat32(off + 8, true);
-    step1Samples.push([ax, ay, az, 0, 0, 0, 0, 0, 0, 0, 0, 0]); // gyro/attitude/hg 置 0
-  }
-  // 凑满 396 样本 → 交付一个窗口（Step4：960Hz+120Hz 混合速率窗口）
-  if (step1Samples.length >= PROTO.WINDOW.samples) {
-    const data = [];
-    for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) data.push(new Float32Array(PROTO.WINDOW.samples));
-    for (let i = 0; i < PROTO.WINDOW.samples; i++)
-      for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) data[ch][i] = step1Samples[i][ch];
-    step1Samples = step1Samples.slice(PROTO.WINDOW.samples); // 滑动窗口
-    onWindow({ seq, timestamp: Date.now(), source: "step1" }, data);
-  }
-}
+  SC.device = dev;
+  SC.onGatt = e => {
+    if (e && e.target && e.target !== SC.device) return;   // 旧设备迟到的断开事件不拆新连接
+    onDisconnected();
+  };
+  dev.addEventListener("gattserverdisconnected", SC.onGatt);
 
-// ---------- Mock 连接 ----------
-function connectMock() {
-  mockDev = new MockDevice(chunk => parser.handleChunk(chunk));
-  mockDev.start();
-  setConn("已连接(Mock)", "pass");
-  $("devName").textContent = "Mock Impact Generator";
-  $("t0off").textContent = "T0 偏移 —"; $("t0off").style.color = "";
-  $("devMode").textContent = "合成冲击数据";
-  $("devMtu").textContent = "模拟分片 232B";
-  log("Mock 设备已启动，每 1.2~2.5s 产生一次冲击窗口", "log-info");
-}
+  // 链路刚释放时首次 connect 可能被 Chrome 拒绝，退避重试
+  let server = null;
+  for (let k = 0; k < 3; k++) {
+    try { server = await dev.gatt.connect(); break; }
+    catch (err) { log(`GATT 连接重试 ${k + 1}/3：${err.message}`); await new Promise(r => setTimeout(r, 450)); }
+  }
+  if (!server) throw new Error("GATT 连接失败");
 
-function onDisconnect(e) {
-  // 只处理"当前设备"的断开：旧连接迟到的 gattserverdisconnected 会误拆掉新建立的连接
-  if (e && e.target && e.target !== btDevice) return;
-  setConn("已断开", "warn");
-  log("设备已断开", "log-warn");
-  cleanupBt();
-}
-// 断开必须"等链路真正释放"再允许重连：Chrome 的 GATT 释放是异步的，JS 变量置 null 后
-// 底层旧链路仍在拆。此时立刻 gatt.connect() 会撞上正在消失的旧链路 → 失败一次；
-// 下一次因为已经等够了拆链时间 → 又成功，形成"失败一次/成功一次"交替（实测确认）。
-// 刷新浏览器之所以每次必成，正是因为刷新后 Chrome 释放了全部陈旧 GATT 引用。
-// 另一个后果：陈旧特征值引用会让 startNotifications() 静默不生效 → 固件侧收不到 CCCD
-// 订阅 → g_cccdOn=false → 固件把窗口整窗丢弃(SKIP) → App 永远看不到波形。
-let cleaningUp = null;   // 幂等清理：重复调用复用同一次等待
-function cleanupBt() {
-  if (cleaningUp) return cleaningUp;
-  const chr = btChar, dev = btDevice;
-  btChar = null; btServer = null; btDevice = null;
-  if (mockDev) { mockDev.stop(); mockDev = null; }
-  parser.reset();
-  if (!chr && !dev) return Promise.resolve();
-  cleaningUp = (async () => {
-    if (chr) { try { chr.stopNotifications(); } catch(e){} }   // 不 await：避免陈旧引用把清理挂死
+  const svc = await server.getPrimaryService(PROTO.IMPACT.serviceUUID);
+  const ch = await svc.getCharacteristic(PROTO.IMPACT.charUUID);
+  SC.char = ch;
+  SC.onChar = e => {
     try {
-      if (dev && dev.gatt && dev.gatt.connected) {
-        await new Promise(res => {
-          let done = false;
-          const fin = () => { if (!done) { done = true; clearTimeout(t); res(); } };
-          const t = setTimeout(fin, 2000);   // 兜底 2s
-          dev.addEventListener("gattserverdisconnected", fin, { once: true });
-          dev.gatt.disconnect();
-        });
-      }
-    } catch(e){}
-    await new Promise(r => setTimeout(r, 1500));   // 链路释放后的稳定延迟(Windows 蓝牙栈释放更慢)
-  })().finally(() => { cleaningUp = null; });
-  return cleaningUp;
+      const dv = e.target.value;   // DataView
+      onNotify(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength));
+    } catch (err) { log("处理通知异常：" + err.message); }
+  };
+  ch.addEventListener("characteristicvaluechanged", SC.onChar);   // 先监听后订阅
+  // SC-03/04：每次新链路重新计数，避免把上一轮的包数带进来
+  SC.notifyCount = 0; SC.sysPkt = 0; SC.dataPkt = 0;
+  SC.ciSeen = {}; SC.lastDataAt = 0;
+  if (SC.stallTimer) { clearTimeout(SC.stallTimer); SC.stallTimer = null; }
+  $("notifyCount").textContent = "0"; $("sysPkt").textContent = "0"; $("dataPkt").textContent = "0";
+  $("asm").textContent = "—";
+  await ch.startNotifications();
+
+  SC.devName = dev.name || "Tennis_Sensor";
+  $("devName").textContent = SC.devName;
+  $("connState").classList.add("on");
+  $("connState").innerHTML = "<i></i>已连接";
+  $("btnConn").hidden = true;
+  $("btnDisc").hidden = false;
+  log(`已连接 ${SC.devName}（已订阅 0x19B10001，等待心跳/窗口）`);
+
+  // 固件每 2s 发一次心跳系统包：5 秒内一条都没收到，说明订阅没生效
+  SC.subscribedAt = Date.now();
+  const cnt0 = SC.notifyCount;
+  setTimeout(() => {
+    if (SC.device === dev && SC.notifyCount === cnt0) {
+      log("订阅后 5 秒未收到任何通知：订阅未生效，请刷新页面后重新连接");
+      flash("5 秒无任何数据：请刷新页面后重新连接设备");
+    }
+  }, 5000);
 }
 
-// ---------- 按钮绑定 ----------
-$("connectBtn").addEventListener("click", async () => {
-  const mode = $("modeSel").value;
-  // 必须等旧链路真正释放（cleanupBt 现在返回 Promise）再发起新连接，
-  // 否则会撞上正在拆的旧 GATT 链路 → "一次失败一次成功"交替
-  await cleanupBt();
-  reviewCommit();          // 上一次会话先入账（用户没进回顾页也不会丢记录）
-  parser.reset();
-  // 新连接：清空上一次连接的全部窗口，重新累积本次会话
-  sessionWindows = [];
-  shareCanvas = null;      // 上一次的分享卡片不再复用
-  if ($("shareImg")) { $("shareImg").classList.remove("on"); $("shareImg").removeAttribute("src"); }
-  // K3 个人基线按会话冷启动（换拍/换人/换天不继承旧基线）
-  FORM.k3Buf = { "正手": [], "反手": [] };
-  FORM.k3 = { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } };
-  vtiResetHist();                 // VTI 会话分位同样按连接冷启动
-  sessionStartTs = Date.now();
-  currentWindow = null;
-  goodStreak = 0;                 // 连击计数按连接重置
-  setSessionState("train");       // 会话状态按连接重置（默认训练中）
-  updateWinSelector(false);
-  updateDiagnosis(null);
-  if (mode === "mock") connectMock();
-  else if (mode === "impact") connectImpact();
-  else if (mode === "step1") connectStep1();
-});
-$("disconnectBtn").addEventListener("click", () => {
-  cleanupBt();
-  reviewCommit();          // 断开即入账（回顾页数字落盘）
-  setConn("未连接", "idle");
-});
-$("modeSel").addEventListener("change", () => cleanupBt());
+function onDisconnected() {
+  if (SC.running) finishCheck(false);
+  // 不置空 SC.char / SC.device：留着引用交给下次 attach 的 releaseLink 清理，
+  // 否则监听解绑和 stopNotifications 都落空，重连后会出现重复消费/订阅失效
+  $("connState").classList.remove("on");
+  $("connState").innerHTML = "<i></i>未连接";
+  $("btnConn").hidden = false;
+  $("btnDisc").hidden = true;
+  log("设备已断开");
+}
 
-// ---------- 会话状态按钮（训练中 / 捡球暂停）----------
-$("sessTrain").addEventListener("click", () => setSessionState("train"));
-$("sessPause").addEventListener("click", () => setSessionState("pause"));
+function disconnect() {
+  try { if (SC.char) SC.char.stopNotifications(); } catch (_) {}
+  try {
+    if (SC.device && SC.device.gatt && SC.device.gatt.connected) SC.device.gatt.disconnect();
+    else onDisconnected();
+  } catch (_) { onDisconnected(); }
+}
 
-// ---------- 话术库状态（技术视图）：占位期如实标注 ----------
-$("voicePackStat").textContent = `${Object.keys(VOICE_LINES).length} 类 × `
-  + `${VOICE_LINES.speed.length} 条 · ` + (VOICE_PACK_READY ? "录音包" : "占位（TTS 兜底）");
+// ============================================================
+// 16. 导出
+// ============================================================
+function kEst() {
+  let best = null;
+  for (const t of SC.taps) {
+    if (!t.valid) continue;
+    for (const p of (t.peaks || [])) {
+      if (!isFinite(p.f) || p.prom < TH.float_peak.prom) continue;
+      if (!best || p.prom > best.prom) best = p;
+    }
+  }
+  if (!best) return null;
+  return { peak_hz: best.f, prom: best.prom,
+           k_npm: (SC.racket.m / 1000) * Math.pow(2 * Math.PI * best.f, 2) };
+}
 
-// ---------- 打标与导出 ----------
-function getLabeledMatrix(label) {
-  if (!currentWindow) { log("暂无窗口数据可打标", "log-warn"); return null; }
-  const m = currentWindow;
+function exportObj() {
+  const res = SC.lastRes || evalVerdict();
+  const k = kEst();
   return {
-    label,
-    seq: m.meta.seq,
-    timestamp: m.meta.timestamp,
-    source: m.meta.source,
-    qc: m.qc.code,
-    quick_class: m.meta.quickClass,                              // 0/1/2/null
-    impact_type: m.meta.quickClass != null
-                 ? ["NORMAL_HIT", "FRAME_HIT", "FOREIGN_IMPACT"][m.meta.quickClass]
-                 : null,                                         // 固件刚体判决
-    stroke_type: m.meta.quickClass === 0 && m.meta.strokeType != null
-                 ? ["FOREHAND", "BACKHAND", "SERVE", "VOLLEY"][m.meta.strokeType] : null,
-    spin_type: m.meta.quickClass === 0 && m.meta.spinType != null
-                 ? ["FLAT", "TOPSPIN", "BACKSPIN", "SIDESPIN"][m.meta.spinType] : null,
-    peak_g: m.qc.info.peakVal,
-    note: m.meta.note || "",
-    sampleRate: PROTO.WINDOW.sampleRate,
-    channels: ["Ax","Ay","Az","Gx","Gy","Gz","Roll","Pitch","Yaw","Hx","Hy","Hz"],
-    matrix: m.data.map(col => Array.from(col)), // 12x396
+    tool: "nt-selfcheck",
+    build: BUILD,
+    exported_at: new Date().toISOString(),
+    mode: SC.mode,
+    device: SC.devName || null,
+    fw: SC.fw,
+    racket: { ...SC.racket },
+    m_total_g: SC.racket.m,
+    th_source: TH_SRC,
+    thresholds: TH,
+    golden: gdLoad(),
+    summary: {
+      verdict: res.verdict, reasons: res.reasons,
+      cv: res.cv, az_range: res.azRange, az_median: res.azMed,
+      ok_ratio: res.okRatio,
+      tau_mean_ms: res.tauMean, tau_median_ms: res.tauMedian,
+      tau_drift: res.tauDrift, new_peak: res.newPeak, peak_drift: res.peakDrift,
+      valid: res.validCount, total: res.total,
+      k_est: k,
+    },
+    taps: SC.taps,
   };
 }
 
-// ---------- 块级标签（映射标定必需） ----------
-// 发球机暂停 → 输入块名 → 点「开始新块」 → 后续窗口自动前缀 [块名]
-// 发球机重开继续打，点「结束」清除
-function updateBlockLabelUI() {
-  const stat = $("blockLabelStat");
-  if (activeBlockLabel) {
-    stat.textContent = `▶ [${activeBlockLabel}]  激活中`;
-    stat.style.color = "var(--pass)";
-  } else {
-    stat.textContent = "未启用";
-    stat.style.color = "var(--muted)";
-  }
-}
-$("blockLabelStart").addEventListener("click", () => {
-  const name = $("blockLabelInput").value.trim();
-  if (!name) { log("请先输入块名", "log-warn"); return; }
-  activeBlockLabel = name;
-  $("blockLabelInput").value = "";
-  updateBlockLabelUI();
-  log(`块级标签激活：[${name}] — 后续窗口自动挂前缀`, "log-pass");
-});
-$("blockLabelEnd").addEventListener("click", () => {
-  if (!activeBlockLabel) { log("当前没有活跃的块", "log-warn"); return; }
-  log(`块级标签结束：[${activeBlockLabel}]`, "log-info");
-  activeBlockLabel = null;
-  updateBlockLabelUI();
-});
-// 回车快捷键：输入框里按 Enter = 点「开始新块」
-$("blockLabelInput").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); $("blockLabelStart").click(); }
-});
-
-$("labelPassBtn").addEventListener("click", () => {
-  const obj = getLabeledMatrix("good");
-  if (obj) { currentWindow.meta.note = "合格"; labeledCount++; log(`已打标【合格】 seq=${obj.seq} (#${labeledCount})`, "log-pass"); updateWinSelector(false); }
-});
-$("labelFailBtn").addEventListener("click", () => {
-  const obj = getLabeledMatrix("bad");
-  if (obj) { currentWindow.meta.note = "废球"; labeledCount++; log(`已打标【废球】 seq=${obj.seq} (#${labeledCount})`, "log-fail"); updateWinSelector(false); }
-});
-$("labelNoteBtn").addEventListener("click", () => {
-  if (!currentWindow) { log("暂无窗口数据可打标", "log-warn"); return; }
-  const note = prompt("输入打标信息（如：75km/h 正手发力）", currentWindow.meta.note || "");
-  if (note !== null) {
-    currentWindow.meta.note = note.trim();
-    labeledCount++;
-    log(`已打标「${note}」 seq=${currentWindow.meta.seq} (#${labeledCount})`, "log-info");
-    updateWinSelector(false);
-  }
-});
-
-// ---------- 预设打标 chips（批量采集；note 受控词表见契约 §4.8） ----------
-// 格式：击球 <正反手>-<旋转>-<真值球速>-<击球点>[-<技术缺陷>]，例 FH-TOP-85-SWEET / FH-FLAT-60-FRAME-LATE；
-// 技术缺陷 LATE/MIN/NFT **可空、可多选**（MIN 与 NFT 正交，可同时成立 → MIN-NFT；未选则只拼 4 段）；
-// 非击球 TAP/SOFT/DROP/BOUNCE/WARMUP 单独成词。选择持久保留，便于连续同类球快速打标。
-// 力度**不标注**（2026-10-24 定）：人工三档无客观锚点、易漂移，且终局目标是跨力度不变识别——
-// 只在采集时"每个条件内混打轻中重"，事后用客观 peak|ω| 分层核验（见契约 §11.8）。
-const lblSel = { stroke: "", spin: "", spot: "", defect: "" };
-const NON_HIT = ["TAP", "SOFT", "DROP", "BOUNCE", "WARMUP"];
-const DEFECT_ORDER = ["LATE", "MIN", "NFT"];               // 第 5 段按固定顺序拼接
-function toggleDefect(v) {
-  const cur = lblSel.defect ? lblSel.defect.split("-") : [];
-  const i = cur.indexOf(v);
-  if (i >= 0) cur.splice(i, 1); else cur.push(v);
-  lblSel.defect = DEFECT_ORDER.filter(t => cur.includes(t)).join("-");
-}
-function composeNote() {
-  const s = lblSel.stroke;
-  if (!s) return "";
-  if (NON_HIT.includes(s)) return s;                        // 非击球：只写类别
-  const v = ($("labelSpeed").value || "").trim();
-  const seg = [s, lblSel.spin || "?", v || "?", lblSel.spot || "?"];
-  if (lblSel.defect) seg.push(lblSel.defect);               // 技术缺陷可空
-  return seg.join("-");
-}
-function refreshLabelUI() {
-  document.querySelectorAll(".chip[data-k]").forEach(b => {
-    const on = b.dataset.k === "defect"
-      ? lblSel.defect.split("-").includes(b.dataset.v)
-      : lblSel[b.dataset.k] === b.dataset.v;
-    b.classList.toggle("on", on);
-  });
-  const t = composeNote();
-  $("labelPreview").textContent = "打标预览：" + (t || "（未选）");
-}
-document.querySelectorAll(".chip[data-k]").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const k = btn.dataset.k, v = btn.dataset.v;
-    if (k === "defect") toggleDefect(v);
-    else lblSel[k] = (lblSel[k] === v) ? "" : v;            // 再点一次取消
-    // 击球与非击球互斥：选了非击球则清掉旋转/击球点
-    if (k === "stroke" && NON_HIT.includes(lblSel.stroke)) { lblSel.spin = ""; lblSel.spot = ""; lblSel.defect = ""; }
-    refreshLabelUI();
-  });
-});
-$("labelSpeed").addEventListener("input", refreshLabelUI);
-$("labelClearBtn").addEventListener("click", () => {
-  lblSel.stroke = ""; lblSel.spin = ""; lblSel.spot = ""; lblSel.defect = ""; $("labelSpeed").value = "";
-  refreshLabelUI();
-});
-$("labelApplyBtn").addEventListener("click", () => {
-  if (!currentWindow) { log("暂无窗口数据可打标", "log-warn"); return; }
-  const note = composeNote();
-  if (!note) { log("请先选择标签（击球 或 非击球）", "log-warn"); return; }
-  currentWindow.meta.note = note;
-  labeledCount++;
-  log(`已打标「${note}」 seq=${currentWindow.meta.seq} (#${labeledCount})`, "log-pass");
-  updateWinSelector(false);
-});
-refreshLabelUI();
-
-// ---------- 语音标注（录音版，不做 ASR） ----------
-// 教练每球说完一句即录一段；App 只存「音频 + 窗口锚点 + 时间」，
-// 课后导出 ZIP（clips/*.webm + voice_labels.csv），转写后按 (file, seq) 回填 note。
-const VOICE_DB = "nt_voice_v1", VOICE_STORE = "clips";
-const VOICE_MAX_MS = 5000;                 // 单段上限（说完不必再点）
-
-function sessionTag() {
-  const p = n => String(n).padStart(2, "0");
-  const d = new Date(sessionStartTs || Date.now());
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_` +
-         `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-}
-
-function idbOpen() {
-  return new Promise((res, rej) => {
-    const r = indexedDB.open(VOICE_DB, 1);
-    r.onupgradeneeded = () => {
-      const db = r.result;
-      if (!db.objectStoreNames.contains(VOICE_STORE)) {
-        db.createObjectStore(VOICE_STORE, { keyPath: "id", autoIncrement: true })
-          .createIndex("sess", "sessionTag", { unique: false });
-      }
-    };
-    r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
-  });
-}
-async function idbAdd(rec) {
-  const db = await idbOpen();
-  return new Promise((res, rej) => {
-    const rq = db.transaction(VOICE_STORE, "readwrite").objectStore(VOICE_STORE).add(rec);
-    rq.onsuccess = () => res(rq.result);
-    rq.onerror = () => rej(rq.error);
-  });
-}
-async function idbAll() {
-  const db = await idbOpen();
-  return new Promise((res, rej) => {
-    const rq = db.transaction(VOICE_STORE, "readonly").objectStore(VOICE_STORE).getAll();
-    rq.onsuccess = () => res((rq.result || []).sort((a, b) => a.id - b.id));
-    rq.onerror = () => rej(rq.error);
-  });
-}
-async function idbDel(id) {
-  const db = await idbOpen();
-  return new Promise((res, rej) => {
-    const rq = db.transaction(VOICE_STORE, "readwrite").objectStore(VOICE_STORE).delete(id);
-    rq.onsuccess = () => res();
-    rq.onerror = () => rej(rq.error);
-  });
-}
-
-let voiceRec = null, voiceChunks = [], voiceTimer = null;
-let voiceStart = 0, voiceTarget = null, voiceLastId = null, voiceBusy = false;
-let voiceAuto = localStorage.getItem("nt_voice_auto") === "1";
-let voiceDevId = localStorage.getItem("nt_voice_dev") || "";
-let voiceMissed = 0, voiceLastStart = 0, wakeLock = null, voiceMicError = false;
-let voiceMicReason = "";
-let voiceLastFailKey = "";
-
-async function voiceUpdateStat() {
-  try {
-    const all = await idbAll();
-    const cur = all.filter(r => r.sessionTag === sessionTag()).length;
-    const base = all.length ? `已存 ${all.length} 条（本次 ${cur}）` : "就绪";
-    const st = $("voiceStat");
-    st.classList.toggle("err", voiceMicError);
-    st.textContent = base
-      + (voiceMicError ? `｜麦克风未就绪${voiceMicReason ? "：" + voiceMicReason : ""}` : "")
-      + (voiceMissed ? `｜漏录 ${voiceMissed}` : "");
-  } catch (e) {
-    $("voiceStat").textContent = "存储不可用";
-  }
-}
-
-// 列出声卡（授权后才拿得到 label，所以首次录音后再刷新）
-async function voiceListDevices() {
-  try {
-    const devs = (await navigator.mediaDevices.enumerateDevices())
-      .filter(d => d.kind === "audioinput");
-    const sel = $("voiceDevSel");
-    sel.innerHTML = `<option value="">麦克风：默认</option>` + devs.map((d, i) =>
-      `<option value="${d.deviceId}">${d.label || ("输入设备 " + (i + 1))}</option>`).join("");
-    sel.value = devs.some(d => d.deviceId === voiceDevId) ? voiceDevId : "";
-  } catch (e) { /* 忽略 */ }
-}
-
-async function voiceWakeLock(on) {
-  if (!("wakeLock" in navigator)) return;
-  try {
-    if (on && !wakeLock) {
-      wakeLock = await navigator.wakeLock.request("screen");
-      wakeLock.addEventListener("release", () => { wakeLock = null; });
-    } else if (!on && wakeLock) {
-      await wakeLock.release();
-      wakeLock = null;
-    }
-  } catch (e) { /* 不支持就忽略 */ }
-}
-
-// 开启自动录音前先拿一次麦克风权限：否则第一球到达时才弹授权框，会漏掉这句
-async function voicePrimeMic() {
-  const baseAudio = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
-  try {
-    const s = await navigator.mediaDevices.getUserMedia({
-      audio: voiceDevId ? Object.assign({ deviceId: { exact: voiceDevId } }, baseAudio) : baseAudio
-    });
-    s.getTracks().forEach(t => t.stop());
-    voiceMicError = false;
-    voiceMicReason = "";
-    await voiceListDevices();
-    await voiceUpdateStat();
-    log("麦克风已就绪", "log-info");
-  } catch (e) {
-    paintVoiceAuto();
-    await voiceMarkFail(e);
-    log("点「检测麦克风」可重试", "log-warn");
-  }
-}
-
-// 麦克风环境快照：排查 NotAllowedError 时直接看这一行
-async function voiceEnvReport() {
-  const p = [];
-  p.push(`协议=${location.protocol.replace(":", "")}`);
-  p.push(`secure=${window.isSecureContext ? "是" : "否"}`);
-  p.push(`接口=${navigator.mediaDevices ? "有" : "无"}`);
-  p.push(`webview=${/(;\s*wv\)|Version\/4\.0)/.test(navigator.userAgent) ? "是" : "否"}`);
-  p.push(`iframe=${window.top !== window.self ? "是" : "否"}`);
-  try {
-    const st = await navigator.permissions.query({ name: "microphone" });
-    p.push(`权限=${st.state}`);
-  } catch (e) { p.push("权限=未知"); }
-  return p.join("，");
-}
-
-async function voiceMarkFail(e) {
-  voiceMicError = true;
-  voiceMicReason = `${(e && e.name) || "Error"}${(e && e.message) ? "：" + e.message : ""}`;
-  await voiceUpdateStat();
-  if (voiceMicReason === voiceLastFailKey) return;   // 同因只详报一次，避免每球刷屏
-  voiceLastFailKey = voiceMicReason;
-  let hint = "";
-  if (!window.isSecureContext) {
-    hint = "当前地址不是 https，浏览器会直接拒绝麦克风（换成 https 地址）";
-  } else if (window.top !== window.self) {
-    hint = "页面在 iframe 里，需外层容器允许麦克风权限";
-  } else if (/(;\s*wv\)|Version\/4\.0)/.test(navigator.userAgent)) {
-    hint = "当前是 WebView 容器，默认拦截麦克风，请改用 Chrome 打开";
-  } else if ((e && e.name) === "NotAllowedError") {
-    hint = "站点设置里麦克风改为「允许」，再点「检测麦克风」重试";
-  }
-  log(`麦克风不可用：${voiceMicReason}${hint ? "｜" + hint : ""}｜环境：${await voiceEnvReport()}`,
-      "log-fail");
-}
-
-// 窗口到达即触发（自动模式）；录音中再来球则记漏录，不打断当前这句
-function voiceAutoTrigger(meta) {
-  if (!voiceAuto) return;
-  const now = Date.now();
-  if (voiceBusy) {
-    voiceMissed++;
-    voiceUpdateStat();
-    log(`自动录音冲突：seq=${meta.seq} 到达时仍在录上一球，本球无录音`, "log-warn");
-    return;
-  }
-  if (now - voiceLastStart < 1500) return;   // 重复窗口去重
-  voiceStartRec(true);
-}
-
-// 录音期间静音语音播报：否则 TTS 会被麦克风录进音频，干扰事后转写
-function ttsMute(on) {
-  window.__ttsMuted = !!on;
-  if (on && "speechSynthesis" in window) {
-    try { window.speechSynthesis.cancel(); } catch (e) { /* 忽略 */ }
-  }
-}
-
-async function voiceStartRec(auto = false) {
-  if (voiceBusy) {
-    if (!auto) log("正在录音，等这一段结束再按（自动模式下每球已自动录）", "log-warn");
-    return;
-  }
-  if (!sessionWindows.length) {
-    if (!auto) log("暂无窗口，先连接并打出第一个球再录音", "log-warn");
-    return;
-  }
-  if (!navigator.mediaDevices || !window.MediaRecorder) {
-    voiceMarkFail({ name: "SecurityError", message: "缺少 mediaDevices（非 https 或浏览器不支持）" });
-    return;
-  }
-  voiceBusy = true;
-  ttsMute(true);                    // 立刻掐掉正在播报的那句，别录进去
-  const w = sessionWindows[sessionWindows.length - 1];
-  voiceTarget = { index: sessionWindows.length - 1, seq: w.meta.seq,
-                  recv: w.meta.receivedAt, note: w.meta.note || "" };
-  const baseAudio = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: voiceDevId ? Object.assign({ deviceId: { exact: voiceDevId } }, baseAudio) : baseAudio
-    });
-  } catch (e) {
-    if (voiceDevId) {                       // 耳机拔了/设备变了 → 回退默认麦克风
-      voiceDevId = "";
-      localStorage.removeItem("nt_voice_dev");
-      log("所选麦克风不可用，已回退默认输入", "log-warn");
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: baseAudio });
-      } catch (e2) {
-        voiceBusy = false;
-        ttsMute(voiceAuto);
-        voiceMarkFail(e2);
-        return;
-      }
-    } else {
-      voiceBusy = false;
-      ttsMute(voiceAuto);
-      voiceMarkFail(e);
-      return;
-    }
-  }
-  voiceMicError = false;
-  voiceMicReason = "";
-  voiceLastFailKey = "";
-  voiceListDevices();
-  const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
-    .find(m => MediaRecorder.isTypeSupported(m)) || "";
-  voiceChunks = [];
-  voiceRec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
-  voiceRec.ondataavailable = e => { if (e.data && e.data.size) voiceChunks.push(e.data); };
-  voiceRec.onstop = async () => {
-    clearInterval(voiceTimer); voiceTimer = null;
-    const dur = Date.now() - voiceStart;
-    const type = (voiceRec && voiceRec.mimeType) || (voiceChunks[0] && voiceChunks[0].type) || "audio/webm";
-    const blob = new Blob(voiceChunks, { type });
-    stream.getTracks().forEach(t => t.stop());
-    $("voiceRecBtn").classList.remove("rec");
-    $("voiceRecBtn").textContent = "● 录音打标";
-    $("voiceBar").style.width = "0";
-    const rec = {
-      sessionTag: sessionTag(), windowIndex: voiceTarget.index, seq: voiceTarget.seq,
-      recordedAt: new Date().toISOString(),
-      deltaMs: voiceStart - (voiceTarget.recv ? voiceTarget.recv.getTime() : voiceStart),
-      durMs: dur, mime: type, note: voiceTarget.note, blob
-    };
-    try {
-      voiceLastId = await idbAdd(rec);
-      // 手动重录同一球：删掉旧录音，保持"一球一条"
-      const dup = (await idbAll()).filter(r => r.id !== voiceLastId
-        && r.sessionTag === rec.sessionTag && r.seq === rec.seq);
-      for (const d of dup) await idbDel(d.id);
-      log(`已录音 ${(dur / 1000).toFixed(1)}s → seq=${rec.seq}（窗口到达后 ${rec.deltaMs}ms 开始）`
-          + (dup.length ? `，替换旧录音 ${dup.length} 条` : ""), "log-pass");
-      await voiceUpdateStat();
-    } catch (e) {
-      log(`录音保存失败：${e.message}`, "log-fail");
-    }
-    voiceBusy = false;
-    ttsMute(voiceAuto);            // 录完恢复：自动模式下继续静音（每球都要录）
-  };
-  voiceStart = Date.now();
-  voiceLastStart = voiceStart;
-  voiceRec.start();
-  $("voiceRecBtn").classList.add("rec");
-  $("voiceRecBtn").textContent = "● 录音中…";
-  const tick = () => {
-    if (!voiceRec || voiceRec.state === "inactive") return;
-    const el = (Date.now() - voiceStart) / 1000;
-    const cap = VOICE_MAX_MS / 1000;
-    $("voiceStat").textContent = `● 录音中 ${el.toFixed(1)} / ${cap.toFixed(1)}s → seq=${voiceTarget.seq}`;
-    $("voiceBar").style.width = Math.min(100, el / cap * 100) + "%";
-    $("voiceRecBtn").textContent = `● ${el.toFixed(1)}s / ${cap.toFixed(0)}s`;
-  };
-  tick();
-  voiceTimer = setInterval(tick, 100);
-  setTimeout(() => { if (voiceRec && voiceRec.state === "recording") voiceRec.stop(); }, VOICE_MAX_MS);
-}
-
-function voiceStopRec() {
-  if (voiceRec && voiceRec.state !== "inactive") voiceRec.stop();
-  else { voiceBusy = false; ttsMute(voiceAuto); }
-}
-
-async function voiceUndo() {
-  if (voiceLastId == null) { log("没有可撤销的语音标注", "log-warn"); return; }
-  await idbDel(voiceLastId);
-  voiceLastId = null;
-  log("已撤销上一条语音标注", "log-info");
-  await voiceUpdateStat();
-}
-
-// ---- 最小 ZIP 打包（store 模式；音频本身已压缩，无需再 deflate） ----
-const CRC_TABLE = (() => {
-  const t = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-    t[n] = c >>> 0;
-  }
-  return t;
-})();
-function crc32(u8) {
-  let c = 0xFFFFFFFF;
-  for (let i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
-  return (c ^ 0xFFFFFFFF) >>> 0;
-}
-function zipBuild(files) {
-  const enc = new TextEncoder();
-  const now = new Date();
-  const dosTime = ((now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1)) & 0xFFFF;
-  const dosDate = (((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate()) & 0xFFFF;
-  const parts = [], central = [];
-  let offset = 0;
-  for (const f of files) {
-    const name = enc.encode(f.name), data = f.data, crc = crc32(data);
-    const lh = new DataView(new ArrayBuffer(30));
-    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true);
-    lh.setUint16(8, 0, true); lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true);
-    lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true);
-    lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
-    parts.push(new Uint8Array(lh.buffer), name, data);
-    const ch = new DataView(new ArrayBuffer(46));
-    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true);
-    ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true);
-    ch.setUint16(12, dosTime, true); ch.setUint16(14, dosDate, true);
-    ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true);
-    ch.setUint16(28, name.length, true); ch.setUint16(30, 0, true); ch.setUint16(32, 0, true);
-    ch.setUint16(34, 0, true); ch.setUint16(36, 0, true); ch.setUint32(38, 0, true);
-    ch.setUint32(42, offset, true);
-    central.push(new Uint8Array(ch.buffer), name);
-    offset += 30 + name.length + data.length;
-  }
-  let csize = 0;
-  central.forEach(p => { csize += p.length; });
-  const end = new DataView(new ArrayBuffer(22));
-  end.setUint32(0, 0x06054b50, true); end.setUint16(4, 0, true); end.setUint16(6, 0, true);
-  end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
-  end.setUint32(12, csize, true); end.setUint32(16, offset, true); end.setUint16(20, 0, true);
-  // 返回 Uint8Array（同步，便于自检）；下载时再由 download() 包成 Blob
-  const all = [...parts, ...central, new Uint8Array(end.buffer)];
-  let total = 0;
-  all.forEach(p => { total += p.length; });
-  const out = new Uint8Array(total);
-  let o = 0;
-  for (const p of all) { out.set(p, o); o += p.length; }
-  return out;
-}
-
-async function voiceExport() {
-  let all;
-  try { all = await idbAll(); } catch (e) { log(`读取语音存储失败：${e.message}`, "log-fail"); return; }
-  if (!all.length) { log("还没有语音标注可导出", "log-warn"); return; }
-  const rows = ["file,seq,window_index,recorded_at,delta_ms,dur_ms,clip,note,source"];
-  const files = [];
-  for (let i = 0; i < all.length; i++) {
-    const r = all[i];
-    const ext = (r.mime || "").includes("mp4") ? "m4a" : "webm";
-    const clip = `clips/${r.sessionTag}_${String(r.seq).padStart(3, "0")}_${String(i + 1).padStart(4, "0")}.${ext}`;
-    files.push({ name: clip, data: new Uint8Array(await r.blob.arrayBuffer()) });
-    rows.push([`tennis_session_${r.sessionTag}.csv`, r.seq, r.windowIndex, r.recordedAt,
-               r.deltaMs, r.durMs, clip,
-               `"${String(r.note || "").replace(/"/g, '""')}"`, "voice"].join(","));
-  }
-  files.unshift({ name: "voice_labels.csv",
-                  data: new TextEncoder().encode("\ufeff" + rows.join("\n") + "\n") });
-  download(`voice_${sessionTag()}.zip`, zipBuild(files), "application/zip");
-  log(`已导出语音包：${all.length} 段音频 + voice_labels.csv`, "log-info");
-}
-
-$("voiceRecBtn").addEventListener("click", () => {
-  if (voiceRec && voiceRec.state === "recording") voiceStopRec();
-  else voiceStartRec();
-});
-$("voiceUndoBtn").addEventListener("click", voiceUndo);
-$("voiceExportBtn").addEventListener("click", voiceExport);
-
-function paintVoiceAuto() {
-  const b = $("voiceAutoBtn");
-  b.textContent = `自动录音：${voiceAuto ? "开" : "关"}`;
-  b.classList.toggle("on", voiceAuto);
-  voiceUpdateStat();
-}
-$("voiceAutoBtn").addEventListener("click", async () => {
-  voiceAuto = !voiceAuto;
-  localStorage.setItem("nt_voice_auto", voiceAuto ? "1" : "0");
-  paintVoiceAuto();
-  ttsMute(voiceAuto);                     // 自动录音开启即静音播报
-  if (voiceAuto) await voicePrimeMic();   // 紧接点击调用，保住用户手势（先 await 别的会丢手势导致授权失败）
-  await voiceWakeLock(voiceAuto);
-  log(voiceAuto ? "自动录音已开启：每球窗口到达即录 5 秒（保持页面在前台；语音播报自动静音）"
-                : "自动录音已关闭", "log-info");
-});
-$("voiceDevSel").addEventListener("change", e => {
-  voiceDevId = e.target.value || "";
-  if (voiceDevId) localStorage.setItem("nt_voice_dev", voiceDevId);
-  else localStorage.removeItem("nt_voice_dev");
-  log(voiceDevId ? "麦克风已切换（下次录音生效）" : "麦克风已改为默认（下次录音生效）", "log-info");
-});
-$("voiceMicRetry").addEventListener("click", () => voicePrimeMic());
-paintVoiceAuto();
-ttsMute(voiceAuto);               // 上次开着自动录音的话，开机即静音播报
-voiceListDevices();
-voiceUpdateStat();
-if (!window.isSecureContext || !navigator.mediaDevices) {
-  log(`录音不可用：当前 secure=${window.isSecureContext ? "是" : "否"}，`
-      + `接口=${navigator.mediaDevices ? "有" : "无"}；请用 https 地址打开`, "log-warn");
-}
-
-function download(filename, content, mime) {
-  const blob = new Blob([content], { type: mime });
+function download(name, text) {
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
+  a.href = url; a.download = name;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(a.href);
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
 }
 
-$("exportJsonBtn").addEventListener("click", () => {
-  const obj = getLabeledMatrix("unlabeled");
-  if (!obj) return;
-  download(`tennis_${obj.seq}_${obj.timestamp}.json`, JSON.stringify(obj, null, 2), "application/json");
-  log(`已导出 JSON seq=${obj.seq}`, "log-info");
-});
-
-$("exportCsvBtn").addEventListener("click", () => {
-  if (!currentWindow) { log("暂无窗口数据", "log-warn"); return; }
-  const m = currentWindow;
-  download(`tennis_${m.meta.seq}_${m.meta.timestamp}.csv`,
-           CSV_HEADER + buildCsvRows(m), "text/csv");
-  log(`已导出 CSV seq=${m.meta.seq} (${PROTO.WINDOW.samples} 行)`, "log-info");
-});
-
-// CSV 表头与行构建（单窗口 / 会话导出共用；impact_type 为固件板判，stroke/spin 移交 AI 暂留空）
-const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,vti,vti_level\n";
-function buildCsvRows(m) {
-  const impactType = m.meta.quickClass != null
-    ? ["NORMAL_HIT", "FRAME_HIT", "FOREIGN_IMPACT"][m.meta.quickClass] : "";
-  // 击球/旋转类型：仅 NORMAL_HIT(0) 时有效，旧固件留空
-  const ok = m.meta.quickClass === 0;
-  const strokeType = ok && m.meta.strokeType != null
-    ? ["FOREHAND", "BACKHAND", "SERVE", "VOLLEY"][m.meta.strokeType] : "";
-  const spinType = ok && m.meta.spinType != null
-    ? ["FLAT", "TOPSPIN", "BACKSPIN", "SIDESPIN"][m.meta.spinType] : "";
-  const note = m.meta.note || "";
-  const noteEsc = `"${String(note).replace(/"/g, '""')}"`;   // note 可能含逗号（块名），必须转义否则后置新列会错位
-  // 会话状态 / VTI 快照：导出后可按 sess_state 剔除捡球窗，VTI 列用于按当日会话重锚门限
-  const ss = m.meta.sessState === "pause" ? "pause" : "train";
-  const vv = m.meta.vti || {};
-  const vtiVal = Number.isFinite(vv.vti) ? vv.vti.toFixed(1) : "";
-  const vtiLvl = vv.level || "";
-  let rows = "";
-  for (let i = 0; i < PROTO.WINDOW.samples; i++) {
-    rows += `${m.meta.seq},${m.meta.timestamp},${i},`;
-    for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) rows += m.data[ch][i].toFixed(6) + ",";
-    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${vtiVal},${vtiLvl}\n`;
-  }
-  return rows;
+function stamp() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
 }
 
-$("exportSessionCsvBtn").addEventListener("click", () => {
-  if (!sessionWindows.length) { log("本次连接暂无窗口数据", "log-warn"); return; }
-  // 按接收顺序拼接全部窗口（含 FAIL/异物/丢包），Python 端按 seq 列分组即可逐窗口对比
-  let body = "";
-  for (const w of sessionWindows) body += buildCsvRows(w);
-  const tag = sessionTag();
-  download(`tennis_session_${tag}.csv`, CSV_HEADER + body, "text/csv");
-  log(`已导出本次连接全部 ${sessionWindows.length} 个窗口 ` +
-      `(${sessionWindows.length * PROTO.WINDOW.samples} 行)`, "log-info");
-});
+function exportJson() {
+  if (!SC.taps.length) { flash("还没有数据可导出"); return; }
+  const name = `selfcheck_${(SC.devName || "dev").replace(/[^\w-]/g, "")}_${stamp()}.json`;
+  download(name, JSON.stringify(exportObj(), null, 2));
+  log("已导出 " + name);
+}
 
-// ---------- 页4：家长回顾（只和自己比；零术语、不给排名）----------
-const REVIEW_KEY = "nt_review_v1";
-let shareCanvas = null;      // 最近一次生成的分享卡片（「保存图片」复用）
-
-function reviewLoad() {
-  const empty = { sessions: [], pb: { maxSpeed: 0, bestStreak: 0, bestRate: 0, balls: 0 } };
+async function copyJson() {
+  if (!SC.taps.length) { flash("还没有数据可导出"); return; }
+  const txt = JSON.stringify(exportObj(), null, 2);
   try {
-    const o = JSON.parse(localStorage.getItem(REVIEW_KEY) || "null");
-    if (!o || !Array.isArray(o.sessions)) return empty;
-    const pb = o.pb || {};
-    return {
-      sessions: o.sessions,
-      pb: { maxSpeed: +pb.maxSpeed || 0, bestStreak: +pb.bestStreak || 0,
-            bestRate: +pb.bestRate || 0, balls: +pb.balls || 0 },
-    };
-  } catch (_) { return empty; }
-}
-
-function reviewSave(db) {
-  // 隐私模式 / 配额满时降级：本次仍可用，只是不跨天留存
-  try { localStorage.setItem(REVIEW_KEY, JSON.stringify(db)); } catch (_) {}
-}
-
-function reviewBaseline(list) {
-  const pb = { maxSpeed: 0, bestStreak: 0, bestRate: 0, balls: 0 };
-  for (const r of list) {
-    if (+r.maxSpeed > pb.maxSpeed) pb.maxSpeed = +r.maxSpeed;
-    if (+r.bestStreak > pb.bestStreak) pb.bestStreak = +r.bestStreak;
-    if (+r.rate > pb.bestRate) pb.bestRate = +r.rate;
-    pb.balls += +r.balls || 0;
+    await navigator.clipboard.writeText(txt);
+    flash("已复制到剪贴板");
+  } catch (_) {
+    const ta = document.createElement("textarea");
+    ta.value = txt;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); flash("已复制到剪贴板"); }
+    catch (e) { flash("复制失败，请用「导出 JSON」"); }
+    ta.remove();
   }
-  return pb;
 }
 
-// 本次连接的全部窗口 → 回顾数字（含 FAIL 窗口，但只统计有效击球）
-function reviewSummarize() {
-  const s = { ts: sessionStartTs || Date.now(), tag: sessionTag(),
-              balls: 0, fh: 0, bh: 0, maxSpeed: 0, speedSum: 0, speedN: 0,
-              good: 0, streak: 0, bestStreak: 0, vtiWarn: 0, vtiAlarm: 0 };
-  let run = 0;
-  for (const w of sessionWindows) {
-    if (!isQcOk(w.qc.code, w.meta)) {
-      // 与 updateStreak 同口径：拍框球/丢包清连击，异物与无冲击不清（那是捡球/落球）
-      if (w.meta.quickClass === 1 || w.qc.code === QC.FAIL_PACKET_LOSS) run = 0;
-      continue;
-    }
-    s.balls++;
-    const side = w.meta.strokeFhBh && w.meta.strokeFhBh.side;
-    if (side === "正手") s.fh++; else if (side === "反手") s.bh++;
-    if (isFinite(w.meta.speedKmh)) {
-      s.speedSum += w.meta.speedKmh; s.speedN++;
-      if (w.meta.speedKmh > s.maxSpeed) s.maxSpeed = w.meta.speedKmh;
-    }
-    const d = w.diag || {};
-    if (d.tbVerdict === "有" && d.ftVerdict === "完整") s.good++;
-    const lv = w.meta.vti && w.meta.vti.level;
-    if (lv === "warn") s.vtiWarn++; else if (lv === "alarm") s.vtiAlarm++;
-    run++;
-    if (run > s.bestStreak) s.bestStreak = run;
-  }
-  s.streak = run;
-  s.rate = s.balls ? s.good / s.balls : 0;
-  s.avgSpeed = s.speedN ? s.speedSum / s.speedN : 0;
-  s.durMin = sessionStartTs ? (Date.now() - sessionStartTs) / 60000 : 0;
-  return s;
+const TH_TMPL = {
+  version: null,
+  source: null,
+  m_total_g: null,
+  band_hz: [60, 470],
+  float_peak: { prom: null },
+  tau_band_hz: [100, 200],
+  tau_obs_ms: [20, 160],
+  tau_valid_range_ms: null,
+  tau_tol_drift: null,
+  reliability: { cv_max: null, tau_ok_min: null, tau_ok_fail: null },
+  azimuth: { range_max: null },
+  golden: { peak_shift_hz: null, peak_shift_pct: null, new_peak_prom_rel: null },
+  note: "null = 待台架标定；放进 app/selfcheck/install_check_v1.json 后由 App 自动合并",
+};
+
+// ============================================================
+// 17. 初始化
+// ============================================================
+function loadRacket() {
+  try {
+    const j = JSON.parse(localStorage.getItem(RK_KEY) || "null");
+    if (j) Object.assign(SC.racket, j);
+  } catch (_) {}
+  $("rkLabel").value = SC.racket.label || "";
+  $("rkSize").value = String(SC.racket.size || 26);
+  $("rkGrip").value = String(SC.racket.grip || 0);
+  $("mTotal").value = String(SC.racket.m || 10);
+  $("ckGrip").checked = !!SC.racket.gripTape;
+  TH.m_total_g = SC.racket.m;
 }
 
-// 把本次会话写进历史（按 sessionTag 幂等：中途进页面记录会原地更新，不会重复入账）
-function reviewCommit() {
-  const s = reviewSummarize();
-  if (s.balls < 1) return null;      // 一球未打不建记录
-  const db = reviewLoad();
-  const rec = {
-    tag: s.tag, ts: s.ts,
-    balls: s.balls, fh: s.fh, bh: s.bh,
-    maxSpeed: +s.maxSpeed.toFixed(1), avgSpeed: +s.avgSpeed.toFixed(1),
-    rate: +s.rate.toFixed(3), bestStreak: s.bestStreak,
-    vtiWarn: s.vtiWarn, vtiAlarm: s.vtiAlarm,
-    durMin: +s.durMin.toFixed(1),
-    peakFrame: 0,   // 二期打框统计预留位（不改结构即可扩展）
-  };
-  const i = db.sessions.findIndex(x => x.tag === rec.tag);
-  const same = i >= 0 && JSON.stringify(db.sessions[i]) === JSON.stringify(rec);
-  if (!same) {
-    if (i >= 0) db.sessions[i] = rec; else db.sessions.push(rec);
-    if (db.sessions.length > 200) db.sessions = db.sessions.slice(-200);
-    db.pb = reviewBaseline(db.sessions);
-    reviewSave(db);
-  }
-  return db;
+function saveRacket() {
+  SC.racket.label = $("rkLabel").value.trim();
+  SC.racket.size = Number($("rkSize").value) || 26;
+  SC.racket.grip = Number($("rkGrip").value) || 0;
+  const m = Number($("mTotal").value);
+  if (isFinite(m) && m >= 3 && m <= 60) SC.racket.m = m;
+  SC.racket.gripTape = $("ckGrip").checked;
+  TH.m_total_g = SC.racket.m;
+  try { localStorage.setItem(RK_KEY, JSON.stringify(SC.racket)); } catch (_) {}
+  if (SC.lastRes) renderTech(SC.lastRes);
 }
 
-function fmtDay(ts) {
-  const d = new Date(ts), p = n => String(n).padStart(2, "0");
-  return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())}`;
-}
+function init() {
+  $("build").textContent = BUILD;
+  loadRacket();
+  loadTh();
+  renderTaps();
+  updateProgress();
+  drawSpec(null);
 
-// 家长视角结论：只给结论，不出现 tbArc / dps / 门限之类术语
-function reviewCommentText(s) {
-  if (!s.balls) return "这次还没有有效击球。先让孩子打几球热热身，再回来看。";
-  let txt;
-  if (s.rate >= 0.8) txt = "动作整体很稳：引拍和随挥大部分都做到位了，保持这个感觉。";
-  else if (s.rate >= 0.5) txt = "大部分球动作到位，个别球收拍偏快。下次提醒孩子把球拍送完整一点。";
-  else txt = "这次引拍普遍不够充分。先让孩子把球拍向后拉满再挥，比追求力量更重要。";
-  if (s.vtiAlarm > 0) txt += ` 有 ${s.vtiAlarm} 球震动偏大，多是击球点偏外，提醒孩子往甜区打，手会舒服很多。`;
-  else if (s.vtiWarn > 0) txt += " 有几球震动稍大，往拍面中间击球会更省力。";
-  return txt;
-}
-
-function reviewRender() {
-  const s = reviewSummarize();
-  const db = reviewCommit() || reviewLoad();
-  // 历史里本次的序号（未入账时按「下一次」显示）
-  const idx = db.sessions.findIndex(x => x.tag === s.tag);
-  const n = idx >= 0 ? idx + 1 : db.sessions.length + 1;
-  const prev = idx > 0 ? db.sessions[idx - 1]
-             : (idx < 0 && db.sessions.length ? db.sessions[db.sessions.length - 1] : null);
-
-  $("rvMaxSpeed").textContent = s.maxSpeed > 0 ? s.maxSpeed.toFixed(0) : "—";
-  $("rvBalls").textContent = s.balls || "—";
-  $("rvSide").textContent = (s.fh + s.bh) > 0 ? `${s.fh} / ${s.bh}` : "—";
-  $("rvRate").textContent = s.balls ? Math.round(s.rate * 100) + "%" : "—";
-  $("rvStreak").textContent = s.bestStreak ? s.bestStreak + " 球" : "—";
-  const vtiN = s.vtiWarn + s.vtiAlarm;
-  $("rvVti").textContent = !s.balls ? "—" : (vtiN ? `${vtiN} 球提醒放松` : "无提醒");
-  $("rvComment").textContent = reviewCommentText(s);
-
-  let cmp = `第 ${n} 次训练`;
-  if (!prev) cmp += " · 这是第一份记录，以后每次都能和今天比";
-  else if (s.balls > prev.balls) cmp += ` · 比上次多打 ${s.balls - prev.balls} 球`;
-  else if (s.balls < prev.balls) cmp += ` · 比上次少 ${prev.balls - s.balls} 球（状态有起伏很正常）`;
-  else cmp += ` · 和上次一样打了 ${s.balls} 球`;
-  if (prev && s.maxSpeed > 0 && s.maxSpeed > prev.maxSpeed) cmp += " · 今天速度快过上次";
-  if (db.pb.maxSpeed > 0) cmp += ` · 个人最快 ${db.pb.maxSpeed.toFixed(0)} km/h`;
-  $("rvCompare").textContent = cmp;
-
-  $("shareStat").textContent = s.balls ? "点「生成卡片」出一张只属于这次训练的图" : "先打几球再生成卡片";
-  return { s, db, n, prev };
-}
-
-// ---------- 分享卡片（Canvas 1080×1350，零后端，存相册）----------
-function drawRound(g, x, y, w, h, r) {
-  g.beginPath();
-  g.moveTo(x + r, y);
-  g.arcTo(x + w, y, x + w, y + h, r);
-  g.arcTo(x + w, y + h, x, y + h, r);
-  g.arcTo(x, y + h, x, y, r);
-  g.arcTo(x, y, x + w, y, r);
-  g.closePath();
-}
-
-function shareDraw(s, db, n, prev) {
-  const W = 1080, H = 1350;
-  const c = document.createElement("canvas");
-  c.width = W; c.height = H;
-  const g = c.getContext("2d");
-  const FONT = `"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",system-ui,sans-serif`;
-
-  const bg = g.createLinearGradient(0, 0, W, H);
-  bg.addColorStop(0, "#101a24");
-  bg.addColorStop(0.55, "#172433");
-  bg.addColorStop(1, "#0b1118");
-  g.fillStyle = bg;
-  g.fillRect(0, 0, W, H);
-
-  // 球场弧线（装饰，不承载任何数据）
-  g.strokeStyle = "rgba(110,231,255,0.14)";
-  g.lineWidth = 3;
-  g.beginPath(); g.arc(W / 2, H * 0.66, 560, Math.PI * 1.08, Math.PI * 1.92); g.stroke();
-  g.strokeStyle = "rgba(110,231,255,0.07)";
-  g.beginPath(); g.arc(W / 2, H * 0.66, 440, Math.PI * 1.05, Math.PI * 1.95); g.stroke();
-
-  const tx = (txt, x, y, size, color, weight = 400, align = "left") => {
-    g.fillStyle = color;
-    g.font = `${weight} ${size}px ${FONT}`;
-    g.textAlign = align;
-    g.textBaseline = "alphabetic";
-    g.fillText(txt, x, y);
-  };
-
-  tx("Nexttennis", 80, 140, 46, "#6ee7ff", 700);
-  tx("少儿网球 · 训练记录", 80, 192, 28, "#8ea3b8");
-
-  tx("本次最快球速", 80, 330, 32, "#8ea3b8");
-  const big = s.maxSpeed > 0 ? s.maxSpeed.toFixed(0) : "—";
-  tx(big, 80, 470, 156, "#ffffff", 800);
-  const bw = g.measureText(big).width;
-  tx("km/h", 80 + bw + 18, 470, 40, "#6ee7ff", 500);
-
-  g.strokeStyle = "rgba(255,255,255,0.10)";
-  g.lineWidth = 2;
-  g.beginPath(); g.moveTo(80, 545); g.lineTo(1000, 545); g.stroke();
-
-  const cols = [
-    ["有效击球", s.balls ? String(s.balls) : "—"],
-    ["最长连击", s.bestStreak ? s.bestStreak + " 球" : "—"],
-    ["动作到位", s.balls ? Math.round(s.rate * 100) + "%" : "—"],
-  ];
-  [80, 410, 730].forEach((x, i) => {
-    tx(cols[i][0], x, 640, 26, "#8ea3b8");
-    tx(cols[i][1], x, 725, 60, "#ffffff", 700);
+  $("btnConn").addEventListener("click", connect);
+  $("btnDisc").addEventListener("click", disconnect);
+  $("btnMode").addEventListener("click", toggleMode);
+  $("btnStart").addEventListener("click", startCheck);
+  $("btnStop").addEventListener("click", () => finishCheck(false));
+  $("btnExport").addEventListener("click", exportJson);
+  $("btnCopy").addEventListener("click", copyJson);
+  $("btnClearGd").addEventListener("click", () => {
+    if (gdLoad()) { gdClear(); flash("本设备的金标已清除"); }
+    else flash("本设备还没有金标");
+  });
+  $("btnThTmpl").addEventListener("click", () => {
+    download("install_check_v1.json", JSON.stringify(TH_TMPL, null, 2));
+    log("已下载阈值模板（全部为 null，待台架标定回填）");
   });
 
-  drawRound(g, 80, 850, 920, 300, 26);
-  g.fillStyle = "rgba(255,255,255,0.05)";
-  g.fill();
-  g.strokeStyle = "rgba(255,255,255,0.08)";
-  g.lineWidth = 2;
-  g.stroke();
-
-  tx(`第 ${n} 次训练`, 120, 925, 36, "#e8f3ff", 600);
-  tx(fmtDay(s.ts), 960, 925, 30, "#8ea3b8", 400, "right");
-  const pbLine = (prev && s.maxSpeed > 0 && s.maxSpeed > prev.maxSpeed)
-    ? `今天刷新个人最快 ${db.pb.maxSpeed.toFixed(0)} km/h`
-    : `个人最快 ${(db.pb.maxSpeed || 0).toFixed(0)} km/h`;
-  tx(pbLine, 120, 1010, 34, "#6ee7ff", 600);
-  tx(`累计 ${db.pb.balls || s.balls} 球 · 累计 ${db.sessions.length || n} 次训练`, 120, 1080, 28, "#8ea3b8");
-
-  tx("只和自己比，不和别人比", 540, 1250, 30, "#7d93a8", 500, "center");
-  tx("Nexttennis · 家庭网球训练", 540, 1305, 24, "#526678", 400, "center");
-
-  return c;
-}
-
-function shareMake() {
-  const { s, db, n, prev } = reviewRender();
-  shareCanvas = shareDraw(s, db, n, prev);
-  const img = $("shareImg");
-  img.src = shareCanvas.toDataURL("image/png");
-  img.classList.add("on");
-  $("shareStat").textContent = `已生成 · 第 ${n} 次训练（1080×1350）`;
-  log(`已生成分享卡片（第 ${n} 次训练，${s.balls} 球）`, "log-info");
-}
-
-function shareSave() {
-  if (!shareCanvas) shareMake();
-  if (!shareCanvas) return;
-  const name = `nexttennis_${sessionTag()}.png`;
-  shareCanvas.toBlob(b => {
-    if (!b) { log("卡片导出失败", "log-fail"); return; }
-    const url = URL.createObjectURL(b);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-    $("shareStat").textContent = `已保存 ${name}；没找到文件就长按上方图片存到相册`;
-    log(`分享卡片已导出 ${name}`, "log-info");
-  }, "image/png");
-}
-
-$("shareMake").addEventListener("click", () => shareMake());
-$("shareSave").addEventListener("click", () => shareSave());
-$("rvClear").addEventListener("click", () => {
-  if (!confirm("清空全部历史训练记录？清空后无法恢复（今天这次仍会作为第 1 次重新记录）。")) return;
-  try { localStorage.removeItem(REVIEW_KEY); } catch (_) {}
-  shareCanvas = null;
-  $("shareImg").classList.remove("on");
-  $("shareImg").removeAttribute("src");
-  reviewRender();
-  log("已清空回顾历史", "log-info");
-});
-
-// ---------- URL ?mode= 快捷方式（PWA 桌面快捷方式传入）----------
-const urlMode = new URLSearchParams(location.search).get("mode");
-if (urlMode && ["mock", "impact", "step1"].includes(urlMode)) {
-  $("modeSel").value = urlMode;
-  log(`已通过快捷方式选择模式：${urlMode}`, "log-info");
-}
-
-// ---------- 页签切换（页1 击球 / 页4 回顾 / 页2 运行日志 / 页3 设置）----------
-const tabBtns = Array.from(document.querySelectorAll(".tab"));
-function switchPage(id) {
-  tabBtns.forEach(b => b.classList.toggle("active", b.dataset.page === id));
-  document.querySelectorAll(".page").forEach(p => p.classList.toggle("active", p.id === id));
-  if (id === "page1") {
-    // 页1 隐藏期间 ECharts 容器宽度为 0，切回时必须重算尺寸，否则波形被挤成一条线
-    setTimeout(() => view.resize(), 60);
-  } else if (id === "page4") {
-    reviewRender();           // 进页时把本次训练入账（幂等）并刷新回顾数据
-  } else {
-    const l = $("log");
-    if (l) l.scrollTop = l.scrollHeight;
+  for (const id of ["rkLabel", "rkSize", "rkGrip", "mTotal", "ckGrip"]) {
+    $(id).addEventListener("change", saveRacket);
+    $(id).addEventListener("input", saveRacket);
   }
-}
-tabBtns.forEach(b => b.addEventListener("click", () => switchPage(b.dataset.page)));
 
-// ---------- Service Worker 注册（PWA 离线 / 安装）----------
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch((e) =>
-      console.warn("SW 注册失败:", e)
-    );
+  let rzTimer = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(rzTimer);
+    rzTimer = setTimeout(() => drawSpec(SC.lastFeat), 120);
   });
+
+  setInterval(watchdog, 1000);
+  log(`自检工具就绪 ${BUILD}`);
 }
 
-// 初始提示
-$("appVer").textContent = APP_BUILD;
-log(`App 版本 ${APP_BUILD}`, "log-info");
-log("选择模式后点击【连接设备】。推荐先选 Mock 模式验证全部功能。", "log-info");
-setupTechModeToggle();
-log("提示：连点 header 5 次切换 家庭视图 / 技术演示视图", "log-info");
-
-// 形态门限 v2：载入 JSON / 个人资料，绑定设置页
-formLoadProfile();
-formLoadJson();
-if ($("pfSave")) $("pfSave").addEventListener("click", () => {
-  formSaveProfile();
-  log("已保存孩子资料（身高/年龄/拍长），门限已按 K4 归一化", "log-info");
-});
-if ($("pfAuto")) $("pfAuto").addEventListener("click", formSuggestRacket);
-formRenderThresholds();
-if (!navigator.bluetooth) {
-  log("提示：当前浏览器不支持 Web Bluetooth。手机请用 Android Chrome，iOS 请用 Bluefy/WebBLE。", "log-warn");
-}
+init();
 </script>
 </body>
 </html>
