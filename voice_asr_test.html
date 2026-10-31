@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>语音打标 ASR 实测（阶段A/B）</title>
+<style>
+  :root { --bg:#0f1216; --panel:#171c22; --border:#2a323d; --text:#e8edf3;
+          --muted:#8d9aa8; --ok:#3ddc97; --warn:#f2b544; --bad:#ff6b6b; --acc:#4aa8ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+         line-height:1.6; padding:14px; }
+  .wrap { max-width:640px; margin:0 auto; }
+  h1 { font-size:18px; margin:0 0 2px; }
+  .sub { color:var(--muted); font-size:12px; margin-bottom:12px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:12px;
+          padding:12px 14px; margin-bottom:10px; }
+  .card h2 { font-size:14px; margin:0 0 8px; color:var(--acc); }
+  button { font-size:16px; padding:10px 18px; border-radius:10px; border:1px solid var(--border);
+           background:#222a33; color:var(--text); cursor:pointer; }
+  button.primary { background:#1f4a3a; border-color:#2d6b52; font-size:18px; width:100%; }
+  button:disabled { opacity:.4; }
+  .row { display:flex; gap:8px; }
+  .row button { flex:1; }
+  .stat { display:flex; gap:14px; flex-wrap:wrap; font-size:14px; margin-top:6px; }
+  .stat b { font-size:20px; display:block; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  #log { font-family:ui-monospace,monospace; font-size:12px; max-height:260px; overflow-y:auto;
+         background:#0b0e12; border-radius:8px; padding:8px; }
+  #log div { padding:2px 0; border-bottom:1px dashed #1c232c; }
+  .hit { color:var(--ok); } .miss { color:var(--text); } .interim { color:var(--muted); }
+  .kw { display:inline-block; padding:1px 7px; border-radius:6px; margin:2px;
+        background:#222a33; border:1px solid var(--border); font-size:13px; }
+  .kw.hot { border-color:var(--ok); color:var(--ok); }
+  .note { color:var(--muted); font-size:12px; margin-top:6px; }
+  #gate { font-size:15px; padding:8px 10px; border-radius:8px; margin-bottom:10px; }
+  #gate.ok { background:#0e2a1e; color:var(--ok); }
+  #gate.bad { background:#2a1414; color:var(--bad); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>语音打标 ASR 实测</h1>
+  <div class="sub">目的：量出「关键词原始命中率 + 误识别实录（→ 别名表）」。不连传感器，不碰 App。</div>
+
+  <div id="gate">检测中…</div>
+  <div id="env" class="note" style="margin-bottom:10px"></div>
+
+  <div class="card">
+    <h2>第 -1 步：麦克风自检（权限不通，后面全白测）</h2>
+    <button id="micTest" style="width:100%">点一下：申请麦克风 + 录音 3 秒自检</button>
+    <div id="micStat" class="note">未测。若这里报错，说明问题在权限/安全上下文，跟 ASR 识别率无关。</div>
+  </div>
+
+  <div class="card">
+    <h2>第 0 步：验证麦克风路由（只做一次）</h2>
+    <div class="note">① 先连接耳机（蓝牙或有线）再点下方开始。② 开始后<b>把手机放 2 米外</b>，正常音量说「打框」「好球」各三次。③ 识别仍准确 = 走的是耳机麦；识别崩/无输入 = 仍在用手机麦。换输入源（手机本体/蓝牙/有线）各测一轮，结论记在导出文件名里。</div>
+  </div>
+
+  <div class="card">
+    <h2>第 1 步：关键词 + 自由说（词表 v2）</h2>
+    <div style="margin-bottom:8px" id="chips"></div>
+    <div class="note"><b>按括号里的短词说</b>（第一轮实测 4 字词「随挥不足/引拍不足」全被打成同一个词，已改为 2 字）。
+      每个词说 5 遍（自然语速，别刻意咬字），再随便说几句词表外的话（如「这球下网了」「脚步没到位」）。
+      命中变绿；<b>没命中的原文照样记录，那就是别名表素材</b>。
+      若「打框」还是被打成「打开」，改说「碰框」「拍框」，把换的词记下来。</div>
+  </div>
+
+  <div class="card">
+    <button id="toggle" class="primary" disabled>开始识别</button>
+    <div class="stat">
+      <span>总句数<b id="nTotal">0</b></span>
+      <span class="ok">命中<b id="nHit">0</b></span>
+      <span class="warn">命中率<b id="rate">—</b></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>识别日志（原文 + 置信度 + 命中）</h2>
+    <div id="log"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="export">导出 CSV</button>
+      <button id="clear">清空</button>
+    </div>
+    <div class="note">导出文件发给分析对话：算命中率、整理别名表、定 ASR 是否够格当主路径（判定线 ≥80% / 60~80% / &lt;60%）。</div>
+  </div>
+</div>
+
+<script>
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const gate = document.getElementById('gate');
+const toggleBtn = document.getElementById('toggle');
+// 拼音表（gen_pinyin_js.py 生成，2078字：关键词音节族+实测变体音节）
+const PY = {"一":"yi","丅":"xia","下":"xia","丌":"ji","不":"bu","丘":"qiu","丠":"qiu","丮":"ji","乁":"yi","乂":"yi","义":"yi","乊":"yi","乍":"zha","乑":"yin","乙":"yi","乚":"yin","乤":"xia","乩":"ji","乴":"xue","亄":"yi","二":"er","亗":"sui","亟":"ji","亣":"da","亦":"yi","亼":"ji","亽":"ji","亿":"yi","以":"yi","仪":"yi","伇":"yi","伊":"yi","伋":"ji","伎":"ji","会":"hui","伵":"xu","伿":"yi","佁":"yi","佈":"bu","佚":"yi","佪":"hui","佴":"er","佶":"ji","佾":"yi","侇":"yi","侌":"yin","侐":"xu","侕":"er","侘":"cha","依":"yi","侠":"xia","俅":"qiu","俆":"xu","俋":"yi","俎":"zu","俠":"xia","俳":"pai","俷":"fei","俻":"bei","倍":"bei","倒":"dao","倚":"yi","倠":"sui","倥":"kong","偈":"ji","偛":"cha","偝":"bei","偦":"xu","偧":"zha","偮":"ji","偯":"yi","偹":"bei","傄":"xia","傐":"hao","備":"bei","傶":"zu","僃":"bei","僟":"ji","僡":"hui","儀":"yi","億":"yi","儣":"kuang","儫":"hao","儶":"hui","儿":"er","児":"er","兒":"er","兾":"ji","兿":"yi","冀":"ji","冔":"xu","冘":"yin","冝":"yi","况":"kuang","准":"zhun","凐":"yin","凖":"zhun","几":"ji","凯":"kai","凱":"kai","击":"ji","刀":"dao","刂":"dao","刈":"yi","刉":"ji","刏":"ji","到":"dao","刵":"er","剀":"kai","剂":"ji","削":"xue","剕":"fei","剞":"ji","剤":"ji","剳":"da","剴":"kai","劄":"zha","劑":"ji","劓":"yi","劮":"yi","劻":"kuang","勏":"bu","勓":"kai","勖":"xu","勗":"xu","勚":"yi","勣":"ji","勩":"yi","匇":"yi","匒":"da","北":"bei","匜":"yi","匡":"kuang","匣":"xia","匩":"kuang","匪":"fei","匯":"hui","医":"yi","卆":"zu","卉":"hui","卑":"bei","卒":"zu","卙":"ji","卝":"kuang","卟":"bu","印":"yin","即":"ji","却":"que","卹":"xu","卻":"que","卽":"ji","厏":"zha","厞":"fei","厼":"er","叉":"cha","及":"ji","叙":"xu","叝":"ji","叨":"dao","叴":"qiu","号":"hao","叽":"ji","吁":"xu","吉":"ji","吒":"zha","吓":"xia","吚":"yi","吟":"yin","吠":"fei","吥":"bu","吲":"yin","吷":"xue","呓":"yi","呗":"bei","呭":"yi","呴":"xu","呹":"yi","呾":"da","咑":"da","咘":"bu","咡":"er","咤":"zha","咦":"yi","咭":"ji","咴":"hui","咶":"huai","咿":"yi","品":"pin","哌":"pai","哐":"kuang","哒":"da","哕":"hui","哜":"ji","哠":"hao","哫":"zu","哳":"zha","哸":"sui","哺":"bu","唄":"bei","唈":"yi","唒":"qiu","唧":"ji","唨":"zu","唲":"er","啡":"fei","喑":"yin","喙":"hui","喞":"ji","喣":"xu","喳":"zha","喸":"bu","嗏":"cha","嗒":"da","嗘":"ji","嗥":"hao","嘅":"kai","嘒":"hui","嘘":"xu","嘰":"ji","嘷":"hao","噅":"hui","噑":"hao","噓":"xu","噕":"hui","噖":"yin","噠":"da","噫":"yi","噵":"dao","噾":"yin","嚆":"hao","嚇":"xia","嚌":"ji","嚎":"hao","嚖":"hui","嚚":"yin","嚬":"pin","囈":"yi","囘":"hui","囙":"yin","囚":"qiu","回":"hui","因":"yin","囬":"hui","圁":"yin","圚":"hui","圛":"yi","圯":"yi","圷":"xia","圹":"kuang","圾":"ji","坄":"yi","坏":"huai","坖":"ji","坵":"qiu","坹":"xue","垍":"ji","垔":"yin","垞":"cha","垠":"yin","垯":"da","垲":"kai","垼":"yi","垽":"yin","垿":"xu","埆":"que","埗":"bu","埠":"bu","埣":"sui","埪":"kong","埶":"yi","埸":"yi","基":"ji","埻":"zhun","堙":"yin","堷":"yin","塈":"ji","塉":"ji","塏":"kai","塙":"que","墟":"xu","墧":"que","墶":"da","墼":"ji","墿":"yi","壆":"xue","壊":"huai","壔":"dao","壕":"hao","壙":"kuang","壞":"huai","壱":"yi","壹":"yi","壻":"xu","夁":"yi","备":"bei","夊":"sui","夏":"xia","夓":"xia","夤":"yin","大":"da","夷":"yi","夼":"kuang","奒":"kai","奓":"zha","奕":"yi","奜":"fei","奼":"cha","好":"hao","妀":"ji","妃":"fei","妓":"ji","妲":"da","姁":"xu","姘":"pin","姞":"ji","姨":"yi","姫":"ji","姬":"ji","姹":"cha","姻":"yin","娦":"pin","婎":"hui","婓":"fei","婔":"fei","婣":"yin","婬":"yin","婿":"xu","媈":"hui","媐":"yi","媝":"qiu","媭":"xu","嫉":"ji","嫔":"pin","嫕":"yi","嫛":"yi","嬃":"xu","嬄":"yi","嬑":"yi","嬒":"hui","嬘":"sui","嬟":"yi","嬪":"pin","孈":"hui","孔":"kong","孛":"bei","季":"ji","学":"xue","學":"xue","宐":"yi","宒":"zhun","宜":"yi","宧":"yi","宱":"zha","寂":"ji","寄":"ji","寅":"yin","察":"cha","寭":"hui","寱":"yi","寲":"yi","导":"dao","導":"dao","尒":"er","尓":"er","尔":"er","尹":"yin","屐":"ji","屝":"fei","屶":"hui","屷":"hui","屹":"yi","岁":"sui","岌":"ji","岔":"cha","岛":"dao","岤":"xue","岲":"kuang","峃":"xue","峄":"yi","峏":"er","峓":"yi","峜":"ji","峡":"xia","峬":"bu","島":"dao","峽":"xia","峾":"yin","崅":"que","崆":"kong","崒":"zu","崟":"yin","崪":"zu","崯":"yin","崷":"qiu","崺":"yi","嵆":"ji","嵇":"ji","嵖":"cha","嵗":"sui","嵦":"kai","嵴":"ji","嶋":"dao","嶌":"dao","嶧":"yi","嶨":"xue","嶬":"yi","嶯":"ji","嶷":"yi","嶹":"dao","嶾":"yin","差":"cha","巯":"qiu","巰":"qiu","己":"ji","已":"yi","巸":"yi","布":"bu","帟":"yi","帠":"yi","帨":"shui","幁":"xu","幆":"yi","幑":"hui","幾":"ji","序":"xu","废":"fei","庡":"yi","庯":"bu","庴":"ji","廃":"fei","廍":"bu","廕":"yin","廙":"yi","廢":"fei","廭":"ji","廴":"yin","廹":"pai","廻":"hui","廽":"hui","开":"kai","异":"yi","弈":"yi","弋":"yi","弌":"yi","弍":"er","弐":"er","引":"yin","弬":"yi","彐":"ji","彑":"ji","彗":"hui","彙":"hui","彚":"hui","彛":"yi","彜":"yi","彝":"yi","彞":"yi","彶":"ji","役":"yi","徊":"huai","徐":"xu","徘":"pai","徛":"ji","徻":"hui","徽":"hui","忆":"yi","忉":"dao","忌":"ji","忣":"ji","忹":"kuang","忾":"kai","怀":"huai","怈":"yi","怖":"bu","怛":"da","怡":"yi","急":"ji","怴":"xu","怿":"yi","恇":"kuang","恏":"hao","恐":"kong","恘":"qiu","恚":"hui","恛":"hui","恞":"yi","恢":"hui","恤":"xu","恵":"hui","恺":"kai","悎":"hao","悑":"bu","悒":"yi","悔":"hui","悖":"bei","悘":"yi","悥":"yi","悫":"que","悱":"fei","悲":"bei","悸":"ji","悼":"dao","悾":"kong","惎":"ji","惠":"hui","惫":"bei","愂":"bei","意":"yi","愒":"kai","愔":"yin","愨":"que","愱":"ji","愷":"kai","愾":"kai","慇":"yin","慉":"xu","慤":"que","慧":"hui","慨":"kai","慭":"yin","憊":"bei","憓":"hui","憖":"yin","憗":"yin","憶":"yi","懌":"yi","懐":"huai","懗":"xia","懚":"yin","懬":"kuang","懭":"kuang","懳":"hui","懷":"huai","懻":"ji","懿":"yi","戌":"xu","戟":"ji","戢":"ji","扅":"yi","扆":"yi","扉":"fei","扎":"zha","扏":"qiu","打":"da","扠":"cha","技":"ji","抂":"kuang","抑":"yi","抪":"bu","抯":"zha","拃":"zha","拍":"pai","拸":"yi","拻":"hui","拼":"pin","挓":"zha","挤":"ji","挥":"hui","挹":"yi","挿":"cha","捕":"bu","捗":"bu","捣":"dao","捯":"dao","掎":"ji","排":"pai","掜":"yi","控":"kong","插":"cha","揖":"yi","揟":"xu","揤":"ji","揩":"kai","揮":"hui","揷":"cha","揸":"zha","揹":"bei","搉":"que","搗":"dao","搝":"qiu","搩":"zha","搭":"da","搽":"cha","搾":"zha","摣":"zha","撃":"ji","撎":"yi","撘":"da","撝":"hui","撠":"ji","擊":"ji","擠":"ji","擣":"dao","攺":"yi","敍":"xu","敘":"xu","敡":"yi","敧":"ji","敮":"xia","敼":"yi","斁":"yi","斈":"xue","斐":"fei","斦":"yin","族":"zu","旑":"yi","旖":"yi","旞":"sui","旡":"ji","既":"ji","旣":"ji","旭":"xu","旴":"xu","旷":"kuang","昁":"bei","昊":"hao","易":"yi","昦":"hao","昫":"xu","昲":"fei","昿":"kuang","晇":"xu","晖":"hui","晡":"bu","晦":"hui","晧":"hao","晹":"yi","暃":"fei","暆":"yi","暇":"xia","暉":"hui","暊":"xu","暟":"kai","暤":"hao","暨":"ji","暩":"ji","暭":"hao","暳":"hui","曀":"yi","曁":"ji","曊":"fei","曍":"hao","曎":"yi","曠":"kuang","朂":"xu","會":"hui","朄":"yin","朏":"fei","朞":"ji","札":"zha","朷":"dao","机":"ji","杈":"cha","杙":"yi","杮":"fei","杯":"bei","极":"ji","枅":"ji","枍":"yi","枻":"yi","柂":"yi","柙":"xia","柞":"zha","柤":"zha","查":"cha","柨":"bu","査":"zha","栅":"zha","栘":"yi","栧":"yi","栩":"xu","栭":"er","栮":"er","栶":"yin","栺":"yi","框":"kuang","桋":"yi","桖":"xue","桮":"bei","梂":"qiu","梖":"bei","梞":"ji","梺":"xia","棐":"fei","棑":"pai","棘":"ji","棭":"yi","椃":"hao","椅":"yi","椑":"bei","椡":"dao","椬":"yi","椸":"yi","楂":"zha","楈":"xu","楎":"hui","楫":"ji","極":"ji","楷":"kai","楸":"qiu","榀":"pin","榏":"yi","榧":"fei","榨":"zha","榷":"que","槉":"ji","槎":"cha","槐":"huai","槒":"xu","槝":"dao","槣":"ji","槥":"hui","槸":"yi","樝":"zha","樭":"ji","樰":"xue","樲":"er","橞":"hui","機":"ji","橶":"ji","檃":"yin","檅":"hui","檍":"yi","檓":"hui","檕":"ji","檖":"sui","檝":"ji","檤":"dao","檥":"yi","檫":"cha","檭":"yin","檵":"ji","檹":"yi","檼":"yin","櫅":"ji","櫘":"hui","櫠":"fei","櫰":"huai","櫽":"yin","欥":"yi","欨":"xu","欬":"kai","欭":"yi","欰":"xu","欹":"yi","歅":"yin","歔":"xu","歝":"yi","步":"bu","歨":"bu","歩":"bu","歲":"sui","歳":"sui","殈":"xu","殏":"qiu","殔":"yi","殛":"ji","殥":"yin","殨":"hui","殪":"yi","殷":"yin","殹":"yi","毀":"hui","毁":"hui","毄":"ji","毅":"yi","毇":"hui","毉":"yi","毜":"hao","毦":"er","毫":"hao","毬":"qiu","氘":"dao","氤":"yin","水":"shui","氵":"shui","氺":"shui","求":"qiu","汇":"hui","汊":"cha","汏":"da","汓":"qiu","汖":"pin","汲":"ji","汿":"xu","沀":"xu","沂":"yi","沓":"da","沶":"yi","沸":"fei","況":"kuang","泅":"qiu","泆":"yi","泋":"hui","泲":"ji","泶":"xue","泿":"yin","洃":"hui","洄":"hui","洇":"yin","洎":"ji","洏":"er","洕":"yin","洢":"yi","洫":"xu","洭":"kuang","洱":"er","派":"pai","浂":"yi","浍":"hui","济":"ji","浗":"qiu","浥":"yi","浩":"hao","浳":"yi","浽":"sui","涗":"shui","涚":"shui","涳":"kong","淏":"hao","淝":"fei","淫":"yin","淮":"huai","淾":"yin","渄":"fei","済":"ji","渏":"yi","渒":"pai","渞":"qiu","渣":"zha","湃":"pai","湏":"hui","湑":"xu","湒":"ji","湙":"yi","湚":"yin","湭":"qiu","溆":"xu","準":"zhun","溠":"zha","溢":"yi","溵":"yin","滈":"hao","滖":"sui","滙":"hui","滛":"yin","漃":"ji","漈":"ji","漪":"yi","漵":"xu","潊":"xu","潓":"hui","潗":"ji","潩":"yi","澔":"hao","澩":"xue","澮":"hui","澺":"yi","澻":"sui","激":"ji","濈":"ji","濉":"sui","濊":"hui","濟":"ji","濠":"hao","濥":"yin","濦":"yin","濷":"fei","瀈":"hui","瀡":"sui","瀤":"huai","瀥":"xue","瀱":"ji","瀷":"yi","灏":"hao","灝":"hao","灰":"hui","灳":"hui","灹":"zha","炈":"yi","炌":"kai","炏":"kai","炟":"da","炠":"xia","炸":"zha","烅":"xu","烎":"yin","烗":"kai","烚":"xia","烠":"hui","烣":"hui","烩":"hui","烼":"xu","焏":"ji","焘":"dao","焙":"bei","焲":"yi","煆":"xia","煇":"hui","煠":"zha","煦":"xu","煪":"qiu","煫":"sui","熠":"yi","熣":"sui","熤":"yi","熪":"yi","熼":"yi","燚":"yi","燡":"yi","燢":"xue","燧":"sui","燩":"que","燬":"hui","燱":"yi","燴":"hui","燵":"da","燾":"dao","爌":"kuang","爼":"zu","爾":"er","牌":"pai","牐":"zha","牝":"pin","牬":"bei","犄":"ji","犕":"bei","犤":"pai","犰":"qiu","犱":"ji","犾":"yin","狂":"kuang","狅":"kuang","狈":"bei","狋":"yi","狎":"xia","狒":"fei","狘":"xue","狤":"ji","狭":"xia","狹":"xia","狺":"yin","狽":"bei","猅":"pai","猆":"fei","猌":"yin","猗":"yi","猹":"cha","獆":"hao","獈":"yi","獋":"hao","獔":"hao","獝":"xu","獩":"hui","玌":"qiu","玑":"ji","玭":"pin","玴":"yi","珆":"yi","珇":"zu","珝":"xu","珢":"yin","珥":"er","珨":"xia","珬":"xu","珲":"hui","珼":"bei","球":"qiu","琕":"pin","琲":"bei","琷":"que","瑕":"xia","瑿":"yi","璆":"qiu","璌":"yin","璣":"ji","璤":"hui","璯":"hui","璲":"sui","瓍":"sui","瓙":"dao","瓵":"yi","瓿":"bu","甴":"zha","畗":"da","畣":"da","畩":"yi","異":"yi","畸":"ji","畿":"ji","疀":"cha","疑":"yi","疜":"xia","疞":"xu","疨":"xia","疫":"yi","疶":"xue","疾":"ji","疿":"fei","痄":"zha","痍":"yi","痐":"hui","痬":"yi","痱":"fei","痵":"ji","瘖":"yin","瘗":"yi","瘞":"yi","瘠":"ji","瘣":"hui","瘩":"da","瘱":"yi","瘸":"que","瘾":"yin","癈":"fei","癊":"yin","癔":"yi","癠":"ji","癪":"ji","癮":"yin","皀":"ji","皍":"ji","皓":"hao","皜":"hao","皞":"hao","皡":"hao","皥":"hao","皳":"qiu","皵":"que","皶":"zha","皻":"zha","盃":"bei","益":"yi","盗":"dao","盚":"qiu","盜":"dao","盢":"xu","盨":"xu","盱":"xu","眔":"da","眖":"kuang","眙":"yi","眨":"zha","眭":"sui","眶":"kuang","睟":"sui","睡":"shui","睢":"sui","睪":"yi","睱":"xia","睳":"hui","瞁":"xu","瞎":"xia","瞖":"yi","瞲":"xu","瞺":"hui","矉":"pin","矌":"kuang","矣":"yi","矶":"ji","矿":"kuang","砕":"sui","砟":"zha","砿":"kuang","硄":"kuang","硖":"xia","硛":"yi","硞":"que","硤":"xia","确":"que","硿":"kong","碎":"sui","碏":"que","碑":"bei","碒":"yin","碚":"bei","碬":"xia","碴":"cha","確":"que","碻":"que","磍":"xia","磤":"yin","磯":"ji","礐":"que","礒":"yi","礗":"pin","礦":"kuang","礭":"que","祎":"yi","祖":"zu","祟":"sui","祫":"xia","祭":"ji","祱":"shui","祷":"dao","禂":"dao","禈":"hui","禋":"yin","禕":"yi","禙":"bei","禝":"ji","禨":"ji","禭":"sui","禱":"dao","秅":"cha","秇":"yi","秋":"qiu","秌":"qiu","秏":"hao","租":"zu","积":"ji","秵":"yin","移":"yi","秽":"hui","稅":"shui","税":"shui","稕":"zhun","稘":"ji","稦":"yi","稩":"ji","稰":"xu","稲":"dao","稷":"ji","稸":"xu","稻":"dao","稽":"ji","穂":"sui","穄":"ji","穊":"ji","積":"ji","穐":"qiu","穓":"yi","穖":"ji","穗":"sui","穟":"sui","穢":"hui","穦":"pin","穧":"ji","穬":"kuang","穴":"xue","空":"kong","窀":"zhun","窢":"xu","竓":"hao","竩":"yi","笄":"ji","笈":"ji","笖":"yi","笚":"da","笪":"da","筃":"yin","筐":"kuang","筓":"ji","答":"da","筪":"xia","筺":"kuang","箌":"dao","箕":"ji","箚":"zha","箜":"kong","箤":"zu","箷":"yi","箿":"ji","篍":"qiu","篚":"fei","篰":"bu","篲":"hui","簃":"yi","簊":"ji","簰":"pai","簲":"pai","簿":"bu","籇":"hao","籍":"ji","籎":"yi","粌":"yin","粫":"er","糈":"xu","糒":"bei","糗":"qiu","紀":"ji","紁":"cha","紌":"qiu","紒":"ji","級":"ji","組":"zu","絋":"kuang","絖":"kuang","絪":"yin","絮":"xu","絵":"hui","絿":"qiu","綏":"sui","継":"ji","続":"xu","綧":"zhun","緋":"fei","緒":"xu","緖":"xu","緝":"ji","緧":"qiu","緸":"yin","縀":"xia","縃":"xu","縊":"yi","縖":"xia","績":"ji","繀":"sui","繄":"yi","繋":"ji","繐":"sui","繢":"hui","繨":"da","繪":"hui","繶":"yi","繸":"sui","繹":"yi","繻":"xu","繼":"ji","纊":"kuang","續":"xu","纛":"dao","级":"ji","纩":"kuang","纪":"ji","组":"zu","绎":"yi","绘":"hui","绥":"sui","继":"ji","绩":"ji","绪":"xu","续":"xu","绯":"fei","缉":"ji","缋":"hui","缢":"yi","缺":"que","罅":"xia","罽":"ji","羁":"ji","羇":"ji","羈":"ji","羍":"da","羛":"yi","羠":"yi","義":"yi","羿":"yi","翈":"xia","翊":"yi","翌":"yi","翙":"hui","翚":"hui","翡":"fei","翢":"dao","翬":"hui","翳":"yi","翼":"yi","翽":"hui","翿":"dao","而":"er","耗":"hao","耛":"yi","耤":"ji","耫":"zha","耭":"ji","耲":"huai","耳":"er","耴":"yi","耷":"da","聏":"er","聓":"xu","聕":"hao","聘":"pin","聟":"xu","肄":"yi","肊":"yi","肌":"ji","肍":"qiu","肞":"cha","肥":"fei","肫":"zhun","肺":"fei","胇":"fei","背":"bei","胐":"fei","胤":"yin","胥":"xu","胰":"yi","胹":"er","脊":"ji","脽":"shui","腓":"fei","膉":"yi","膌":"ji","膤":"xue","膸":"sui","臆":"yi","臮":"ji","臿":"cha","舝":"xia","舠":"dao","舣":"yi","舺":"xia","艔":"dao","艖":"cha","艗":"yi","艝":"xue","艤":"yi","艥":"ji","艺":"yi","芅":"yi","芔":"hui","芕":"sui","芧":"xu","芨":"ji","芰":"ji","芾":"fei","苂":"yin","苅":"yi","苝":"bei","苡":"yi","苢":"yi","苲":"zha","茍":"ji","茓":"xue","茚":"yin","茠":"hao","茤":"ji","茬":"cha","茴":"hui","茵":"yin","茶":"cha","荅":"da","荋":"er","荙":"da","荟":"hui","荠":"ji","荫":"yin","荶":"yin","荹":"bu","荽":"sui","荾":"sui","莍":"qiu","菲":"fei","菿":"dao","萉":"fei","萓":"yi","萟":"yi","萩":"qiu","葅":"zu","葪":"ji","葰":"sui","蒆":"xue","蒈":"kai","蒎":"pai","蒑":"yin","蒛":"que","蒣":"xu","蒩":"zu","蒺":"ji","蒿":"hao","蓄":"xu","蓓":"bei","蓟":"ji","蓲":"qiu","蓺":"yi","蓿":"xu","蔀":"bu","蔇":"ji","蔧":"hui","蔩":"yin","蔭":"yin","蕀":"ji","蕙":"hui","蕜":"fei","蕦":"xu","蕸":"xia","蕺":"ji","薃":"hao","薅":"hao","薈":"hui","薉":"hui","薊":"ji","薏":"yi","薘":"da","薛":"xue","薧":"hao","薲":"pin","薺":"ji","薾":"er","藇":"xu","藉":"ji","藙":"yi","藚":"xu","藝":"yi","藣":"bei","藱":"hui","蘎":"ji","蘒":"qiu","蘙":"yi","蘟":"yin","蘮":"ji","蘳":"hui","蘹":"huai","蘻":"ji","蘾":"huai","虀":"ji","虉":"yi","虗":"xu","虚":"xu","虛":"xu","號":"hao","虬":"qiu","虮":"ji","虯":"qiu","虲":"xia","虺":"hui","虽":"sui","虾":"xia","蚁":"yi","蚓":"yin","蚘":"hui","蚝":"hao","蚯":"qiu","蚱":"zha","蚻":"zha","蛔":"hui","蛕":"hui","蛜":"yi","蛡":"yi","蛦":"yi","蛷":"qiu","蛽":"bei","蜖":"hui","蜚":"fei","蜰":"fei","蜴":"yi","蝑":"xu","蝤":"qiu","蝦":"xia","蝵":"qiu","螏":"ji","螔":"yi","螘":"yi","螠":"yi","螾":"yin","蟗":"qiu","蟣":"ji","蟦":"fei","蟪":"hui","蟫":"yin","蟻":"yi","蟽":"da","蠔":"hao","蠙":"pin","蠤":"qiu","血":"xue","衈":"er","衜":"dao","衟":"dao","衠":"zhun","衣":"yi","衤":"yi","补":"bu","衩":"cha","衪":"yi","衵":"yi","袆":"hui","袕":"xue","袘":"yi","袣":"yi","被":"bei","袻":"er","裀":"yin","裇":"xu","裔":"yi","裘":"qiu","裚":"ji","裛":"yi","補":"bu","裞":"shui","裶":"fei","裿":"yi","褘":"hui","褙":"bei","褡":"da","褢":"huai","褱":"huai","褹":"yi","襀":"ji","襋":"ji","襚":"sui","襼":"yi","覉":"ji","覊":"ji","覬":"ji","觊":"ji","觓":"qiu","觙":"ji","觩":"qiu","觭":"ji","觰":"zha","觷":"xue","觺":"yi","訄":"qiu","訅":"qiu","計":"ji","訏":"xu","訑":"yi","訔":"yin","記":"ji","訚":"yin","訡":"yin","訰":"zhun","許":"xu","訲":"yi","訳":"yi","訹":"xu","詍":"yi","詐":"zha","詑":"yi","詒":"yi","詚":"da","詛":"zu","詡":"xu","詣":"yi","詧":"cha","詫":"cha","詯":"hui","詼":"hui","誀":"er","誃":"yi","誆":"kuang","誋":"ji","誑":"kuang","誖":"bei","誧":"bu","誨":"hui","誰":"shui","誶":"sui","誹":"fei","誼":"yi","誾":"yin","諄":"zhun","諅":"ji","諕":"hao","諝":"xu","諱":"hui","諲":"yin","謔":"xue","謻":"yi","譃":"xu","譇":"zha","譏":"ji","譓":"hui","譗":"zha","譢":"sui","譤":"ji","譩":"yi","譭":"hui","譯":"yi","議":"yi","譹":"hao","譿":"hui","讉":"yi","讔":"yin","讛":"yi","计":"ji","讥":"ji","议":"yi","记":"ji","讳":"hui","许":"xu","诅":"zu","诈":"zha","译":"yi","诒":"yi","诓":"kuang","诘":"ji","诙":"hui","诣":"yi","诧":"cha","诩":"xu","诲":"hui","诳":"kuang","诽":"fei","谁":"shui","谆":"zhun","谇":"sui","谊":"yi","谑":"xue","谞":"xu","谺":"xia","谻":"ji","豗":"hui","豙":"yi","豛":"yi","豪":"hao","豷":"yi","貉":"hao","貖":"yi","貝":"bei","貤":"yi","貧":"pin","貮":"er","貳":"er","貺":"kuang","費":"fei","貽":"yi","賄":"hui","賉":"xu","賕":"qiu","賥":"sui","賫":"ji","賷":"ji","賹":"yi","贀":"yi","贝":"bei","贫":"pin","贰":"er","贶":"kuang","费":"fei","贻":"yi","贿":"hui","赇":"qiu","赍":"ji","赮":"xia","赺":"yin","趌":"ji","趐":"xue","趛":"yin","趞":"que","趥":"qiu","趰":"er","足":"zu","跇":"yi","跠":"yi","跡":"ji","跶":"da","跻":"ji","跽":"ji","踄":"bu","踅":"xue","踖":"ji","踝":"huai","踤":"zu","踦":"yi","踷":"zha","踿":"zu","蹅":"cha","蹈":"dao","蹐":"ji","蹟":"ji","躂":"da","躋":"ji","躤":"ji","躸":"ji","躻":"kong","軇":"dao","軖":"kuang","軠":"kuang","軦":"kuang","軭":"kuang","軰":"bei","軼":"yi","輀":"er","輆":"kai","輑":"yin","輝":"hui","輢":"yi","輩":"bei","輫":"pai","輯":"ji","轄":"xia","轌":"xue","轐":"bu","轙":"yi","轚":"ji","轜":"er","轶":"yi","辈":"bei","辉":"hui","辑":"ji","辖":"xia","辥":"xue","辪":"xue","辷":"yi","达":"da","迆":"yi","迍":"zhun","迏":"da","迖":"da","迚":"da","迤":"yi","迩":"er","迴":"hui","迹":"ji","迻":"yi","逋":"bu","逎":"qiu","逑":"qiu","逘":"yi","逥":"hui","逸":"yi","逹":"da","遀":"sui","遂":"sui","遐":"xia","遒":"qiu","道":"dao","達":"da","遗":"yi","遺":"yi","邃":"sui","邇":"er","邑":"yi","邝":"kuang","邱":"qiu","邶":"bei","邼":"kuang","郆":"ji","郝":"hao","郥":"bei","部":"bu","郶":"bu","郼":"yi","鄁":"bei","鄗":"hao","鄞":"yin","鄦":"xu","鄺":"kuang","鄿":"ji","酋":"qiu","酏":"yi","酗":"xu","酳":"yin","醑":"xu","醔":"qiu","醡":"zha","醫":"yi","醭":"bu","醳":"yi","醷":"yi","釔":"yi","釖":"dao","釚":"qiu","釴":"yi","釻":"qiu","鈈":"bu","鈏":"yin","鈘":"yi","鈝":"yin","鈠":"yi","鈽":"bu","鉯":"yi","鉱":"kuang","鉳":"bei","鉺":"er","銀":"yin","銈":"ji","銊":"xu","銟":"cha","銡":"ji","銥":"yi","銦":"yin","銶":"qiu","鋇":"bei","鋛":"kuang","錓":"kong","錤":"ji","鍇":"kai","鍓":"ji","鍘":"zha","鍜":"xia","鍤":"cha","鎃":"pai","鎉":"da","鎋":"xia","鎎":"kai","鎝":"da","鎧":"kai","鎬":"hao","鎰":"yi","鎺":"zu","鎼":"xia","鏃":"zu","鏔":"yi","鏬":"xia","鏶":"ji","鏸":"hui","鐆":"sui","鐖":"ji","鐦":"kai","鐨":"fei","鐩":"sui","鐬":"hui","鐽":"da","鐾":"bei","鐿":"yi","鑇":"ji","鑐":"xu","鑔":"cha","鑙":"ji","鑛":"kuang","钇":"yi","钚":"bu","钡":"bei","钸":"bu","铒":"er","铟":"yin","铠":"kai","铡":"zha","铱":"yi","银":"yin","锎":"kai","锴":"kai","锸":"cha","镄":"fei","镒":"yi","镞":"zu","镱":"yi","镲":"cha","開":"kai","閕":"xia","閖":"shui","閘":"zha","閜":"xia","闉":"yin","闋":"que","闓":"kai","闕":"que","闠":"hui","闸":"zha","闿":"kai","阓":"hui","阕":"que","阘":"da","阙":"que","阥":"yin","阴":"yin","阻":"zu","陂":"bei","际":"ji","陑":"er","陜":"xia","陦":"dao","陫":"fei","陭":"yi","陰":"yin","陻":"yin","陿":"xia","隂":"yin","隋":"sui","随":"sui","隐":"yin","隓":"hui","際":"ji","隝":"dao","隠":"yin","隧":"sui","隨":"sui","隭":"er","隮":"ji","隯":"dao","隱":"yin","隳":"hui","隿":"yi","雀":"que","集":"ji","雖":"sui","雞":"ji","雤":"xue","雦":"ji","雧":"ji","雪":"xue","需":"xu","霁":"ji","霅":"zha","霏":"fei","霒":"yin","霞":"xia","霠":"yin","霪":"yin","霬":"yi","霵":"ji","霽":"ji","靅":"fei","非":"fei","靟":"fei","靧":"hui","靫":"cha","靴":"xue","靷":"yin","靻":"zu","靼":"da","靾":"yi","鞁":"bei","鞇":"yin","鞑":"da","鞖":"sui","鞚":"kong","鞦":"qiu","鞧":"qiu","鞴":"bei","鞾":"xue","鞿":"ji","韃":"da","韢":"sui","韲":"ji","音":"yin","韾":"yin","須":"xu","頉":"yi","頊":"xu","頤":"yi","頥":"yi","頮":"hui","頻":"pin","顊":"yi","顗":"yi","顥":"hao","顪":"hui","顰":"pin","须":"xu","顼":"xu","颐":"yi","频":"pin","颒":"hui","颢":"hao","颦":"pin","颬":"xia","颽":"kai","飛":"fei","飝":"fei","飞":"fei","飢":"ji","飮":"yin","飲":"yin","飴":"yi","餌":"er","餔":"bu","餢":"bu","餥":"fei","餯":"hui","餷":"cha","饐":"yi","饑":"ji","饥":"ji","饮":"yin","饴":"yi","饵":"er","馇":"cha","馡":"fei","馪":"pin","駅":"yi","駬":"er","駰":"yin","騑":"fei","騛":"fei","騢":"xia","驉":"xu","驛":"yi","驞":"pin","驥":"ji","驿":"yi","骃":"yin","骥":"ji","骮":"yi","骳":"bei","髄":"sui","髓":"sui","髵":"er","髻":"ji","鬚":"xu","鬾":"ji","魆":"xu","魕":"ji","魖":"xu","魛":"dao","魢":"ji","魣":"xu","魻":"xia","鮂":"qiu","鮓":"zha","鮞":"er","鮣":"yin","鮨":"yi","鮰":"hui","鮺":"zha","鯄":"qiu","鯚":"ji","鯡":"fei","鯣":"yi","鰌":"qiu","鰍":"qiu","鰕":"xia","鰝":"hao","鰴":"hui","鰶":"ji","鰽":"qiu","鰿":"ji","鱀":"ji","鱈":"xue","鱭":"ji","鱮":"xu","鱽":"dao","鱾":"ji","鲊":"zha","鲕":"er","鲚":"ji","鲝":"zha","鲫":"ji","鲱":"fei","鳅":"qiu","鳕":"xue","鳦":"yi","鳪":"bu","鳮":"ji","鴯":"er","鵋":"ji","鵏":"bu","鵟":"kuang","鵯":"bei","鵲":"que","鵼":"kong","鶂":"yi","鶃":"yi","鶍":"yi","鶏":"ji","鶖":"qiu","鶷":"xia","鶺":"ji","鷁":"yi","鷄":"ji","鷊":"yi","鷑":"ji","鷖":"yi","鷣":"yin","鷧":"yi","鷽":"xue","鷾":"yi","鸃":"yi","鸄":"ji","鸔":"bu","鸡":"ji","鸴":"xue","鸸":"er","鹊":"que","鹎":"bei","鹙":"qiu","鹝":"yi","鹡":"ji","鹢":"yi","鹥":"yi","麂":"ji","麾":"hui","黋":"kuang","黓":"yi","黟":"yi","黠":"xia","黳":"yi","鼣":"fei","鼽":"qiu","齄":"zha","齇":"zha","齌":"ji","齎":"ji","齏":"ji","齑":"ji","齗":"yin","齮":"yi","齸":"yi","龂":"yin","龖":"da","龘":"da","龝":"qiu","鿻":"bu"};
+// 词表 v4：syl=多套音节模板（同义说法各自一套）。匹配=音节滑窗最小编辑距离，d=0 同音、d=0.50 近似；
+// 两个词同时达到最优距离时标「歧义」而不是随便挑一个
+const KEYWORDS = [
+  { id:'打框',   say:'打框',     syl:[['da','kuang']] },
+  { id:'被挤到', say:'被挤',     syl:[['bei','ji']] },
+  { id:'好球',   say:'好球',     syl:[['hao','qiu']] },
+  { id:'差球',   say:'坏球/差球', syl:[['huai','qiu'],['cha','qiu'],['zha','qiu']] },
+  { id:'随挥不足', say:'随挥',   syl:[['sui','hui']] },
+  { id:'引拍不足', say:'引拍',   syl:[['yin','pai']] }
+];
+(document.getElementById('chips')).innerHTML = KEYWORDS
+  .map(k => `<span class="kw" data-k="${k.id}">${k.id}<span class="interim">（说「${k.say}」）</span></span>`).join('');
+const rows = [];   // {t, text, conf, hit}
+let rec = null, running = false;
+
+// 环境诊断：先把「浏览器/安全上下文/来源」摊开，出错时一眼定位
+(function showEnv(){
+  const ua = navigator.userAgent;
+  const isEdge = /Edg/.test(ua), isChrome = /Chrome/.test(ua) && !isEdge;
+  const brand = isEdge ? 'Edge（走微软服务）' : isChrome ? 'Chrome（走 Google 服务，国内常不可达）' : '其他';
+  const origin = location.protocol + '//' + (location.host || '(本地文件)');
+  document.getElementById('env').innerHTML =
+    `来源：<b>${origin}</b>　安全上下文：<b class="${window.isSecureContext?'ok':'bad'}">${window.isSecureContext?'是':'否（麦克风必被拒）'}</b>`
+    + `<br>浏览器：<b>${brand}</b>　协议：${location.protocol}`;
+})();
+
+if (!SR) {
+  gate.className = 'bad';
+  gate.textContent = '此浏览器不支持 SpeechRecognition（iOS Safari 常见）——ASR 主路径在此设备上不可行，维持录音+课后转写。';
+} else {
+  gate.className = 'ok';
+  gate.textContent = '支持 SpeechRecognition，可以开测。';
+  toggleBtn.disabled = false;
+}
+
+// 错误码 → 人话（分清「权限问题」和「服务不可达」，这两者对策完全不同）
+const ERR_TIP = {
+  'not-allowed':      '麦克风权限被拒：多为 file:// 或非安全上下文，需 https/localhost',
+  'service-not-allowed': '浏览器禁止该来源用语音服务（同样是非安全上下文或策略限制）',
+  'audio-capture':    '找不到可用麦克风（耳机未连/被系统占用）',
+  'network':          '语音服务不可达（Chrome 走 Google，国内基本必挂）→ 换 Edge 试',
+  'no-speech':        '没听到声音（正常现象，不算失败）',
+  'aborted':          '被中断（正常现象）'
+};
+
+// 麦克风自检：只验证权限与设备，不经过 ASR，用来把两类问题分开
+document.getElementById('micTest').onclick = async () => {
+  const out = document.getElementById('micStat');
+  try {
+    const st = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const dev = st.getAudioTracks()[0];
+    let label = dev && dev.label ? dev.label : '(未命名)';
+    const mr = new MediaRecorder(st);
+    const chunks = [];
+    mr.ondataavailable = e => chunks.push(e.data);
+    mr.start();
+    out.innerHTML = `✓ 麦克风可用：<b>${label}</b>，正在录 3 秒…`;
+    setTimeout(() => {
+      mr.stop(); st.getTracks().forEach(t => t.stop());
+      out.innerHTML = `✓ 麦克风可用：<b>${label}</b>（3 秒录音成功，${chunks.length} 段）`
+        + `<br>若上面「来源」是 file:// 或非安全上下文，ASR 仍会 not-allowed（两个 API 权限策略不同）。`;
+    }, 3000);
+  } catch (e) {
+    out.innerHTML = `<span class="bad">✗ 麦克风不可用：${e.name} — ${e.message}</span>`
+      + `<br>这种情况先解决权限/安全上下文，再谈识别率。`;
+  }
+};
+
+function norm(s){ return s.replace(/[\s，。！？,.!?.、]/g, ''); }
+
+function toSyl(s){ return [...norm(s)].map(c => PY[c] || c); }
+
+function lev(a, b){
+  let prev = Array.from({length:b.length+1}, (_,j)=>j);
+  for (let i=1;i<=a.length;i++){
+    const cur=[i];
+    for (let j=1;j<=b.length;j++)
+      cur[j]=Math.min(prev[j]+1, cur[j-1]+1, prev[j-1]+(a[i-1]!==b[j-1]));
+    prev=cur;
+  }
+  return prev[b.length];
+}
+
+// 单个音节模板对整句取滑窗最小归一化距离
+function distOf(ts, ks){
+  const L = ks.length;
+  if (ts.length < L) return 9;
+  let best = 9;
+  for (let i=0;i+L<=ts.length;i++){
+    const d = lev(ts.slice(i,i+L), ks)/L;
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+// 拼音滑窗匹配：d=0 同音（#前缀）、0<d≤0.5 近似（~前缀）；两个词并列最优 → 标「歧义」不猜
+function matchKw(text){
+  const ts = toSyl(text);
+  let best = 9, ids = [];
+  for (const k of KEYWORDS){
+    let d = 9;
+    for (const v of k.syl) d = Math.min(d, distOf(ts, v));
+    if (d < best) { best = d; ids = [k.id]; }
+    else if (d === best) ids.push(k.id);
+  }
+  if (best > 0.5) return { id:'', d:best, amb:false };
+  if (ids.length > 1) return { id:ids.join('/'), d:best, amb:true };
+  return { id:ids[0], d:best, amb:false };
+}
+
+function render(){
+  const nH = rows.filter(r => r.hit).length;
+  document.getElementById('nTotal').textContent = rows.length;
+  document.getElementById('nHit').textContent = nH;
+  document.getElementById('rate').textContent = rows.length ? (100*nH/rows.length).toFixed(0)+'%' : '—';
+  document.getElementById('log').innerHTML = rows.map(r =>
+    `<div class="${r.amb?'warn':r.hit?'hit':'miss'}">${r.t}　${r.text}　<span class="interim">conf=${r.conf}</span>`
+    + (r.hit ? `　→ ${r.amb?'?':r.dist==='0.00'?'#':'~'}${r.hit}(d=${r.dist})` : '')
+    + `</div>`
+  ).join('');
+  document.querySelectorAll('.kw').forEach(e => {
+    if (rows.some(r => r.hit === e.dataset.k)) e.classList.add('hot');
+  });
+}
+
+function start(){
+  rec = new SR();
+  rec.lang = 'zh-CN';
+  rec.continuous = true;
+  rec.interimResults = false;   // 只记最终结果，日志干净；中间结果对命中率统计无意义
+  rec.maxAlternatives = 1;
+  rec.onresult = (ev) => {
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const r = ev.results[i];
+      if (!r.isFinal) continue;
+      const text = r[0].transcript;
+      const conf = (r[0].confidence || 0).toFixed(2);
+      const m = matchKw(text);
+      rows.push({ t: new Date().toLocaleTimeString('zh-CN', {hour12:false}), text, conf,
+                  hit: m.id, dist: m.d.toFixed(2), amb: m.amb });
+    }
+    render();
+  };
+  rec.onerror = (e) => {
+    if (e.error === 'no-speech' || e.error === 'aborted') return;  // 静音超时是常态，不污染统计
+    rows.push({
+      t: new Date().toLocaleTimeString('zh-CN',{hour12:false}),
+      text: `[错误 ${e.error}] ${ERR_TIP[e.error] || ''}`, conf: '-', hit: '', dist: '-'
+    });
+    running = false;                 // 权限/网络类错误会反复重试，先停下
+    toggleBtn.textContent = '开始识别';
+    render();
+  };
+  rec.onend = () => { if (running) rec.start(); };  // 静音超时后自动续上
+  rec.start();
+  toggleBtn.textContent = '停止识别';
+}
+
+toggleBtn.onclick = () => {
+  running = !running;
+  if (running) start();
+  else { rec && rec.stop(); toggleBtn.textContent = '开始识别'; }
+};
+
+document.getElementById('clear').onclick = () => { rows.length = 0; render(); };
+
+document.getElementById('export').onclick = () => {
+  const head = 'time,text,confidence,matched_keyword,dist\n';
+  const body = rows.map(r => [r.t, '"'+r.text.replace(/"/g,'""')+'"', r.conf, r.hit, r.dist].join(',')).join('\n');
+  const blob = new Blob(['﻿' + head + body], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'asr_test_' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'') + '.csv';
+  a.click();
+};
+</script>
+</body>
+</html>
