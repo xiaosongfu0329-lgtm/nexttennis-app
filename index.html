@@ -208,6 +208,17 @@
     <div class="diag-row"><span class="k">震动</span>
       <span id="vtiBadge"><span class="badge idle">—</span></span>
       <span class="num" id="vtiNum">—</span></div>
+    <!-- 新增识别项（2026-11-01 用户要求，与引拍/随挥同格式同行列出；数值待标定） -->
+    <div class="diag-row"><span class="k">被挤到</span>
+      <span id="nfSqz"><span class="badge idle">—</span></span>
+      <span class="num" id="nfSqzNum">—</span></div>
+    <div class="diag-row"><span class="k">引拍时机</span>
+      <span id="nfTiming"><span class="badge idle">—</span></span>
+      <span class="num" id="nfTimingNum">—</span></div>
+    <!-- 打框/拍面/流畅度/刷球四项无门限，压成一行摘要保证首页一屏；明细见技术页 -->
+    <div class="diag-row"><span class="k">其它</span>
+      <span id="nfOther"><span class="badge idle">—</span></span>
+      <span class="num" id="nfOtherNum">—</span></div>
     <div class="tip" id="diagTip">—</div>
   </div>
 
@@ -221,12 +232,8 @@
     <span id="homeRecInd"><span style="color:var(--fail)">●</span>&nbsp;<span id="homeRecIndTxt">录音中</span></span>
   </div>
 
-  <!-- 新识别项上首页（2026-11-01 用户拍板，覆盖 B72「家庭视图零标定中」原约束）：
-       与技术页 nfBox 同一份内容，nfRender 双写 -->
-  <div class="panel" style="margin-top:8px;padding:8px 10px">
-    <h2 style="font-size:13px;margin:0 0 4px">识别项（标定中）</h2>
-    <div id="nfBoxHome" class="thr-box" style="font-size:11px;line-height:1.6">—</div>
-  </div>
+  <!-- 2026-11-01 用户要求：新增识别项不再单独占一块，改为与引拍/随挥同格式的行，
+       统一列在诊断卡里（上面 diag 区块），详细数值仍在技术页 nfBox -->
 </section>
 
 <!-- ================= 页5：技术页（波形 + 全部特征值 + QC + 门限 + 日志） ================= -->
@@ -457,7 +464,9 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B72-20261101-1519";   // 版本号格式固定：APP-<版本>-<YYYYMMDD>-<HHmm>，时分用于区分同一天多次发布
+const APP_BUILD = "APP-B72-20261101-1546";   // 版本号格式固定：APP-<版本>-<YYYYMMDD>-<HHmm>，时分用于区分同一天多次发布
+                                             // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
+                                             // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
 // =====================================================================
 // 0. 协议常量（与固件约定）
@@ -2168,10 +2177,9 @@ function nfCompute(data, t0, form) {
 
 // 技术页渲染（「标定中」统一标记）+ 首页识别项块双写（2026-11-01 用户拍板上首页）
 function nfRender(w) {
-  const els = [$("nfBox"), $("nfBoxHome")].filter(Boolean);
-  if (!els.length) return;
-  if (!w) { els.forEach(el => el.textContent = "—"); return; }
-  if (!isQcOk(w.qc.code, w.meta)) { els.forEach(el => el.textContent = "（非有效击球窗，不计算识别项特征）"); return; }
+  const els = [$("nfBox")].filter(Boolean);
+  if (!w) { els.forEach(el => el.textContent = "—"); nfRows(null); return; }
+  if (!isQcOk(w.qc.code, w.meta)) { els.forEach(el => el.textContent = "（非有效击球窗，不计算识别项特征）"); nfRows(null); return; }
   const t0 = w.meta.t0Index != null ? w.meta.t0Index : findT0Index(w.data);
   const f = nfCompute(w.data, t0, w.meta.form);
   w.nf = f;
@@ -2187,6 +2195,35 @@ function nfRender(w) {
     `<b>刷球占比</b>（观察值，已降档不进激励）—— brush_ratio=${n2(f.brushRatio)}（|ω_perp|=${n2(f.wPerp)} dps / |ω|=${n2(f.wTot)} dps）`,
   ].join("\n");
   els.forEach(el => el.innerHTML = html);
+  nfRows(f);
+}
+
+// 首页诊断卡里的新增识别项行（与引拍/随挥同格式）；初判只标「疑似/正常」，不归因
+// 打框 / 拍面 / 流畅度 / 刷球 四项无门限，压成一行「其它」保证首页一屏（明细在技术页）
+function nfRows(f) {
+  const B = (id, cls, txt) => { const e = $(id); if (e) e.innerHTML = `<span class="badge ${cls}">${txt}</span>`; };
+  const N = (id, txt) => { const e = $(id); if (e) e.textContent = txt; };
+  const HEAD = ["nfSqz", "nfTiming", "nfOther"];
+  const NUMS = ["nfSqzNum", "nfTimingNum", "nfOtherNum"];
+  if (!f) {
+    HEAD.forEach(id => B(id, "idle", "—"));
+    NUMS.forEach(id => N(id, "—"));
+    return;
+  }
+  const n2 = v => (Number.isFinite(v) ? v.toFixed(2) : "—");
+  const n3 = v => (Number.isFinite(v) ? v.toFixed(3) : "—");
+  // 被挤到：初判（门限未标定，只提示不判错）
+  const sqz = f.squeezedVerdict === "疑似偏后";
+  B("nfSqz", sqz ? "warn" : "pass", f.squeezedVerdict);
+  N("nfSqzNum", `pre ${n3(f.preDurS)}s · acc ${n3(f.accDurS)}s · ω_lp ${n2(f.wlpRatio)} · 峰差 ${n2(f.tPeakLpMs)}ms`);
+  // 引拍时机：复用 K3 个人基线
+  const tm = f.timingVerdict;
+  B("nfTiming", tm === "正常" ? "pass" : (tm === "—" ? "idle" : "warn"), tm);
+  N("nfTimingNum", f.timingWhy);
+  // 其它四项：无标定门限，只报值
+  B("nfOther", "idle", "标定中");
+  N("nfOtherNum", `打框 hf ${n2(f.hfRms)} · 拍面 ${n2(f.parMean)}±${n2(f.parStd)}`
+    + ` · 流畅 ${n2(f.flowDip)}/${n2(f.flowJerk)} · 刷球 ${n2(f.brushRatio)}`);
 }
 
 // ---------- 正反手硬判决（零校准！） ----------
