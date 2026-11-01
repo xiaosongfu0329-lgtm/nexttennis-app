@@ -38,5 +38,76 @@
     "14-16": null
   },
   "population": "child_single",
-  "note": "null 字段 = 待回填；App 对 null 回退现有硬编码门限"
+  "tier_policy_version": "T1-20261031",
+  "tier_policy": {
+    "principle": "档位由真值来源决定，不由技术架构决定；降档永远合法，升档必须有新真值",
+    "tiers": {
+      "abs": {
+        "name": "绝对定量",
+        "truth": "仪表级参考（雷达 / 高速相机）",
+        "gate": "误差 ≤ 标定不确定度",
+        "output": "数字 + 物理单位",
+        "risk": "无真值时对外穿帮，最致命"
+      },
+      "rel": {
+        "name": "相对定量",
+        "truth": "重测信度（同一动作重复）+ 单调性",
+        "gate": "信度达标且不随混杂因素漂移",
+        "output": "分位 / 趋势 / 与上次的比值",
+        "risk": "被误当成绝对量对外宣称"
+      },
+      "qual": {
+        "name": "清晰定性",
+        "truth": "教练盲判（逐球）",
+        "gate": "一致率 ≥ 80%",
+        "output": "类别词",
+        "risk": "低"
+      },
+      "fuzzy": {
+        "name": "模糊定性",
+        "truth": "专家整体印象 / 倾向性排序",
+        "gate": "误报率受控（不冤枉好球）+ 同人前后方向一致",
+        "output": "对冲话术，不给类不给数",
+        "risk": "教练一眼看穿即可信度崩塌，必须有 kill criterion"
+      }
+    },
+    "aggregation": ["stroke", "block", "session", "player"],
+    "hard_rules": [
+      "档位与聚合层级是正交两轴，必须同时声明（逐拍失效不等于该标签失效，可能只是层级错配）",
+      "UI 话术由档位派生：abs→数字+单位；rel→比上次句式；qual→类别词；fuzzy→对冲句式且不进语音播报首条",
+      "fuzzy 上线须带 kill criterion：教练方向一致率 <70% 或误报 >5% 即下线",
+      "升档是数据飞轮副产品：标签数到千级 / 雷达到位后批量迁移，不得手工提前宣称"
+    ]
+  },
+  "labels": {
+    "arm_side": {"name": "正反手", "tier": "qual", "agg": "stroke", "gate": "≥80%", "measured": "98%（20261030 块级真值）", "status": "live"},
+    "backswing_tb": {"name": "引拍三态", "tier": "qual", "agg": "stroke", "gate": "≥80%", "measured": "85.4%（反手浅引拍为已知偏差）", "status": "live"},
+    "followthrough_ft": {"name": "随挥三态", "tier": "qual", "agg": "stroke", "gate": "≥80%", "measured": "93.0%", "status": "live"},
+    "vti": {"name": "击球质量 VTI / 甜区", "tier": "rel", "agg": "session", "gate": "会话内 P75/P90 自适应；与甜区 3/3 对齐", "measured": "跨 session 绝对值敏感，仅个体内比较", "status": "live"},
+    "ball_speed": {"name": "球速", "tier": "rel", "agg": "stroke", "gate": "待雷达标定后才可升 abs", "measured": "当前为挥速/T0 代理值，禁作绝对 km/h 宣称；其底层 peak_w 块内 CV 中位 22.1%（≤25% 过线），可支撑「挥速趋势」一级", "status": "live", "upgrade": "雷达"},
+    "power_band": {"name": "力度档位（轻/中/重）", "tier": "rel", "agg": "session", "gate": "session 分侧 P33/P67 分档；须在三重门限后", "measured": "20261030：FH P33/P67=76.8/136.2g，BH 75.5/94.3g，三档各约 1/3", "status": "live"},
+    "stability": {"name": "动作一致性（稳定性）", "tier": "rel", "agg": "session", "gate": "用 IQR/med，不用 CV（双峰分布下 CV 被尾部污染）", "measured": "20261030：引拍弧长 IQR/med=40.6%、引拍时长 IQR/med=13.9%（其 CV=78.2% 属双峰假象）", "status": "live"},
+    "brush_index": {"name": "刷球指数", "tier": "rel", "agg": "session", "gate": "块内 CV ≤25%（跨块 CV 含真实变异，不作噪声底）", "measured": "20261030 块内 CV 中位 59.2% / P90 67.5%，未过线 → 降档为「类型 + 挥速趋势」两级鼓励", "status": "dowgraded"},
+    "prep_timing": {"name": "引拍时机（早/晚）", "tier": "qual", "agg": "stroke", "gate": "≥80%", "measured": "—", "status": "P1"},
+    "racket_face": {"name": "翻拍 / 拍面稳定", "tier": "qual", "agg": "stroke", "gate": "≥80%", "measured": "—", "status": "P1"},
+    "spin_type": {"name": "旋转类型（上旋/平击/切削）", "tier": "qual", "agg": "stroke", "gate": "≥80%", "measured": "—", "status": "P2"},
+    "hesitation": {"name": "犹豫 / 减速击球", "tier": "fuzzy", "agg": "session", "gate": "误报受控 + 同人前后方向一致", "measured": "—", "status": "P2", "kill": "方向一致率<70% 下线"},
+    "cp_phase": {"name": "击球点早晚", "tier": "rel", "agg": "player", "gate": "逐拍已证伪（r=0.03）；仅 player-level 风格基线", "measured": "std=0.062 成立", "status": "dowgraded"},
+    "cp_reach_jammed": {
+      "name": "击球点被挤（拍头滞后）",
+      "tier": "qual",
+      "agg": "stroke",
+      "gate": "教练盲判一致率 ≥80%",
+      "threshold": -0.8,
+      "rule": "cp_reach < -0.8 → jammed（被挤）；≥ -0.8 → ok",
+      "metric": "cp_reach = T0 时刻拍头相对肩髋连线的前伸量（归一化到躯干长）；负值 = 拍头落在身体后方",
+      "distribution_child": {"n": 49, "p5": -1.19, "p20": -0.823, "p25": -0.743, "p50": -0.429, "p80": 0.323, "p95": 1.336},
+      "measured": "20261030 儿童素材 49 拍：jammed 11 拍（22.4%）；阈值取 P20~P25 区间",
+      "note": "用途由「与传感器 cp_phase 比一致率」（已证伪 r=0.03）改为「被挤到」二分类；阈值按儿童素材分布定，需教练盲判验收后才可上线",
+      "status": "P1"
+    },
+    "torso_trace": {"name": "转体痕迹（手臂 vs 身体驱动）", "tier": "fuzzy", "agg": "session", "gate": "先验弱，仅做方向一致性试探", "measured": "—", "status": "probe", "kill": "与视频肩髋分离方向不一致即关闭"},
+    "frame_hit": {"name": "打框", "tier": "qual", "agg": "stroke", "gate": "960Hz 后重开", "measured": "480Hz 不可分", "status": "blocked"}
+  },
+  "note": "null 字段 = 待回填；App 对 null 回退现有硬编码门限；tier_policy / labels 为口径元数据，App 不消费，不改变现有判决"
 }
