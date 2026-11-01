@@ -124,6 +124,9 @@
   #voiceStat { font-size: 11px; color: var(--muted); }
   #voiceStat.err { color: var(--fail); }
   #voiceAutoBtn.on { background: var(--pass); color: #000; border-color: var(--pass); }
+  #voiceAutoBtnHome.on { background: var(--pass); color: #000; border-color: var(--pass); }
+  #homeRecInd { display: none; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--fail); }
+  #homeRecInd.on { display: inline-flex; animation: vpulse 1.1s infinite; }
   #voiceDevSel { max-width: 190px; min-height: 40px; padding: 4px 8px; font-size: 12px;
                  background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; }
   #voiceBarWrap { height: 6px; margin: 6px 0 2px; background: var(--border); border-radius: 3px; overflow: hidden; }
@@ -211,6 +214,19 @@
   <div id="sessStat" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
   <!-- 打标提示条（APP-B72）：只提示说什么，录音管线在「我的」页；正反手/引拍/随挥由 App 自判，不用报 -->
   <div class="hint" id="tagHintBar" style="margin-top:4px">打标：每球后说一个词 —— 打框 · 被挤到 · 好球 · 差球 · 随挥不足 · 引拍不足（自动录音，课后转写）</div>
+  <!-- 首页录音打标开关（2026-11-01 用户要求）：与「我的」页 voiceAutoBtn 同一状态 voiceAuto，
+       开=每球后录 5 秒（此时静音播报），关=不录音、正常播放鼓励语音；录音中显示跳动红点 -->
+  <div style="display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap">
+    <button id="voiceAutoBtnHome" class="chip">录音打标：关</button>
+    <span id="homeRecInd"><span style="color:var(--fail)">●</span>&nbsp;<span id="homeRecIndTxt">录音中</span></span>
+  </div>
+
+  <!-- 新识别项上首页（2026-11-01 用户拍板，覆盖 B72「家庭视图零标定中」原约束）：
+       与技术页 nfBox 同一份内容，nfRender 双写 -->
+  <div class="panel" style="margin-top:8px;padding:8px 10px">
+    <h2 style="font-size:13px;margin:0 0 4px">识别项（标定中）</h2>
+    <div id="nfBoxHome" class="thr-box" style="font-size:11px;line-height:1.6">—</div>
+  </div>
 </section>
 
 <!-- ================= 页5：技术页（波形 + 全部特征值 + QC + 门限 + 日志） ================= -->
@@ -441,7 +457,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B72-20261031";   // 界面重组(打球/技术/回顾/我的) + 6项识别项标定中 + BH引拍门限86° + 录音打标
+const APP_BUILD = "APP-B72-20261101";   // B72 + Jacobi修复 + 首页录音开关/录音中图标/识别项上首页
 
 // =====================================================================
 // 0. 协议常量（与固件约定）
@@ -2150,18 +2166,18 @@ function nfCompute(data, t0, form) {
   };
 }
 
-// 技术页渲染（「标定中」统一标记；家庭视图不出现）
+// 技术页渲染（「标定中」统一标记）+ 首页识别项块双写（2026-11-01 用户拍板上首页）
 function nfRender(w) {
-  const el = $("nfBox");
-  if (!el) return;
-  if (!w) { el.textContent = "—"; return; }
-  if (!isQcOk(w.qc.code, w.meta)) { el.textContent = "（非有效击球窗，不计算识别项特征）"; return; }
+  const els = [$("nfBox"), $("nfBoxHome")].filter(Boolean);
+  if (!els.length) return;
+  if (!w) { els.forEach(el => el.textContent = "—"); return; }
+  if (!isQcOk(w.qc.code, w.meta)) { els.forEach(el => el.textContent = "（非有效击球窗，不计算识别项特征）"); return; }
   const t0 = w.meta.t0Index != null ? w.meta.t0Index : findT0Index(w.data);
   const f = nfCompute(w.data, t0, w.meta.form);
   w.nf = f;
   const n2 = v => (Number.isFinite(v) ? v.toFixed(2) : "—");
   const n3 = v => (Number.isFinite(v) ? v.toFixed(3) : "—");
-  el.innerHTML = [
+  const html = [
     `<b>被挤到 / 击球点偏后</b>（标定中）—— pre_dur_s=${n3(f.preDurS)}s · acc_dur_s=${n3(f.accDurS)}s · `
       + `ω_lp_ratio=${n2(f.wlpRatio)} · t_peak_lp−T0=${n2(f.tPeakLpMs)}ms → 初判 <b>${f.squeezedVerdict}</b>`,
     `<b>打框特征</b>（标定中，不判决）—— hf_rms=${n2(f.hfRms)}（T0+5~30ms 三轴二阶差分 RMS）`,
@@ -2170,6 +2186,7 @@ function nfRender(w) {
     `<b>挥拍流畅度</b>（标定中）—— dip_ratio=${n2(f.flowDip)} · jerk=${n2(f.flowJerk)}（宏观段前挥 10Hz 低通）`,
     `<b>刷球占比</b>（观察值，已降档不进激励）—— brush_ratio=${n2(f.brushRatio)}（|ω_perp|=${n2(f.wPerp)} dps / |ω|=${n2(f.wTot)} dps）`,
   ].join("\n");
+  els.forEach(el => el.innerHTML = html);
 }
 
 // ---------- 正反手硬判决（零校准！） ----------
@@ -2977,6 +2994,7 @@ async function voiceStartRec(auto = false) {
     stream.getTracks().forEach(t => t.stop());
     $("voiceRecBtn").classList.remove("rec");
     $("voiceRecBtn").textContent = "● 录音打标";
+    $("homeRecInd").classList.remove("on");    // 首页录音中图标熄灭
     $("voiceBar").style.width = "0";
     const rec = {
       sessionTag: sessionTag(), windowIndex: voiceTarget.index, seq: voiceTarget.seq,
@@ -3011,6 +3029,8 @@ async function voiceStartRec(auto = false) {
     $("voiceStat").textContent = `● 录音中 ${el.toFixed(1)} / ${cap.toFixed(1)}s → seq=${voiceTarget.seq}`;
     $("voiceBar").style.width = Math.min(100, el / cap * 100) + "%";
     $("voiceRecBtn").textContent = `● ${el.toFixed(1)}s / ${cap.toFixed(0)}s`;
+    $("homeRecInd").classList.add("on");                              // 首页录音中图标（跳动红点）
+    $("homeRecIndTxt").textContent = `录音中 ${el.toFixed(1)}/${cap.toFixed(0)}s`;
   };
   tick();
   voiceTimer = setInterval(tick, 100);
@@ -3119,18 +3139,25 @@ function paintVoiceAuto() {
   const b = $("voiceAutoBtn");
   b.textContent = `自动录音：${voiceAuto ? "开" : "关"}`;
   b.classList.toggle("on", voiceAuto);
+  const h = $("voiceAutoBtnHome");           // 首页开关与「我的」页同一状态（2026-11-01）
+  if (h) {
+    h.textContent = `录音打标：${voiceAuto ? "开" : "关"}`;
+    h.classList.toggle("on", voiceAuto);
+  }
   voiceUpdateStat();
 }
-$("voiceAutoBtn").addEventListener("click", async () => {
+async function voiceAutoToggle() {
   voiceAuto = !voiceAuto;
   localStorage.setItem("nt_voice_auto", voiceAuto ? "1" : "0");
   paintVoiceAuto();
-  ttsMute(voiceAuto);                     // 自动录音开启即静音播报
+  ttsMute(voiceAuto);                     // 开=静音播报（防 TTS 录进音频）；关=恢复正常鼓励语音
   if (voiceAuto) await voicePrimeMic();   // 紧接点击调用，保住用户手势（先 await 别的会丢手势导致授权失败）
   await voiceWakeLock(voiceAuto);
   log(voiceAuto ? "自动录音已开启：每球窗口到达即录 5 秒（保持页面在前台；语音播报自动静音）"
-                : "自动录音已关闭", "log-info");
-});
+                : "录音打标已关闭：不录音，恢复正常语音播报", "log-info");
+}
+$("voiceAutoBtn").addEventListener("click", voiceAutoToggle);
+$("voiceAutoBtnHome").addEventListener("click", voiceAutoToggle);
 $("voiceDevSel").addEventListener("change", e => {
   voiceDevId = e.target.value || "";
   if (voiceDevId) localStorage.setItem("nt_voice_dev", voiceDevId);
