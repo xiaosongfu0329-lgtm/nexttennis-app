@@ -198,6 +198,14 @@
     <span id="sessHint" class="hint" style="margin:0;font-size:11px">击球反馈开启</span>
   </div>
 
+  <!-- 块级标签首页入口（2026-11-01 恢复，B72 任务书 §4.3.1）：块间暂停 ≥5s 内一键换块 -->
+  <div class="sessbar" id="blkBar" style="gap:4px">
+    <span class="lbl-key">块</span>
+    <span id="blkStat" class="hint" style="margin:0;font-family:ui-monospace,monospace;min-width:70px;font-size:11px">未启用</span>
+    <div id="blkChips" style="display:flex;gap:4px;overflow-x:auto;flex:1;padding:2px 0;scrollbar-width:none"></div>
+    <button id="blkEndBtn" class="chip" style="min-height:28px;padding:3px 9px;font-size:12px">结束</button>
+  </div>
+
   <div class="diag">
     <div class="diag-row"><span class="k">引拍</span>
       <span id="diagBack"><span class="badge idle">—</span></span>
@@ -225,6 +233,12 @@
   <div id="sessStat" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
   <!-- 打标提示条（APP-B72）：只提示说什么，录音管线在「我的」页；正反手/引拍/随挥由 App 自判，不用报 -->
   <div class="hint" id="tagHintBar" style="margin-top:4px">打标：每球后说一个词 —— 打框 · 被挤到 · 好球 · 差球 · 随挥不足 · 引拍不足（自动录音，课后转写）</div>
+  <!-- 蓝牙耳机/麦克风连接状态（2026-11-01 用户要求上首页）：录音用耳机麦、播报走手机扬声器 -->
+  <div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:4px;color:var(--muted)">
+    <span id="micDot" style="color:var(--muted)">●</span>
+    <span id="micStat">麦克风：待授权</span>
+    <span id="spkStat" style="margin-left:auto">播报：手机扬声器</span>
+  </div>
   <!-- 首页录音打标开关（2026-11-01 用户要求）：与「我的」页 voiceAutoBtn 同一状态 voiceAuto，
        开=每球后录 5 秒（此时静音播报），关=不录音、正常播放鼓励语音；录音中显示跳动红点 -->
   <div style="display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap">
@@ -375,7 +389,7 @@
       <button id="blockLabelEnd" class="chip">■ 结束</button>
       <span id="blockLabelStat" class="hint" style="font-family:ui-monospace,monospace">未启用</span>
     </div>
-    <p class="hint">正常打球块不需要块名。仅教练要求的负例条件块（如「FH 无引拍」）：发球机暂停时输入块名点「开始新块」，后续窗口 note 自动前缀 [块名]；重开即继续，点「结束」清除。</p>
+    <p class="hint">首页块栏可一键切换预置块（A / B1~B6 / C / C1~C3）；这里用于**自定义块名**（如「FH 无引拍」）。块激活期间新窗口 note 自动前缀 [块名]，点「结束」清除；两处状态同步。</p>
   </div>
 
   <!-- 录音打标（课后自动转写，APP-B72）：App 只录音，课后电脑端 faster-whisper 离线转写回填 -->
@@ -464,7 +478,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B72-20261101-1546";   // 版本号格式固定：APP-<版本>-<YYYYMMDD>-<HHmm>，时分用于区分同一天多次发布
+const APP_BUILD = "APP-B72-20261101-1620";   // 首页麦克风/蓝牙耳机状态行；录音走耳机麦、播报与音效强制走手机扬声器；版本号格式固定：APP-<版本>-<YYYYMMDD>-<HHmm>，时分用于区分同一天多次发布
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -896,6 +910,8 @@ class AudioFeedbackEngine {
     if (this.ctx) return;
     const Ctx = window.AudioContext || window.webkitAudioContext;
     this.ctx = new Ctx();
+    // 音效也跟随播报通道：录音用耳机麦，播报/音效仍走手机扬声器
+    if (phoneSinkId && this.ctx.setSinkId) this.ctx.setSinkId(phoneSinkId).catch(() => {});
     // 合成短促冲击音（噪声爆发 + 低频 thump）
     this.impactBuf = this._synthImpact();
     this.comboBuf = this._synthNotes([660, 990]);
@@ -981,6 +997,10 @@ class AudioFeedbackEngine {
   _playVoiceFile(src, fallbackText) {
     try {
       const a = new Audio(src);
+      // 播报强制走手机扬声器（录音仍用耳机麦）：蓝牙连上后媒体默认路由会被改到耳机
+      if (phoneSinkId && a.setSinkId) {
+        try { const p0 = a.setSinkId(phoneSinkId); if (p0 && p0.catch) p0.catch(() => {}); } catch (e) { /* 忽略 */ }
+      }
       let done = false;
       const fb = () => { if (!done) { done = true; this.speak(fallbackText); } };
       a.onerror = fb;
@@ -1174,6 +1194,7 @@ let sessionWindows = [];
 let sessionStartTs = 0;
 let labeledCount = 0;
 let activeBlockLabel = null;   // 块级标签（映射标定必需）。非 null 时，新窗口 note 自动前缀 [块名]。
+let blockValidCount = 0;       // 本块有效击球计数（quickClass=0 且 QC 通过；异物/拍框/丢包不计）
 // 会话状态：VTI 三重门限第 1 重。训练中才做震动提醒；捡球/暂停时静默（操作态过滤捡球弹响）
 let sessionState = "train";    // train | pause
 let goodStreak = 0;            // 连续有效击球计数（连击 / 达成音效与话术）
@@ -1234,6 +1255,9 @@ function onWindow(meta, data) {
   if (activeBlockLabel && !w.meta.note) {
     w.meta.note = `[${activeBlockLabel}]`;
   }
+  // 本块有效球计数（异物/拍框/丢包不计，避免暂停期捡球干扰块内球数）
+  if (activeBlockLabel && meta.quickClass === 0 && isQcOk(res.code, meta)) blockValidCount++;
+  updateBlockLabelUI();
   voiceAutoTrigger(meta);        // 自动录音：击球窗口一到达即录 5 秒（无按键）
   updateWinSelector(true);
   updateQcPanel(res);
@@ -2742,33 +2766,60 @@ function getLabeledMatrix(label) {
   };
 }
 
-// ---------- 块级标签（映射标定必需） ----------
-// 发球机暂停 → 输入块名 → 点「开始新块」 → 后续窗口自动前缀 [块名]
-// 发球机重开继续打，点「结束」清除
-function updateBlockLabelUI() {
-  const stat = $("blockLabelStat");
-  if (activeBlockLabel) {
-    stat.textContent = `▶ [${activeBlockLabel}]  激活中`;
-    stat.style.color = "var(--pass)";
-  } else {
-    stat.textContent = "未启用";
-    stat.style.color = "var(--muted)";
-  }
+// ---------- 块级标签（映射标定必需；首页块栏 + 「我的」页自定义，共享同一状态） ----------
+// 发球机暂停 → 点预置块名（或「我的」页输入自定义块名）→ 后续窗口自动前缀 [块名]
+// 点击预置 = 自动结束上一块 → 激活新块 → 本块计数清零
+const BLOCK_PRESETS = ["A", "B1", "B2", "B3", "B4", "B5", "B6", "C", "C1", "C2", "C3"];
+
+function setActiveBlock(name) {
+  name = String(name || "").trim();
+  if (!name) { log("请先输入块名", "log-warn"); return; }
+  if (activeBlockLabel === name) { log(`块 [${name}] 已在激活中`, "log-info"); return; }
+  if (activeBlockLabel) log(`块切换：[${activeBlockLabel}]（有效 ${blockValidCount}）→ [${name}]`, "log-info");
+  activeBlockLabel = name;
+  blockValidCount = 0;
+  updateBlockLabelUI();
+  log(`块级标签激活：[${name}] — 后续窗口自动挂前缀`, "log-pass");
 }
+function endActiveBlock() {
+  if (!activeBlockLabel) { log("当前没有活跃的块", "log-warn"); return; }
+  log(`块级标签结束：[${activeBlockLabel}]（有效球 ${blockValidCount}）`, "log-info");
+  activeBlockLabel = null;
+  blockValidCount = 0;
+  updateBlockLabelUI();
+}
+function updateBlockLabelUI() {
+  const active = !!activeBlockLabel;
+  const txt = active ? `[${activeBlockLabel}] 有效 ${blockValidCount}` : "未启用";
+  const stat = $("blockLabelStat");   // 「我的」页状态
+  if (stat) { stat.textContent = "▶ " + txt; stat.style.color = active ? "var(--pass)" : "var(--muted)"; }
+  const hstat = $("blkStat");         // 首页块栏状态
+  if (hstat) {
+    hstat.textContent = active ? `${activeBlockLabel} · ${blockValidCount}` : "未启用";
+    hstat.style.color = active ? "var(--pass)" : "var(--muted)";
+  }
+  const box = $("blkChips");
+  if (box) box.querySelectorAll(".chip").forEach(b => b.classList.toggle("on", active && b.dataset.blk === activeBlockLabel));
+}
+(function initBlockBar() {
+  const box = $("blkChips");
+  if (box) {
+    box.innerHTML = BLOCK_PRESETS.map(n =>
+      `<button class="chip" data-blk="${n}" style="min-height:28px;padding:3px 9px;font-size:12px;flex:0 0 auto">${n}</button>`).join("");
+    box.querySelectorAll(".chip").forEach(b => b.addEventListener("click", () => setActiveBlock(b.dataset.blk)));
+  }
+  const endBtn = $("blkEndBtn");
+  if (endBtn) endBtn.addEventListener("click", endActiveBlock);
+  updateBlockLabelUI();
+})();
+
 $("blockLabelStart").addEventListener("click", () => {
   const name = $("blockLabelInput").value.trim();
   if (!name) { log("请先输入块名", "log-warn"); return; }
-  activeBlockLabel = name;
   $("blockLabelInput").value = "";
-  updateBlockLabelUI();
-  log(`块级标签激活：[${name}] — 后续窗口自动挂前缀`, "log-pass");
+  setActiveBlock(name);
 });
-$("blockLabelEnd").addEventListener("click", () => {
-  if (!activeBlockLabel) { log("当前没有活跃的块", "log-warn"); return; }
-  log(`块级标签结束：[${activeBlockLabel}]`, "log-info");
-  activeBlockLabel = null;
-  updateBlockLabelUI();
-});
+$("blockLabelEnd").addEventListener("click", endActiveBlock);
 // 回车快捷键：输入框里按 Enter = 点「开始新块」
 $("blockLabelInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); $("blockLabelStart").click(); }
@@ -2852,6 +2903,8 @@ let voiceDevId = localStorage.getItem("nt_voice_dev") || "";
 let voiceMissed = 0, voiceLastStart = 0, wakeLock = null, voiceMicError = false;
 let voiceMicReason = "";
 let voiceLastFailKey = "";
+let voiceMicLabel = "";          // 实际在用麦克风的设备名（首页蓝牙状态用）
+let phoneSinkId = "";            // 手机扬声器 deviceId（播报强制走扬声器，录音仍用耳机麦）
 
 async function voiceUpdateStat() {
   try {
@@ -2878,6 +2931,47 @@ async function voiceListDevices() {
       `<option value="${d.deviceId}">${d.label || ("输入设备 " + (i + 1))}</option>`).join("");
     sel.value = devs.some(d => d.deviceId === voiceDevId) ? voiceDevId : "";
   } catch (e) { /* 忽略 */ }
+  await pinPlaybackToSpeaker();
+  micStatRefresh();
+}
+
+// ---------- 首页：麦克风/蓝牙耳机状态 + 播报输出（2026-11-01 用户要求） ----------
+// 目标行为：录音走耳机麦，播报与音效走手机扬声器。
+const BT_NAME_RE = /bluetooth|蓝牙|airpods|hands-?free|hfp|a2dp|tws|buds|earbud|headset|耳机/i;
+
+function micKindOf(lbl) {
+  return BT_NAME_RE.test(lbl || "") ? "蓝牙耳机" : "本机麦克风";
+}
+
+// 找出手机扬声器的 audiooutput deviceId；找不到就保持空（跟随系统）
+async function pinPlaybackToSpeaker() {
+  const st = $("spkStat");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+  try {
+    const outs = (await navigator.mediaDevices.enumerateDevices())
+      .filter(d => d.kind === "audiooutput" && d.deviceId && d.deviceId !== "default");
+    if (!outs.length) { phoneSinkId = ""; }
+    else {
+      const pick = outs.find(d => !BT_NAME_RE.test(d.label) && /speaker|扬声器|phone|internal|built-?in|本机/i.test(d.label))
+                || outs.find(d => !BT_NAME_RE.test(d.label));
+      phoneSinkId = pick ? pick.deviceId : "";
+    }
+  } catch (e) { phoneSinkId = ""; }
+  if (st) st.textContent = phoneSinkId ? "播报：手机扬声器" : "播报：跟随系统（蓝牙已连时可能走耳机）";
+}
+
+function micStatRefresh() {
+  const st = $("micStat"), dot = $("micDot");
+  if (!st) return;
+  const set = (txt, color) => {
+    st.textContent = "麦克风：" + txt;
+    if (dot) dot.style.color = color;
+  };
+  if (voiceMicError) { set("未就绪" + (voiceMicReason ? "（" + voiceMicReason.slice(0, 24) + "）" : ""), "var(--fail)"); return; }
+  if (!voiceMicLabel) { set("待授权（点「检测麦克风」）", "var(--muted)"); return; }
+  const kind = micKindOf(voiceMicLabel);
+  const bt = kind === "蓝牙耳机";
+  set(kind + "｜" + voiceMicLabel.replace(/\(.*?\)/g, "").trim().slice(0, 18), bt ? "var(--pass)" : "var(--warn)");
 }
 
 async function voiceWakeLock(on) {
@@ -2900,6 +2994,7 @@ async function voicePrimeMic() {
     const s = await navigator.mediaDevices.getUserMedia({
       audio: voiceDevId ? Object.assign({ deviceId: { exact: voiceDevId } }, baseAudio) : baseAudio
     });
+    voiceMicLabel = (s.getAudioTracks()[0] && s.getAudioTracks()[0].label) || "";
     s.getTracks().forEach(t => t.stop());
     voiceMicError = false;
     voiceMicReason = "";
@@ -3017,6 +3112,8 @@ async function voiceStartRec(auto = false) {
   voiceMicError = false;
   voiceMicReason = "";
   voiceLastFailKey = "";
+  voiceMicLabel = (stream.getAudioTracks()[0] && stream.getAudioTracks()[0].label) || voiceMicLabel;
+  micStatRefresh();                  // 首页立即反映实际在用的麦克风（耳机/本体）
   voiceListDevices();
   const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
     .find(m => MediaRecorder.isTypeSupported(m)) || "";
@@ -3206,6 +3303,13 @@ paintVoiceAuto();
 ttsMute(voiceAuto);               // 上次开着自动录音的话，开机即静音播报
 voiceListDevices();
 voiceUpdateStat();
+micStatRefresh();
+// 耳机插拔/连断 → 首页状态即时刷新（列表与播报输出都要重新挑）
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener("devicechange", () => {
+    pinPlaybackToSpeaker().then(micStatRefresh);
+  });
+}
 if (!window.isSecureContext || !navigator.mediaDevices) {
   log(`录音不可用：当前 secure=${window.isSecureContext ? "是" : "否"}，`
       + `接口=${navigator.mediaDevices ? "有" : "无"}；请用 https 地址打开`, "log-warn");
