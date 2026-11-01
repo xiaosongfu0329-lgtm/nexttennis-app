@@ -198,13 +198,7 @@
     <span id="sessHint" class="hint" style="margin:0;font-size:11px">击球反馈开启</span>
   </div>
 
-  <!-- 块级标签首页入口（2026-11-01 恢复，B72 任务书 §4.3.1）：块间暂停 ≥5s 内一键换块 -->
-  <div class="sessbar" id="blkBar" style="gap:4px">
-    <span class="lbl-key">块</span>
-    <span id="blkStat" class="hint" style="margin:0;font-family:ui-monospace,monospace;min-width:70px;font-size:11px">未启用</span>
-    <div id="blkChips" style="display:flex;gap:4px;overflow-x:auto;flex:1;padding:2px 0;scrollbar-width:none"></div>
-    <button id="blkEndBtn" class="chip" style="min-height:28px;padding:3px 9px;font-size:12px">结束</button>
-  </div>
+  <!-- 块级标签已取消（2026-11-01 二次拍板）：块边界改为「敲拍 + 一句话口述」，App 内不再有任何块控件 -->
 
   <div class="diag">
     <div class="diag-row"><span class="k">引拍</span>
@@ -379,18 +373,7 @@
     <p class="hint" id="pfStat">未填写时按 26 英寸、无年龄分档处理（功能不受影响）。</p>
   </div>
 
-  <!-- 块级标签（负例块真值来源，协议 §4.3 保留）：正常打球块不用设，仅负例条件块用 -->
-  <div class="panel">
-    <h2>块名（仅负例条件块用）</h2>
-    <div class="voice-row">
-      <span class="lbl-key">块名</span>
-      <input id="blockLabelInput" type="text" placeholder="如 FH 无引拍" style="min-width:120px;padding:6px 10px;font-size:14px;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px" />
-      <button id="blockLabelStart" class="chip">▶ 开始新块</button>
-      <button id="blockLabelEnd" class="chip">■ 结束</button>
-      <span id="blockLabelStat" class="hint" style="font-family:ui-monospace,monospace">未启用</span>
-    </div>
-    <p class="hint">首页块栏可一键切换预置块（A / B1~B6 / C / C1~C3）；这里用于**自定义块名**（如「FH 无引拍」）。块激活期间新窗口 note 自动前缀 [块名]，点「结束」清除；两处状态同步。</p>
-  </div>
+  <!-- 块名卡片已删除（2026-11-01 二次拍板）：块边界改由「敲拍窗口 + 同 seq 口述录音」承载，课后离线转写解析 -->
 
   <!-- 录音打标（课后自动转写，APP-B72）：App 只录音，课后电脑端 faster-whisper 离线转写回填 -->
   <div class="panel">
@@ -478,7 +461,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B72-20261101-1620";   // 首页麦克风/蓝牙耳机状态行；录音走耳机麦、播报与音效强制走手机扬声器；版本号格式固定：APP-<版本>-<YYYYMMDD>-<HHmm>，时分用于区分同一天多次发布
+const APP_BUILD = "APP-B72-20261101-1630";   // 删除块级标签全部控件（改「敲拍+口述」）；自动录音去重改按 seq + 排队补录深度 1；版本号格式固定：APP-<版本>-<YYYYMMDD>-<HHmm>，时分用于区分同一天多次发布
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -1193,8 +1176,6 @@ let currentWindow = null; // {meta, data, qc}
 let sessionWindows = [];
 let sessionStartTs = 0;
 let labeledCount = 0;
-let activeBlockLabel = null;   // 块级标签（映射标定必需）。非 null 时，新窗口 note 自动前缀 [块名]。
-let blockValidCount = 0;       // 本块有效击球计数（quickClass=0 且 QC 通过；异物/拍框/丢包不计）
 // 会话状态：VTI 三重门限第 1 重。训练中才做震动提醒；捡球/暂停时静默（操作态过滤捡球弹响）
 let sessionState = "train";    // train | pause
 let goodStreak = 0;            // 连续有效击球计数（连击 / 达成音效与话术）
@@ -1251,13 +1232,6 @@ function onWindow(meta, data) {
   meta.sessState = sessionState;          // 窗口到达时的会话状态快照（train/pause，供导出后剔除捡球窗）
   currentWindow = w;
   sessionWindows.push(w);        // 含 FAIL 窗口，全部留存到本次会话结束
-  // 块级标签自动前缀：activeBlockLabel 存在且当前 note 还没写 → 前缀 [块名]
-  if (activeBlockLabel && !w.meta.note) {
-    w.meta.note = `[${activeBlockLabel}]`;
-  }
-  // 本块有效球计数（异物/拍框/丢包不计，避免暂停期捡球干扰块内球数）
-  if (activeBlockLabel && meta.quickClass === 0 && isQcOk(res.code, meta)) blockValidCount++;
-  updateBlockLabelUI();
   voiceAutoTrigger(meta);        // 自动录音：击球窗口一到达即录 5 秒（无按键）
   updateWinSelector(true);
   updateQcPanel(res);
@@ -2766,64 +2740,8 @@ function getLabeledMatrix(label) {
   };
 }
 
-// ---------- 块级标签（映射标定必需；首页块栏 + 「我的」页自定义，共享同一状态） ----------
-// 发球机暂停 → 点预置块名（或「我的」页输入自定义块名）→ 后续窗口自动前缀 [块名]
-// 点击预置 = 自动结束上一块 → 激活新块 → 本块计数清零
-const BLOCK_PRESETS = ["A", "B1", "B2", "B3", "B4", "B5", "B6", "C", "C1", "C2", "C3"];
-
-function setActiveBlock(name) {
-  name = String(name || "").trim();
-  if (!name) { log("请先输入块名", "log-warn"); return; }
-  if (activeBlockLabel === name) { log(`块 [${name}] 已在激活中`, "log-info"); return; }
-  if (activeBlockLabel) log(`块切换：[${activeBlockLabel}]（有效 ${blockValidCount}）→ [${name}]`, "log-info");
-  activeBlockLabel = name;
-  blockValidCount = 0;
-  updateBlockLabelUI();
-  log(`块级标签激活：[${name}] — 后续窗口自动挂前缀`, "log-pass");
-}
-function endActiveBlock() {
-  if (!activeBlockLabel) { log("当前没有活跃的块", "log-warn"); return; }
-  log(`块级标签结束：[${activeBlockLabel}]（有效球 ${blockValidCount}）`, "log-info");
-  activeBlockLabel = null;
-  blockValidCount = 0;
-  updateBlockLabelUI();
-}
-function updateBlockLabelUI() {
-  const active = !!activeBlockLabel;
-  const txt = active ? `[${activeBlockLabel}] 有效 ${blockValidCount}` : "未启用";
-  const stat = $("blockLabelStat");   // 「我的」页状态
-  if (stat) { stat.textContent = "▶ " + txt; stat.style.color = active ? "var(--pass)" : "var(--muted)"; }
-  const hstat = $("blkStat");         // 首页块栏状态
-  if (hstat) {
-    hstat.textContent = active ? `${activeBlockLabel} · ${blockValidCount}` : "未启用";
-    hstat.style.color = active ? "var(--pass)" : "var(--muted)";
-  }
-  const box = $("blkChips");
-  if (box) box.querySelectorAll(".chip").forEach(b => b.classList.toggle("on", active && b.dataset.blk === activeBlockLabel));
-}
-(function initBlockBar() {
-  const box = $("blkChips");
-  if (box) {
-    box.innerHTML = BLOCK_PRESETS.map(n =>
-      `<button class="chip" data-blk="${n}" style="min-height:28px;padding:3px 9px;font-size:12px;flex:0 0 auto">${n}</button>`).join("");
-    box.querySelectorAll(".chip").forEach(b => b.addEventListener("click", () => setActiveBlock(b.dataset.blk)));
-  }
-  const endBtn = $("blkEndBtn");
-  if (endBtn) endBtn.addEventListener("click", endActiveBlock);
-  updateBlockLabelUI();
-})();
-
-$("blockLabelStart").addEventListener("click", () => {
-  const name = $("blockLabelInput").value.trim();
-  if (!name) { log("请先输入块名", "log-warn"); return; }
-  $("blockLabelInput").value = "";
-  setActiveBlock(name);
-});
-$("blockLabelEnd").addEventListener("click", endActiveBlock);
-// 回车快捷键：输入框里按 Enter = 点「开始新块」
-$("blockLabelInput").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); $("blockLabelStart").click(); }
-});
+// ---------- 块级标签已整体删除（2026-11-01 二次拍板） ----------
+// 块边界改为「敲拍窗口 + 同 seq 口述录音」，课后离线转写解析块名（见 docs/块级打标_敲拍加口述_需求通知_20261101.md）
 
 $("labelPassBtn").addEventListener("click", () => {
   const obj = getLabeledMatrix("good");
@@ -2901,6 +2819,7 @@ let voiceStart = 0, voiceTarget = null, voiceLastId = null, voiceBusy = false;
 let voiceAuto = localStorage.getItem("nt_voice_auto") === "1";
 let voiceDevId = localStorage.getItem("nt_voice_dev") || "";
 let voiceMissed = 0, voiceLastStart = 0, wakeLock = null, voiceMicError = false;
+let voiceLastSeq = -1, voiceQueue = null;   // 去重按 seq（同窗重复到达才丢）；排队补录深度 1
 let voiceMicReason = "";
 let voiceLastFailKey = "";
 let voiceMicLabel = "";          // 实际在用麦克风的设备名（首页蓝牙状态用）
@@ -2915,7 +2834,7 @@ async function voiceUpdateStat() {
     st.classList.toggle("err", voiceMicError);
     st.textContent = base
       + (voiceMicError ? `｜麦克风未就绪${voiceMicReason ? "：" + voiceMicReason : ""}` : "")
-      + (voiceMissed ? `｜漏录 ${voiceMissed}` : "");
+      + (voiceMissed ? `｜排队溢出 ${voiceMissed}` : "");
   } catch (e) {
     $("voiceStat").textContent = "存储不可用";
   }
@@ -3043,18 +2962,18 @@ async function voiceMarkFail(e) {
       "log-fail");
 }
 
-// 窗口到达即触发（自动模式）；录音中再来球则记漏录，不打断当前这句
+// 窗口到达即触发（自动模式）；录制中再来窗口 → 排队一次补录，不打断当前这句
 function voiceAutoTrigger(meta) {
   if (!voiceAuto) return;
-  const now = Date.now();
+  if (meta.seq === voiceLastSeq) return;     // 同一窗口重复到达才去重（不再用 1500ms 时间窗）
   if (voiceBusy) {
-    voiceMissed++;
+    if (voiceQueue) voiceMissed++;           // 队列深度 1：后来的顶掉先来的
+    voiceQueue = meta;
     voiceUpdateStat();
-    log(`自动录音冲突：seq=${meta.seq} 到达时仍在录上一球，本球无录音`, "log-warn");
+    log(`自动录音排队：seq=${meta.seq}（正在录 seq=${voiceTarget ? voiceTarget.seq : "?"}），本段结束后补录`, "log-warn");
     return;
   }
-  if (now - voiceLastStart < 1500) return;   // 重复窗口去重
-  voiceStartRec(true);
+  voiceStartRec(true, meta);
 }
 
 // 录音期间静音语音播报：否则 TTS 会被麦克风录进音频，干扰事后转写
@@ -3065,7 +2984,7 @@ function ttsMute(on) {
   }
 }
 
-async function voiceStartRec(auto = false) {
+async function voiceStartRec(auto = false, winMeta = null) {
   if (voiceBusy) {
     if (!auto) log("正在录音，等这一段结束再按（自动模式下每球已自动录）", "log-warn");
     return;
@@ -3080,9 +2999,13 @@ async function voiceStartRec(auto = false) {
   }
   voiceBusy = true;
   ttsMute(true);                    // 立刻掐掉正在播报的那句，别录进去
-  const w = sessionWindows[sessionWindows.length - 1];
-  voiceTarget = { index: sessionWindows.length - 1, seq: w.meta.seq,
+  // winMeta 来自排队补录：绑定该窗口的 seq；否则绑定最新到达的窗口
+  const idx = winMeta ? sessionWindows.findIndex(x => x.meta.seq === winMeta.seq) : sessionWindows.length - 1;
+  const ti = idx >= 0 ? idx : sessionWindows.length - 1;
+  const w = sessionWindows[ti];
+  voiceTarget = { index: ti, seq: w.meta.seq,
                   recv: w.meta.receivedAt, note: w.meta.note || "" };
+  voiceLastSeq = w.meta.seq;
   const baseAudio = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
   let stream;
   try {
@@ -3150,6 +3073,10 @@ async function voiceStartRec(auto = false) {
     }
     voiceBusy = false;
     ttsMute(voiceAuto);            // 录完恢复：自动模式下继续静音（每球都要录）
+    // 排队中的窗口立即补录（深度 1，只补一层，避免连续击球时无限追录）
+    const q = voiceQueue;
+    voiceQueue = null;
+    if (q) voiceStartRec(true, q);
   };
   voiceStart = Date.now();
   voiceLastStart = voiceStart;
@@ -3172,6 +3099,7 @@ async function voiceStartRec(auto = false) {
 }
 
 function voiceStopRec() {
+  voiceQueue = null;                 // 手动停止 = 用户主动结束，取消待补录
   if (voiceRec && voiceRec.state !== "inactive") voiceRec.stop();
   else { voiceBusy = false; ttsMute(voiceAuto); }
 }
