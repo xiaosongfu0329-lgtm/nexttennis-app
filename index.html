@@ -541,7 +541,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B77-20261102-0914";   // B77：引拍量/随挥量新指标——换向点分段积分 pre_deg/post_deg，拍柄自身坐标系取模，档位改用「个人相对基线」（同侧 30 窗中位）；影子期展示数值不判档，等 2 场数据后开档位颜色和提示文案；tb_v2/ft_v2 旧口径保留计算但首页下线；vol 字段进窗口 meta，跨会话基线存 localStorage；sw.js CACHE nexttennis-v18
+const APP_BUILD = "APP-B79-20261102-1137";   // B79：vol 口径与 tools/swing_volume.py 对齐——①peak 只取 T0-120..+40ms（原来全窗，会抬高 0.35×peak 换向门限）②post 只吃微观后窗 idx188..min(395,186+168)，宏观后段 120Hz 稀疏不参与，保持 §10「随挥截断」语义 ③分段边界固定名义 T0(186)、dt 参考用实测 t0；sw.js CACHE nexttennis-v20
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -1778,10 +1778,12 @@ const VOL_TIER_BASE_N = 30;                  // 同侧基线需要的历史窗�
 const VOL_BASE_MIN_N = 10;                   // 冷启动不足此数不判（confidence=low）
 const VOL_PROFILE_KEY = "nt_vol_base_v1";    // { "正手":[..], "反手":[..] } 跨会话同侧 pre_deg 历史
 
-// 窗口内角速度峰值（deg/s）—— 全窗，排除可能的换向点搜索区间不重要
+// 峰值角速度（deg/s）：只统计 T0-120ms..T0+40ms（与 Python analyze_window 同口径）
 function volPeakOmega(data) {
   let m = 0;
   for (let i = 0; i < PROTO.WINDOW.samples; i++) {
+    const t = windowTimeMs(i);
+    if (t < -120 || t > 40) continue;
     const v = diagOmegaMag(data, i);
     if (v > m) m = v;
   }
@@ -1837,15 +1839,18 @@ function volSegIds(a, b) {
   return r;
 }
 
-// 主计算：pre_deg / post_deg
-// 积分是拍柄自身坐标系的矢量模（∫ω dt 的三维分量梯形积分后取模）—— 不是路径积分
+// 主计算：pre_deg / post_deg（与 tools/swing_volume.py 1:1）
+//   积分是拍柄自身坐标系的矢量模（∫ω dt 的三维分量梯形积分后取模）—— 不是路径积分
+//   分段边界固定用名义 T0（idx186，Python 同款）；dt 参考用实测 t0（固件 B51 重定位后可能偏移）
 function volCompute(data, t0) {
   if (PROTO.WINDOW.samples < 396) return { confidence: "low", reason: "short_window" };
   const rev = volFindRev(data);
-  const t0Use = t0 != null ? t0 : PROTO.WINDOW.T0_INDEX;
-  const postEnd = PROTO.WINDOW.samples - 1;   // idx 395（不是 347），窗口末段全吃
-  const preIds = volSegIds(rev.idx, t0Use);
-  const postIds = volSegIds(t0Use, postEnd);
+  const T0N = PROTO.WINDOW.T0_INDEX;
+  const t0Use = t0 != null ? t0 : T0N;
+  // post 只吃微观后窗：Python POST_END = min(SAMPLES, T0_IDX+168)；宏观后段(348+)是 120Hz 稀疏段，不参与
+  const postEnd = Math.min(PROTO.WINDOW.samples - 1, T0N + 168);
+  const preIds = volSegIds(rev.idx, T0N);
+  const postIds = volSegIds(T0N + 2, postEnd);
   if (preIds.length < 2 || postIds.length < 2) {
     return { confidence: "low", reason: "seg_empty", revIdx: rev.idx };
   }
@@ -2656,10 +2661,11 @@ function updateDiagnosis(w) {
     tbEl.innerHTML = `<span class="badge ${tierCls(vtier.pre_tier)}">${vtier.pre_tier || (vol.confidence === "low" ? "校准中" : "—")}</span>`;
     ftEl.innerHTML = `<span class="badge ${tierCls(vtier.post_tier)}">${vtier.post_tier || (vol.confidence === "low" ? "校准中" : "—")}</span>`;
   } else {
-    // 影子期：展示 confidence 状态（ok 灰 / low 黄边）
+    // 影子期：只给数值、不判档（首页一屏仍是一行；confidence=low 用黄边提示）
     const cCls = vol && vol.confidence === "ok" ? "idle" : (vol ? "warn" : "idle");
-    tbEl.innerHTML = `<span class="badge ${cCls}">引拍量</span>`;
-    ftEl.innerHTML = `<span class="badge ${cCls}">随挥量</span>`;
+    const deg = v => (v && Number.isFinite(v)) ? `${Math.round(v)}°` : "—";
+    tbEl.innerHTML = `<span class="badge ${cCls}">引拍量 ${deg(vol && vol.pre_deg)}</span>`;
+    ftEl.innerHTML = `<span class="badge ${cCls}">随挥量 ${deg(vol && vol.post_deg)}</span>`;
   }
 
   // 数值行：pre_deg / post_deg / ratio / rev / baseline 统计
@@ -2669,7 +2675,7 @@ function updateDiagnosis(w) {
       + ` · ratio ${isFinite(vol.ratio) ? vol.ratio.toFixed(2) : "—"}`
       + ` · revIdx ${vol.revIdx} (${vol.revReason})`
       + ` · pk ${vol.peakDps ? vol.peakDps.toFixed(0) + "dps" : "—"}`
-      + pct(vtier.base_deg) + (vtier.base_src ? ` · src=${vtier.base_src}` : "")
+      + pct(vtier && vtier.base_deg) + (vtier && vtier.base_src ? ` · src=${vtier.base_src}` : "")
       + ` · conf ${vol.confidence} · side ${side}`;
   } else {
     tbNum.textContent = "（影子期计算异常，不展示）";
@@ -2858,6 +2864,10 @@ function updateQcPanel(res) {
 // =====================================================================
 const CONNLOG_MAX = 500;
 let connLog = [];            // {t,event,device,sessionTag,reason,lastSeq,gapS,windows60s,rssi,note}
+// 页面生命周期内的历史会话快照（2026-11-01 需求通知 R2「每个会话一个文件」）：
+// 现场一次页面里会连 4~5 次（每次重连都会清空 sessionWindows），不归档就会只剩最后一段
+let pastSessions = [];       // {tag, csv, windows, start, end}
+const PAST_SESSION_MAX = 20;
 let lastWinT = 0;            // 最近一次窗口到达的本地 ms
 let winTimes = [];           // 窗口到达时刻（beat 统计近 60s）
 let manualDisc = false;      // 用户主动断开 → 不自动重连
@@ -3154,6 +3164,7 @@ $("connectBtn").addEventListener("click", async () => {
   reviewCommit();          // 上一次会话先入账（用户没进回顾页也不会丢记录）
   parser.reset();
   // 新连接：清空上一次连接的全部窗口，重新累积本次会话
+  archiveSession();        // 先归档上一段会话的 CSV（采集包 windows/ 每个会话一个文件）
   sessionWindows = [];
   colBlkBase = 0;                  // 采集页「本块球数」按新会话重新计（块选择保留）
   try { localStorage.setItem("nt_collect_base", "0"); } catch (_) {}
@@ -3840,6 +3851,20 @@ $("exportSessionLogBtn").addEventListener("click", sessionLogExport);
 //   视频不复制（浏览器权限不足 + 大文件内存必崩），只生成 videos/manifest.csv 清单。
 //   打包复用现有 zipBuild（STORE）；窗口 CSV / voice_labels.csv 结构与单独导出逐字节一致。
 // =====================================================================
+// 归档上一次会话（新连接清空 sessionWindows 之前调用）：其 CSV 与单独导出逐字节一致
+function archiveSession() {
+  if (!sessionWindows.length) return;
+  let body = "";
+  for (const w of sessionWindows) body += buildCsvRows(w);
+  pastSessions.push({
+    tag: sessionTag(),
+    csv: CSV_HEADER + body,
+    windows: sessionWindows.length,
+    start: sessionWindows[0].meta.receivedAt,
+    end: sessionWindows[sessionWindows.length - 1].meta.receivedAt,
+  });
+  if (pastSessions.length > PAST_SESSION_MAX) pastSessions = pastSessions.slice(-PAST_SESSION_MAX);
+}
 let packExported = null;        // {clips, sessions, at} 内存标记，首页显示「已导出…」
 let videoManifest = [];         // {name, sizeMb, lastModified} 只记元数据
 
@@ -3863,7 +3888,7 @@ $("videoPick").addEventListener("change", (e) => {
 async function packExport() {
   try {
     const all = await idbAll().catch(() => []);
-    if (!sessionWindows.length && !all.length) {
+    if (!sessionWindows.length && !all.length && !pastSessions.length) {
       log("导出失败：本次没有窗口也没有录音，先采集再导出", "log-fail");
       return;
     }
@@ -3871,13 +3896,25 @@ async function packExport() {
     const root = `pack_${tag}/`;
     const enc = new TextEncoder();
     const files = [];
-    // windows/：会话 CSV 与「导出本次全部 CSV」按钮产出逐字节一致
-    let sessCsvName = "";
+    // windows/：每个会话一个 CSV，与「导出本次全部 CSV」按钮产出逐字节一致
+    const sessFiles = [];          // meta.sessions 清单
+    const usedNames = new Set();
+    const pushSession = (name, csvText, n, start, end) => {
+      let nm = name;
+      while (usedNames.has(nm)) nm = nm.replace(/\.csv$/, `_${usedNames.size}.csv`);   // 同秒重连防重名
+      usedNames.add(nm);
+      files.push({ name: root + "windows/" + nm, data: enc.encode(csvText) });
+      sessFiles.push({ file: nm, windows: n, start, end });
+    };
     if (sessionWindows.length) {
       let body = "";
       for (const w of sessionWindows) body += buildCsvRows(w);
-      sessCsvName = `tennis_session_${tag}.csv`;
-      files.push({ name: root + "windows/" + sessCsvName, data: enc.encode(CSV_HEADER + body) });
+      pushSession(`tennis_session_${tag}.csv`, CSV_HEADER + body, sessionWindows.length,
+                  sessionWindows[0].meta.receivedAt,
+                  sessionWindows[sessionWindows.length - 1].meta.receivedAt);
+    }
+    for (const ps of pastSessions) {
+      pushSession(`tennis_session_${ps.tag}.csv`, ps.csv, ps.windows, ps.start, ps.end);
     }
     // voice/：clips + voice_labels.csv（9 列结构与单独导出语音包一致）
     const vrows = ["file,seq,window_index,recorded_at,delta_ms,dur_ms,clip,note,source"];
@@ -3917,18 +3954,15 @@ async function packExport() {
       device_name: $("devName").textContent || "",
       window_contract: { samples: PROTO.WINDOW.samples, channels: PROTO.WINDOW.channels,
                          t0_index: PROTO.WINDOW.T0_INDEX },
-      sessions: sessionWindows.length ? [{
-        file: sessCsvName, windows: sessionWindows.length,
-        start: sessionWindows[0].meta.receivedAt,
-        end: sessionWindows[sessionWindows.length - 1].meta.receivedAt }] : [],
+      sessions: sessFiles,
       voice: { clips: all.length, missing_seq: missingSeq },
       video_hint: "视频不在此包内，请与 MP4 放同一目录"
     };
     files.push({ name: root + "meta.json", data: enc.encode(JSON.stringify(meta, null, 2)) });
     download(`pack_${tag}.zip`, zipBuild(files), "application/zip");
-    packExported = { clips: all.length, sessions: sessionWindows.length ? 1 : 0, at: new Date() };
+    packExported = { clips: all.length, sessions: sessFiles.length, at: new Date() };
     paintPackStat();
-    log(`已导出采集包 pack_${tag}.zip（窗口 ${sessionWindows.length} + 语音 ${all.length} 段 + 日志 ${connLog.length} 条）`, "log-pass");
+    log(`已导出采集包 pack_${tag}.zip（会话 ${sessFiles.length} 个 / 窗口 ${sessionWindows.length} + 语音 ${all.length} 段 + 日志 ${connLog.length} 条）`, "log-pass");
     // R3：导出成功后提示可清空本地录音（用户决定，不自动清）
     if (all.length && confirm(`采集包已导出（含 ${all.length} 段录音）。是否清空本地录音？`)) {
       await idbClear(); await voiceUpdateStat();
