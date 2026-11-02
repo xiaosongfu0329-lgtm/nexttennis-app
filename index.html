@@ -255,13 +255,12 @@
     <button id="voiceAutoBtnHome" class="chip">录音打标：关</button>
     <span id="homeRecInd"><span style="color:var(--fail)">●</span>&nbsp;<span id="homeRecIndTxt">录音中</span></span>
     <button id="voiceExportBtnHome" class="chip">导出语音包</button>
-    <button id="exportPackBtn" class="chip" style="border-color:var(--accent);color:var(--accent)">导出采集包</button>
+    <!-- 导出采集包已移到采集页（2026-11-02 用户要求：现场只在一个页面操作） -->
   </div>
-  <!-- 现场状态行（2026-11-01 三份需求通知）：空档秒数 / 待导出语音 / 采集包导出状态 -->
+  <!-- 现场状态行（2026-11-01 三份需求通知）：空档秒数 / 待导出语音 -->
   <div style="display:flex;align-items:center;gap:12px;margin-top:4px;font-size:12px;color:var(--muted);flex-wrap:wrap">
     <span id="gapStat"></span>
     <span id="voicePend"></span>
-    <span id="packStat"></span>
   </div>
 
   <!-- 2026-11-01 用户要求：新增识别项不再单独占一块，改为与引拍/随挥同格式的行，
@@ -314,6 +313,14 @@
       <span>录音打标：<span id="cVoice">关</span></span>
       <span id="cState" style="margin-left:auto">训练中</span>
     </div>
+    <!-- 2026-11-02 用户要求：捡球/暂停与导出采集包都放到采集页（现场只用一个页面） -->
+    <div class="c-row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+      <button id="cSessTrain" class="chip on">训练中</button>
+      <button id="cSessPause" class="chip">捡球/暂停</button>
+      <button id="exportPackBtn" class="chip" style="border-color:var(--accent);color:var(--accent)">导出采集包</button>
+    </div>
+    <div class="c-hint" id="packStat" style="margin-top:6px;font-size:15px"></div>
+    <p class="c-hint">点「捡球/暂停」时录像会自动暂停，回训练中自动续录（同一文件，不切片）。</p>
   </div>
 </section>
 
@@ -541,7 +548,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B79-20261102-1137";   // B79：vol 口径与 tools/swing_volume.py 对齐——①peak 只取 T0-120..+40ms（原来全窗，会抬高 0.35×peak 换向门限）②post 只吃微观后窗 idx188..min(395,186+168)，宏观后段 120Hz 稀疏不参与，保持 §10「随挥截断」语义 ③分段边界固定名义 T0(186)、dt 参考用实测 t0；sw.js CACHE nexttennis-v20
+const APP_BUILD = "APP-B80-20261102-1201";   // B80：采集页现场化——①「训练中/捡球·暂停」按钮搬到采集页，捡球时 MediaRecorder 自动暂停、回训练自动续录（同一文件不切片）②「导出采集包」按钮与导出状态从首页移到采集页（首页只留录音打标/导出语音包）；sw.js CACHE nexttennis-v21
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -2739,7 +2746,25 @@ function setSessionState(st) {
   sessionState = st;
   $("sessTrain").classList.toggle("on", st === "train");
   $("sessPause").classList.toggle("on", st === "pause");
+  const cT = $("cSessTrain"), cP = $("cSessPause");   // 采集页同款按钮（2026-11-02）
+  if (cT) cT.classList.toggle("on", st === "train");
+  if (cP) cP.classList.toggle("on", st === "pause");
   $("sessHint").textContent = st === "train" ? "击球反馈开启" : "捡球中：暂停震动提醒";
+  // 捡球即自动暂停录像，回训练中自动续录（MediaRecorder pause/resume，同一文件不切片）
+  if (camRec && camRec.state !== "inactive") {
+    try {
+      if (st === "pause" && camRec.state === "recording") {
+        camRec.pause();
+        camAutoPaused = true;
+        camLog("捡球中：录像已自动暂停", false);
+      } else if (st === "train" && camAutoPaused && camRec.state === "paused") {
+        camRec.resume();
+        camAutoPaused = false;
+        camLog("回到训练中：录像自动续录", false);
+      }
+      $("camRecTag").textContent = (st === "pause" && camAutoPaused) ? "● 已暂停（捡球）" : "● 录像中";
+    } catch (_) {}
+  }
   if (currentWindow) {
     // 门限含会话状态 → 历史窗口的 VTI 结论要按当前状态重算
     currentWindow.meta.vti = vtiEvaluate(currentWindow, false);
@@ -3196,6 +3221,9 @@ $("modeSel").addEventListener("change", () => cleanupBt());
 // ---------- 会话状态按钮（训练中 / 捡球暂停）----------
 $("sessTrain").addEventListener("click", () => setSessionState("train"));
 $("sessPause").addEventListener("click", () => setSessionState("pause"));
+// 采集页同款（2026-11-02）：现场只在采集页操作
+if ($("cSessTrain")) $("cSessTrain").addEventListener("click", () => setSessionState("train"));
+if ($("cSessPause")) $("cSessPause").addEventListener("click", () => setSessionState("pause"));
 
 // ---------- 话术库状态（技术视图）：占位期如实标注 ----------
 $("voicePackStat").textContent = `${Object.keys(VOICE_LINES).length} 类 × `
@@ -4248,6 +4276,7 @@ if (urlMode && ["mock", "impact", "step1"].includes(urlMode)) {
 // App 内直接录像省掉独立相机：手机固定在三脚架、本页保持前台；录像只做块级对齐，
 // 逐拍同步仍靠事后音频/锚点匹配。MediaRecorder 按 3s 分片，长录像不驻留内存峰值。
 let camStream = null, camRec = null, camChunks = [], camRecStart = 0, camTimer = null, camLock = null;
+let camAutoPaused = false;   // 捡球自动暂停录像的标记（回训练中才自动续录）
 
 function camLog(txt, err) {
   const el = $("camStat");
@@ -4304,12 +4333,14 @@ async function camStartRec() {
   const mime = camPickMime();
   if (!mime) { camLog("本浏览器不支持 MediaRecorder", true); return; }
   camChunks = [];
+  camAutoPaused = false;     // 新一段录像：清掉捡球暂停标记
   camRec = new MediaRecorder(camStream, { mimeType: mime, videoBitsPerSecond: 4000000 });
   camRec.ondataavailable = e => { if (e.data && e.data.size) camChunks.push(e.data); };
   camRec.onerror = e => camLog("录像出错：" + (e.error ? e.error.name : "unknown"), true);
   camRec.onstop = () => {
     clearInterval(camTimer); camTimer = null;
     $("camRecTag").classList.remove("on");
+    camAutoPaused = false;
     camRecStart = 0;
     $("camRecBtn").textContent = "开始录像";
     if (!camChunks.length) { camLog("已停止，但没有录到数据", true); return; }
@@ -4329,9 +4360,11 @@ async function camStartRec() {
   camRec.start(3000);        // 3s 分片
   camRecStart = Date.now();
   $("camRecTag").classList.add("on");
+  $("camRecTag").textContent = "● 录像中";
   $("camRecBtn").textContent = "录像中…";
   camWake(true);
   camTimer = setInterval(() => {
+    if (camAutoPaused) { camLog("录像已暂停（捡球中）", false); return; }
     const s = Math.round((Date.now() - camRecStart) / 1000);
     camLog(`录像中 ${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}　点「停止并下载」结束`, false);
   }, 1000);
