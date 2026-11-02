@@ -136,13 +136,28 @@
   .share-wrap { margin-top: 8px; }
   .share-wrap img { display: none; width: 100%; border-radius: 10px; border: 1px solid var(--border); }
   .share-wrap img.on { display: block; }
-  /* ---------- 采集页（现场大字操作台，2026-11-01 用户要求） ---------- */
+  /* ---------- 采集页（现场大字操作台，2026-11-01 用户要求；2026-11-02 压成一屏） ---------- */
   .c-num { font-size: 64px; font-weight: 700; color: var(--accent); line-height: 1.05;
            text-align: center; font-family: ui-monospace, "Cascadia Code", monospace; }
   .c-sub { text-align: center; font-size: 15px; color: var(--muted); margin-top: 2px; }
   .c-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 16px; }
   .c-phrase { font-size: 22px; font-weight: 600; line-height: 1.35; }
   .c-hint { font-size: 15px; line-height: 1.5; color: var(--muted); margin-top: 8px; }
+  /* 采集页一屏压缩：不上下划；已击球数字缩到 40px，提示统一 11px */
+  #page6 { padding: 4px 8px 8px; }
+  #page6 .panel { padding: 7px 9px; margin-top: 4px; }
+  #page6 .c-num { font-size: 40px; }
+  #page6 .c-sub { font-size: 12px; margin-top: 0; }
+  #page6 .c-phrase { font-size: 16px; line-height: 1.25; margin-top: 4px; }
+  #page6 .c-hint { font-size: 11px; line-height: 1.35; margin-top: 2px; }
+  #page6 .c-row { font-size: 13px; }
+  #page6 button { min-height: 38px; padding: 6px 10px; }
+  #page6 #camWrap { max-height: 25vh; }      /* 小屏手机再压视频高度，保证三块面板一屏 */
+  #page6 #packStat:empty { display: none; }
+  .c-count { display: flex; align-items: baseline; justify-content: center; gap: 10px; }
+  .c-camstat { position: absolute; top: 6px; right: 6px; display: flex; align-items: center; gap: 6px;
+               padding: 2px 6px; border-radius: 6px; background: rgba(0,0,0,.45);
+               font-size: 11px; color: #fff; max-width: 80%; overflow: hidden; white-space: nowrap; }
   #camWrap { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000;
              border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
   #camVideo { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -269,58 +284,54 @@
 
 <!-- ================= 页6：采集（现场大字操作台：摄像头 + 计数 + 提示，2026-11-01） ================= -->
 <section id="page6" class="page">
+  <!-- 一屏布局（2026-11-02）：视频+状态覆盖 → 计数 → 块/会话/导出，全部不再上下划 -->
   <div class="panel" style="margin-top:0">
-    <div class="c-row">
-      <span id="cConn" class="badge idle">未连接</span>
-      <span id="cDev" style="font-family:ui-monospace,monospace">—</span>
-      <span id="cBatt" style="margin-left:auto">电量 —</span>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="c-num" id="cBalls">0</div>
-    <div class="c-sub">已击球</div>
-    <div class="c-sub">已过滤 <span id="cDrop">0</span> 个（磕碰 / 空挥 / 废窗）</div>
-  </div>
-
-  <div class="panel">
     <div id="camWrap">
       <video id="camVideo" playsinline autoplay muted></video>
-      <div id="camOff">摄像头未开启<br>点下方「开摄像头」</div>
+      <div id="camOff">点此开启摄像头</div>
       <div id="camRecTag">● 录像中</div>
+      <div class="c-camstat">
+        <span id="cConn" class="badge idle">未连接</span>
+        <span id="cDev" style="font-family:ui-monospace,monospace">—</span>
+        <span id="cBatt">电量 —</span>
+      </div>
     </div>
-    <div class="actions" style="margin-top:8px">
-      <button id="camOpenBtn" class="pass">开摄像头</button>
-      <button id="camRecBtn" class="primary">开始录像</button>
-      <button id="camSaveBtn">停止并下载</button>
+    <div class="actions" style="margin-top:6px;display:flex;gap:8px">
+      <button id="camRecBtn" class="primary" style="flex:1">开始录像</button>
+      <button id="camSaveBtn" style="flex:1">停止并下载</button>
     </div>
     <p class="c-hint" id="camStat">未开启</p>
-    <p class="c-hint">手机固定在三脚架、本页保持前台。录像暂做块级对齐，逐拍同步仍靠事后音频匹配。</p>
   </div>
 
   <div class="panel">
-    <div class="c-row" style="margin-bottom:10px">
-      <button id="cPrevBlk">◀ 上一块</button>
-      <select id="cBlkSel" style="flex:1;min-width:0;font-size:17px;padding:8px"></select>
-      <button id="cNextBlk">下一块 ▶</button>
+    <div class="c-count">
+      <span class="c-num" id="cBalls">0</span>
+      <span class="c-sub">已击球</span>
+      <span class="c-sub">过滤 <span id="cDrop">0</span></span>
+      <span class="c-sub" id="cBlkCnt">本块 0</span>
     </div>
-    <div class="c-phrase" id="cPhrase" style="font-size:26px">—</div>
-    <p class="c-hint" id="cBlkTip" style="font-size:17px;color:var(--fg)">—</p>
-    <div class="c-sub" id="cBlkCnt" style="margin-top:10px;font-size:16px">本块 0</div>
-    <p class="c-hint">块首/块尾：非持拍手敲一下拍面（同步锚点），紧接一句话报块名与动作要求，≤5 秒。</p>
-    <p class="c-hint">每球可选说一个词：好球 · 差球 · 打框 · 被挤到 · 随挥不足 · 引拍不足</p>
-    <div class="c-row" style="margin-top:10px">
+    <div class="c-row" style="margin-top:6px;flex-wrap:nowrap">
+      <button id="cPrevBlk">◀</button>
+      <select id="cBlkSel" style="flex:1;min-width:0;font-size:14px;padding:6px"></select>
+      <button id="cNextBlk">▶</button>
+    </div>
+    <div class="c-phrase" id="cPhrase">—</div>
+    <p class="c-hint" id="cBlkTip" style="color:var(--fg)">—</p>
+    <p class="c-hint">敲拍+口述=块边界；每球可报一词（好球/差球/打框/被挤到）</p>
+  </div>
+
+  <div class="panel">
+    <div class="c-row" style="font-size:13px">
       <span>录音打标：<span id="cVoice">关</span></span>
       <span id="cState" style="margin-left:auto">训练中</span>
     </div>
     <!-- 2026-11-02 用户要求：捡球/暂停与导出采集包都放到采集页（现场只用一个页面） -->
-    <div class="c-row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+    <div class="c-row" style="margin-top:6px;gap:6px;flex-wrap:nowrap">
       <button id="cSessTrain" class="chip on">训练中</button>
       <button id="cSessPause" class="chip">捡球/暂停</button>
       <button id="exportPackBtn" class="chip" style="border-color:var(--accent);color:var(--accent)">导出采集包</button>
     </div>
-    <div class="c-hint" id="packStat" style="margin-top:6px;font-size:15px"></div>
-    <p class="c-hint">点「捡球/暂停」时录像会自动暂停，回训练中自动续录（同一文件，不切片）。</p>
+    <div class="c-hint" id="packStat"></div>
   </div>
 </section>
 
@@ -548,7 +559,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B80-20261102-1201";   // B80：采集页现场化——①「训练中/捡球·暂停」按钮搬到采集页，捡球时 MediaRecorder 自动暂停、回训练自动续录（同一文件不切片）②「导出采集包」按钮与导出状态从首页移到采集页（首页只留录音打标/导出语音包）；sw.js CACHE nexttennis-v21
+const APP_BUILD = "APP-B82-20261102-1238";   // B82：采集页一屏化定稿——在 B81 基础上再压 77px：视频 max-height 25vh、面板 padding/margin 收紧、提示 11px、敲拍提示并成一行（实测 390×747 视口 docH=747，零滚动）；sw.js CACHE nexttennis-v23
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -4455,7 +4466,8 @@ if ($("cBlkSel")) {
 if ($("cPrevBlk")) $("cPrevBlk").addEventListener("click", () => colBlkSet(colBlk - 1));
 if ($("cNextBlk")) $("cNextBlk").addEventListener("click", () => colBlkSet(colBlk + 1));
 
-if ($("camOpenBtn")) $("camOpenBtn").addEventListener("click", () => camOpen());
+// 摄像头进入采集页自动开启（2026-11-02 用户要求：取消「开摄像头」按钮）
+if ($("camOff")) $("camOff").addEventListener("click", () => camOpen());   // 失败时点画面重试
 if ($("camRecBtn")) $("camRecBtn").addEventListener("click", () => camStartRec());
 if ($("camSaveBtn")) $("camSaveBtn").addEventListener("click", camStopRec);
 
@@ -4473,6 +4485,7 @@ function switchPage(id) {
     reviewRender();           // 进页时把本次训练入账（幂等）并刷新回顾数据
   } else if (id === "page6") {
     colRefresh();             // 采集页：大字计数/连接/录音状态
+    camOpen();                // 进页自动开摄像头（已开则内部直接返回）
   }
 }
 tabBtns.forEach(b => b.addEventListener("click", () => switchPage(b.dataset.page)));
