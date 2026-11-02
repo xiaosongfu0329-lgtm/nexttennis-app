@@ -109,5 +109,26 @@
     "torso_trace": {"name": "转体痕迹（手臂 vs 身体驱动）", "tier": "fuzzy", "agg": "session", "gate": "先验弱，仅做方向一致性试探", "measured": "—", "status": "probe", "kill": "与视频肩髋分离方向不一致即关闭"},
     "frame_hit": {"name": "打框", "tier": "qual", "agg": "stroke", "gate": "960Hz 后重开", "measured": "480Hz 不可分", "status": "blocked"}
   },
+  "child_profile_candidate": {
+    "version": "CP-20261101",
+    "source": "20261101 帆帆（10 岁）37 球人工标注（击球点/随挥/引拍三列）",
+    "note": "拟合集表现，非验证集；App 目前不消费，需等跨人（猫猫）验证后启用",
+    "backswing_tb": {
+      "arc_deg": 67.5,
+      "mean_dps": 170,
+      "score_thr": 0.88,
+      "adult_arc_deg": 95,
+      "adult_mean_dps": 240,
+      "scale_vs_adult": 0.71,
+      "fit_accuracy": "26/28 = 92.9%（同集拟合，成人门限同集仅 11/26 = 42%）",
+      "status": "candidate"
+    },
+    "followthrough_ft": {
+      "score_thr": 1.2,
+      "adult_score_thr": 1.0,
+      "fit_accuracy": "20/28 = 71%（同集拟合；未过 80% 门限，两组分布重叠：完整组 min 0.71 / 不足组 max 1.95）",
+      "status": "not_passed"
+    }
+  },
   "note": "null 字段 = 待回填；App 对 null 回退现有硬编码门限；tier_policy / labels 为口径元数据，App 不消费，不改变现有判决"
 }

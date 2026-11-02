@@ -136,6 +136,21 @@
   .share-wrap { margin-top: 8px; }
   .share-wrap img { display: none; width: 100%; border-radius: 10px; border: 1px solid var(--border); }
   .share-wrap img.on { display: block; }
+  /* ---------- 采集页（现场大字操作台，2026-11-01 用户要求） ---------- */
+  .c-num { font-size: 64px; font-weight: 700; color: var(--accent); line-height: 1.05;
+           text-align: center; font-family: ui-monospace, "Cascadia Code", monospace; }
+  .c-sub { text-align: center; font-size: 15px; color: var(--muted); margin-top: 2px; }
+  .c-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 16px; }
+  .c-phrase { font-size: 22px; font-weight: 600; line-height: 1.35; }
+  .c-hint { font-size: 15px; line-height: 1.5; color: var(--muted); margin-top: 8px; }
+  #camWrap { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000;
+             border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+  #camVideo { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #camOff { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            color: var(--muted); font-size: 16px; text-align: center; padding: 12px; }
+  #camRecTag { position: absolute; top: 8px; left: 8px; font-size: 14px; font-weight: 700; color: #fff;
+               background: rgba(248,81,73,.85); padding: 3px 10px; border-radius: 12px; display: none; }
+  #camRecTag.on { display: block; animation: vpulse 1.1s infinite; }
   /* 移动端优化 */
   @media (max-width: 600px) {
     header { padding: 8px 10px; }
@@ -171,6 +186,7 @@
 
 <nav class="tabs">
   <button class="tab active" data-page="page1">打球</button>
+  <button class="tab" data-page="page6">采集</button>
   <button class="tab" data-page="page5">技术</button>
   <button class="tab" data-page="page4">回顾</button>
   <button class="tab" data-page="page3">我的</button>
@@ -238,10 +254,67 @@
   <div style="display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap">
     <button id="voiceAutoBtnHome" class="chip">录音打标：关</button>
     <span id="homeRecInd"><span style="color:var(--fail)">●</span>&nbsp;<span id="homeRecIndTxt">录音中</span></span>
+    <button id="voiceExportBtnHome" class="chip">导出语音包</button>
+    <button id="exportPackBtn" class="chip" style="border-color:var(--accent);color:var(--accent)">导出采集包</button>
+  </div>
+  <!-- 现场状态行（2026-11-01 三份需求通知）：空档秒数 / 待导出语音 / 采集包导出状态 -->
+  <div style="display:flex;align-items:center;gap:12px;margin-top:4px;font-size:12px;color:var(--muted);flex-wrap:wrap">
+    <span id="gapStat"></span>
+    <span id="voicePend"></span>
+    <span id="packStat"></span>
   </div>
 
   <!-- 2026-11-01 用户要求：新增识别项不再单独占一块，改为与引拍/随挥同格式的行，
        统一列在诊断卡里（上面 diag 区块），详细数值仍在技术页 nfBox -->
+</section>
+
+<!-- ================= 页6：采集（现场大字操作台：摄像头 + 计数 + 提示，2026-11-01） ================= -->
+<section id="page6" class="page">
+  <div class="panel" style="margin-top:0">
+    <div class="c-row">
+      <span id="cConn" class="badge idle">未连接</span>
+      <span id="cDev" style="font-family:ui-monospace,monospace">—</span>
+      <span id="cBatt" style="margin-left:auto">电量 —</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="c-num" id="cBalls">0</div>
+    <div class="c-sub">已击球</div>
+    <div class="c-sub">已过滤 <span id="cDrop">0</span> 个（磕碰 / 空挥 / 废窗）</div>
+  </div>
+
+  <div class="panel">
+    <div id="camWrap">
+      <video id="camVideo" playsinline autoplay muted></video>
+      <div id="camOff">摄像头未开启<br>点下方「开摄像头」</div>
+      <div id="camRecTag">● 录像中</div>
+    </div>
+    <div class="actions" style="margin-top:8px">
+      <button id="camOpenBtn" class="pass">开摄像头</button>
+      <button id="camRecBtn" class="primary">开始录像</button>
+      <button id="camSaveBtn">停止并下载</button>
+    </div>
+    <p class="c-hint" id="camStat">未开启</p>
+    <p class="c-hint">手机固定在三脚架、本页保持前台。录像暂做块级对齐，逐拍同步仍靠事后音频匹配。</p>
+  </div>
+
+  <div class="panel">
+    <div class="c-row" style="margin-bottom:10px">
+      <button id="cPrevBlk">◀ 上一块</button>
+      <select id="cBlkSel" style="flex:1;min-width:0;font-size:17px;padding:8px"></select>
+      <button id="cNextBlk">下一块 ▶</button>
+    </div>
+    <div class="c-phrase" id="cPhrase" style="font-size:26px">—</div>
+    <p class="c-hint" id="cBlkTip" style="font-size:17px;color:var(--fg)">—</p>
+    <div class="c-sub" id="cBlkCnt" style="margin-top:10px;font-size:16px">本块 0</div>
+    <p class="c-hint">块首/块尾：非持拍手敲一下拍面（同步锚点），紧接一句话报块名与动作要求，≤5 秒。</p>
+    <p class="c-hint">每球可选说一个词：好球 · 差球 · 打框 · 被挤到 · 随挥不足 · 引拍不足</p>
+    <div class="c-row" style="margin-top:10px">
+      <span>录音打标：<span id="cVoice">关</span></span>
+      <span id="cState" style="margin-left:auto">训练中</span>
+    </div>
+  </div>
 </section>
 
 <!-- ================= 页5：技术页（波形 + 全部特征值 + QC + 门限 + 日志） ================= -->
@@ -401,8 +474,15 @@
       <button id="exportSessionCsvBtn" class="pass">导出本次全部 CSV</button>
       <button id="exportCsvBtn">导出当前窗口 CSV</button>
       <button id="exportJsonBtn">导出 JSON</button>
+      <button id="exportSessionLogBtn">导出会话日志</button>
+      <button id="voiceClearBtn">清空本地录音</button>
     </div>
-    <p class="hint">「本次全部」= 自本次点击连接以来的全部窗口（含 PASS/拍框/异物），便于对比标定；「当前窗口」只导出技术页下拉框选中的一个窗口。</p>
+    <div class="actions" style="margin-top:6px;align-items:center">
+      <label class="chip" for="videoPick" style="cursor:pointer">选择本次视频…</label>
+      <input type="file" id="videoPick" accept="video/*" multiple style="display:none">
+      <span class="hint" id="videoPickStat" style="margin:0">不复制视频，只生成 manifest.csv 随「导出采集包」打包</span>
+    </div>
+    <p class="hint">「本次全部」= 自本次点击连接以来的全部窗口（含 PASS/拍框/异物），便于对比标定；「当前窗口」只导出技术页下拉框选中的一个窗口。「会话日志」= 连接/断开/重试/空档事件（独立 CSV，与窗口数据无关）。</p>
   </div>
 
   <div class="panel">
@@ -461,7 +541,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B72-20261101-1630";   // 删除块级标签全部控件（改「敲拍+口述」）；自动录音去重改按 seq + 排队补录深度 1；版本号格式固定：APP-<版本>-<YYYYMMDD>-<HHmm>，时分用于区分同一天多次发布
+const APP_BUILD = "APP-B77-20261102-0914";   // B77：引拍量/随挥量新指标——换向点分段积分 pre_deg/post_deg，拍柄自身坐标系取模，档位改用「个人相对基线」（同侧 30 窗中位）；影子期展示数值不判档，等 2 场数据后开档位颜色和提示文案；tb_v2/ft_v2 旧口径保留计算但首页下线；vol 字段进窗口 meta，跨会话基线存 localStorage；sw.js CACHE nexttennis-v18
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -493,7 +573,8 @@ const PROTO = {
     MICRO_END: 347,      // 微观段结束索引（含）([B54] 138+48+162-1=347）
     MACRO_RATE: 120,     // 宏观段速率 (Hz)
   },
-  // Step4 窗口分片包头 (12B)：[chunk_index u8][flags u8][seq u8][total u8][plen u16][crc16 u16][fw u8][rsv×3]
+  // Step4 窗口分片包头 (12B)：[chunk_index u8][flags u8][seq u8][total u8][plen u16][crc16 u16][fw u8][ts24 u8×3]
+  // ts24：固件 B56 起 = 触发时刻 millis 的低 24 位（小端，4.66h 回绕）；fw<56 时全 0
   // flags: bit[1:0]=chunk_type(0起/1中/2末), bit[3:2]=impact_class(0 NORMAL/1 FRAME/2 FOREIGN)
   // 系统包(心跳/电池)沿用旧头：[magic u8=0xA5][flags u8][seq u16=0xFFFE][ts u32][off u16][len u16][batt u16]
   SYS_MAGIC: 0xA5,
@@ -569,6 +650,8 @@ class BleStreamParser {
     const plen  = dv.getUint16(4, true);
     const crc   = dv.getUint16(6, true);
     const fw    = dv.getUint8(8);
+    // [B56] 头 byte9..11 = 24bit 毫秒时间戳 (触发时刻 millis 低 24 位, 小端); fw<56 时为 0
+    const ts24  = dv.getUint8(9) | (dv.getUint8(10) << 8) | (dv.getUint8(11) << 16);
     const ct    = flags & 0x03;
     const imp   = (flags >> 2) & 0x03;   // 0 NORMAL / 1 FRAME / 2 FOREIGN
 
@@ -583,7 +666,7 @@ class BleStreamParser {
     if (!slot) {
       this._gc(seq);
       slot = { bytes: new Uint8Array(PROTO.WINDOW.bytes), createdAt: Date.now(),
-               total, fw, filled: 0, crcFail: 0, quickClass: null, seen: new Set() };
+               total, fw, fwMs: ts24, filled: 0, crcFail: 0, quickClass: null, seen: new Set() };
       this._buf.set(seq, slot);
     }
     // 同 (chunk_index,plen) 的重复分片忽略：防止 filled 虚胖导致"伪完整"PASS
@@ -632,6 +715,7 @@ class BleStreamParser {
     }
     const meta = { seq, timestamp: slot.createdAt, source: "impact",
                    recvBytes: slot.filled, total: slot.total, fw: slot.fw,
+                   fwMs: slot.fwMs || 0,          // [B56] 固件触发时刻 (ms since boot, 24bit 回绕)
                    crcFail: slot.crcFail, quickClass: slot.quickClass,
                    strokeType: null, spinType: null };   // Step4: 击球/旋转移交 AI 判定
     this._buf.delete(seq);
@@ -1139,6 +1223,7 @@ class MockDevice {
     const payloadPerChunk = PROTO.WINDOW.chunkPayload;
     const totalChunks = PROTO.WINDOW.chunks;
     const seq = this.seq++ & 0xFF;                    // seq 为 u8
+    const mockTs = Math.round(performance.now()) & 0xFFFFFF;   // [B56] 模拟固件 uptime 时间戳
     for (let ci = 0; ci < totalChunks; ci++) {
       const off = ci * payloadPerChunk;
       const len = Math.min(payloadPerChunk, bytes.length - off);
@@ -1151,7 +1236,9 @@ class MockDevice {
       dv.setUint8(3, totalChunks);                                            // total
       dv.setUint16(4, len, true);                                             // plen
       dv.setUint16(6, crc16ccitt(payload), true);                             // crc16
-      dv.setUint8(8, 39);                                                     // fw build
+      dv.setUint8(8, 56);                                                     // fw build
+      dv.setUint8(9, mockTs & 0xFF); dv.setUint8(10, (mockTs >> 8) & 0xFF);   // [B56] ts24
+      dv.setUint8(11, (mockTs >> 16) & 0xFF);
       new Uint8Array(chunk, PROTO.CHUNK_HDR).set(payload);
       // 模拟分片间微小间隔
       setTimeout(() => this.onChunk(chunk), ci * 4);
@@ -1213,6 +1300,7 @@ const connBadge = $("connStatus");
 function setConn(text, cls) {
   connBadge.textContent = text;
   connBadge.className = "badge " + cls;
+  colRefresh();                     // 采集页连接状态同步（函数声明提升，连接时才调用）
 }
 
 // ---------- 窗口到达（冲击协议 / mock 共用） ----------
@@ -1221,6 +1309,7 @@ function onWindow(meta, data) {
   try {
   meta.packetLoss = parser.consumeSeq(meta.seq);
   meta.receivedAt = new Date();   // 本地到达时刻（HH:MM:SS，供会话列表/导出）
+  lastWinT = Date.now(); winTimes.push(lastWinT);   // 断连监控 R2：空档秒数与 60s 数据率
   res = qc.check(data, meta);
   const w = { meta, data, qc: res };
   meta.t0Index = findT0Index(data);   // 实测 T0（详情面板读数 + 波形标注 + 验证固件对齐）
@@ -1230,6 +1319,13 @@ function onWindow(meta, data) {
     ? formCompute(data, meta.strokeFhBh && meta.strokeFhBh.side) : null;
   meta.vti = vtiEvaluate({ meta, data }); // VTI 三重门限 + 三级分档（与本窗一同留存，回看时直接复用）
   meta.sessState = sessionState;          // 窗口到达时的会话状态快照（train/pause，供导出后剔除捡球窗）
+  // 新幅度指标（pre_deg / post_deg，2026-11-02 需求）—— 影子期内计算 + 基线累积 + 档位，不触发话术提示
+  const side = meta.strokeFhBh && meta.strokeFhBh.side;
+  meta.vol = volCompute(data, meta.t0Index);
+  meta.volTier = volTier(side, meta.vol, meta.sessState === "pause");
+  volBaseUpdate(side, meta.vol, meta.sessState === "pause");
+  meta.volCue = volCheckCue(side, meta.seq, meta.volTier.pre_tier);
+  log(`[vol] pre=${meta.vol.pre_deg ? meta.vol.pre_deg.toFixed(1) + '°' : '—'} post=${meta.vol.post_deg ? meta.vol.post_deg.toFixed(1) + '°' : '—'} ratio=${meta.vol.ratio ? meta.vol.ratio.toFixed(2) : '—'} rev=${meta.vol.revIdx} conf=${meta.vol.confidence} baseN=${(volLoadBase()[side] || []).length} src=${meta.volTier.base_src}`, "log-info");
   currentWindow = w;
   sessionWindows.push(w);        // 含 FAIL 窗口，全部留存到本次会话结束
   voiceAutoTrigger(meta);        // 自动录音：击球窗口一到达即录 5 秒（无按键）
@@ -1269,11 +1365,13 @@ function onWindow(meta, data) {
   }
 
   $("winCount").textContent = (parseInt($("winCount").textContent) || 0) + 1;
+  colRefresh();                              // 采集页大字计数同步
   $("reasmStat").textContent = parser.reasmStat;
   const qkName = meta.quickClass === 1 ? "FRAME"
                 : meta.quickClass === 2 ? "FOREIGN"
                 : meta.quickClass === 0 ? "NORMAL" : "N/A";
-  log(`窗口 seq=${meta.seq} ${qcCodeText(res.code, meta)} 板判=${qkName} peak=${res.info.peakVal.toFixed(2)}g`,
+  log(`窗口 seq=${meta.seq} ${qcCodeText(res.code, meta)} 板判=${qkName} peak=${res.info.peakVal.toFixed(2)}g`
+      + (meta.fwMs ? ` 拍点=${(meta.fwMs / 1000).toFixed(2)}s` : ""),
       isQcOk(res.code, meta) ? "log-pass" : "log-fail");
 }
 
@@ -1663,6 +1761,211 @@ function diagArc(data, t0, ids) {
 }
 
 // =====================================================================
+// 3.8 新幅度指标：换向点分段积分（pre_deg / post_deg）—— 2026-11-02 需求通知
+//   旧 tb_arc（固定切片绝对门限）在帆帆场 0/30 判出「有引拍」，病根是跨人绝对门限；
+//   新口径 = 换向点→T0 的整段积分（拍柄自身坐标系取模），档位改用「个人相对」。
+//   参考：docs/需求通知_判定标准切换_引拍量随挥量_20261102.md §2
+//   Python 对照：tools/swing_volume.py
+// =====================================================================
+const VOL_LO_MS = -800, VOL_HI_MS = -150;    // 换向点搜索区间（ms，相对名义 T0 idx186）
+const VOL_REV_RATIO = 0.35;                  // 换向点判据：|ω| < 0.35 × 窗口内峰值 |ω|
+const VOL_PEAK_MIN_DPS = 50;                 // 峰值 |ω| < 50dps → confidence=low（窗太静）
+const VOL_L = 0.60;                          // 拍柄→拍头力臂（米），米制行程 = deg × π/180 × L
+const VOL_TIER_A_LOW = 0.85, VOL_TIER_A_HIGH = 1.18;
+const VOL_TIER_B_LOW = 0.90, VOL_TIER_B_HIGH = 1.10;
+const VOL_TARGET_KEY = "nt_vol_target_v1";   // { pre_deg, post_deg } 可选教练目标值（口径 B）
+const VOL_TIER_BASE_N = 30;                  // 同侧基线需要的历史窗数
+const VOL_BASE_MIN_N = 10;                   // 冷启动不足此数不判（confidence=low）
+const VOL_PROFILE_KEY = "nt_vol_base_v1";    // { "正手":[..], "反手":[..] } 跨会话同侧 pre_deg 历史
+
+// 窗口内角速度峰值（deg/s）—— 全窗，排除可能的换向点搜索区间不重要
+function volPeakOmega(data) {
+  let m = 0;
+  for (let i = 0; i < PROTO.WINDOW.samples; i++) {
+    const v = diagOmegaMag(data, i);
+    if (v > m) m = v;
+  }
+  return m;
+}
+
+// 时间 ms → 索引 idx（按三段非均匀速率动态映射）
+function volMsToIdx(ms) {
+  const r = PROTO.WINDOW.sampleRate;
+  if (ms < -1148.5) return 0;
+  // 宏观前（idx 0..137, rate 120Hz, step 8ms 等效 960Hz 下 8 个 idx）
+  // windowTimeMs(i) = (-1148.5 + 8*i)/960*1000 → 解 i
+  if (ms <= -54) return Math.round((ms / 1000 * r + 1148.5) / 8);
+  // 微观（idx 138..347）：(i-186)/960*1000 = ms → i = 186 + ms/1000*r
+  return Math.round(PROTO.WINDOW.T0_INDEX + ms / 1000 * r);
+}
+
+// 换向点定位（需求 §2）：在 [-800ms,-150ms] 内找「最后一个」低速停顿点
+function volFindRev(data) {
+  const lo = Math.max(0, volMsToIdx(VOL_LO_MS));
+  const hi = Math.min(PROTO.WINDOW.MICRO_END, volMsToIdx(VOL_HI_MS));
+  if (hi - lo < 3) return { idx: lo, confidence: "low", reason: "seg_too_short" };
+  const peak = volPeakOmega(data);
+  // 局部极小：在 [-800,-150] 内逐点看是否两侧都比自己大（简单邻域 3 点）
+  const revCandidates = [];
+  for (let i = lo + 1; i < hi - 1; i++) {
+    const m = diagOmegaMag(data, i);
+    if (m > peak * VOL_REV_RATIO) continue;      // 必须低于阈值
+    const ml = diagOmegaMag(data, i - 1), mr = diagOmegaMag(data, i + 1);
+    if (m <= ml && m <= mr) revCandidates.push(i);
+  }
+  if (revCandidates.length === 0) {
+    // 退化：区间内 |ω| 最小点
+    let best = lo, bestM = Infinity;
+    for (let i = lo; i <= hi; i++) {
+      const v = diagOmegaMag(data, i);
+      if (v < bestM) { bestM = v; best = i; }
+    }
+    return { idx: best, confidence: peak < VOL_PEAK_MIN_DPS ? "low" : "ok",
+             reason: "min_fallback", peakDps: peak };
+  }
+  // 取时间上最晚的一个（数组按 idx 升序，取最后）
+  const idx = revCandidates[revCandidates.length - 1];
+  const conf = peak < VOL_PEAK_MIN_DPS ? "low" : "ok";
+  return { idx, confidence: conf, reason: "found", peakDps: peak, nCandidates: revCandidates.length };
+}
+
+// 构建 [a, b] 闭区间的索引序列（两端都要，梯形积分需要相邻对）
+function volSegIds(a, b) {
+  if (b <= a) return [];
+  const r = [];
+  for (let i = a; i <= b; i++) r.push(i);
+  return r;
+}
+
+// 主计算：pre_deg / post_deg
+// 积分是拍柄自身坐标系的矢量模（∫ω dt 的三维分量梯形积分后取模）—— 不是路径积分
+function volCompute(data, t0) {
+  if (PROTO.WINDOW.samples < 396) return { confidence: "low", reason: "short_window" };
+  const rev = volFindRev(data);
+  const t0Use = t0 != null ? t0 : PROTO.WINDOW.T0_INDEX;
+  const postEnd = PROTO.WINDOW.samples - 1;   // idx 395（不是 347），窗口末段全吃
+  const preIds = volSegIds(rev.idx, t0Use);
+  const postIds = volSegIds(t0Use, postEnd);
+  if (preIds.length < 2 || postIds.length < 2) {
+    return { confidence: "low", reason: "seg_empty", revIdx: rev.idx };
+  }
+  const Rpre = diagRotVecIds(data, t0Use, preIds);
+  const Rpost = diagRotVecIds(data, t0Use, postIds);
+  const pre_deg = Math.hypot(Rpre[0], Rpre[1], Rpre[2]);
+  const post_deg = Math.hypot(Rpost[0], Rpost[1], Rpost[2]);
+  return {
+    pre_deg, post_deg,
+    pre_m: pre_deg * Math.PI / 180 * VOL_L,
+    post_m: post_deg * Math.PI / 180 * VOL_L,
+    ratio: pre_deg > 1e-3 ? post_deg / pre_deg : NaN,
+    revIdx: rev.idx, revReason: rev.reason, peakDps: rev.peakDps || volPeakOmega(data),
+    confidence: rev.confidence,
+  };
+}
+
+// 跨会话基线（分侧）：同侧最近 30 窗 pre_deg 中位
+function volLoadBase() {
+  try { return JSON.parse(localStorage.getItem(VOL_PROFILE_KEY)) || { "正手": [], "反手": [] }; }
+  catch (_) { return { "正手": [], "反手": [] }; }
+}
+function volSaveBase(base) {
+  try { localStorage.setItem(VOL_PROFILE_KEY, JSON.stringify(base)); } catch (_) {}
+}
+function volTargetGet() {
+  try { return JSON.parse(localStorage.getItem(VOL_TARGET_KEY)) || null; }
+  catch (_) { return null; }
+}
+function volTargetSet(obj) {
+  try {
+    if (obj == null) localStorage.removeItem(VOL_TARGET_KEY);
+    else localStorage.setItem(VOL_TARGET_KEY, JSON.stringify(obj));
+  } catch (_) {}
+}
+function volMedian(vals) {
+  if (!vals || !vals.length) return NaN;
+  const s = vals.slice().sort((a, b) => a - b);
+  const n = s.length;
+  return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+}
+
+// 档位判定：baseSrc = self | target | null；tier = 偏小 | 正常 | 偏大 | null
+function volTier(side, volObj, sessPause) {
+  if (!volObj || volObj.confidence === "low" || sessPause) return {
+    pre_tier: null, post_tier: null, base_deg: null, base_src: null };
+  // 口径 B（教练目标值，留空即关闭）
+  const target = volTargetGet();
+  if (target && (target.pre_deg != null || target.post_deg != null)) {
+    const tier = (v, t) => {
+      if (v == null || t == null || !isFinite(v) || !isFinite(t)) return null;
+      const r = v / t;
+      if (r < VOL_TIER_B_LOW) return "偏小";
+      if (r > VOL_TIER_B_HIGH) return "偏大";
+      return "正常";
+    };
+    return {
+      pre_tier: tier(volObj.pre_deg, target.pre_deg),
+      post_tier: tier(volObj.post_deg, target.post_deg),
+      base_deg: target.pre_deg != null ? target.pre_deg : target.post_deg,
+      base_src: "target",
+    };
+  }
+  // 口径 A（个人基线）：同侧最近 30 窗 pre_deg 中位
+  const base = volLoadBase();
+  const sideArr = base[side] || [];
+  const preArr = sideArr.slice(-VOL_TIER_BASE_N);
+  if (preArr.length < VOL_BASE_MIN_N) return {
+    pre_tier: null, post_tier: null, base_deg: null, base_src: null };
+  const preMed = volMedian(preArr);
+  const tier = v => {
+    if (v == null || !isFinite(v)) return null;
+    const r = v / preMed;
+    if (r < VOL_TIER_A_LOW) return "偏小";
+    if (r > VOL_TIER_A_HIGH) return "偏大";
+    return "正常";
+  };
+  return {
+    pre_tier: tier(volObj.pre_deg),
+    post_tier: null,            // post 暂不判：后窗被截断 + 正手"随挥不足"与"转体不足"叠加不可解（§6.2）
+    base_deg: preMed,
+    base_src: "self",
+  };
+}
+
+// 基线更新：pre_deg 进同侧历史队列（不进捡球窗 / confidence=low）
+function volBaseUpdate(side, volObj, sessPause) {
+  if (sessPause || !volObj || volObj.confidence === "low") return;
+  if (!volObj.pre_deg || !isFinite(volObj.pre_deg)) return;
+  if (side !== "正手" && side !== "反手") return;
+  const base = volLoadBase();
+  (base[side] = base[side] || []).push(volObj.pre_deg);
+  // 跨会话保留最近 100 个（≈ 3~4 场，足够稳定，不至于无限膨胀）
+  if (base[side].length > 100) base[side] = base[side].slice(-100);
+  volSaveBase(base);
+}
+
+// 触发逻辑：同侧最近 8 窗内 ≥3 次「偏小」 → 提示 1 次；冷却 5 窗
+// 状态挂在 FORM.volState（FORM 本身是 const 但对象属性可扩展，跨节引用没问题）
+const VOL_WIN_N = 8, VOL_CUE_K = 3, VOL_COOLDOWN = 5;
+// volState 初始化：放在 FORM 声明后（见 FORM 对象扩展处），这里只定义函数
+function volCheckCue(side, seq, preTier) {
+  if (!side || preTier !== "偏小") return null;
+  const st = FORM.volState[side];
+  if (!st) return null;
+  // 超过 8 窗没更新过 → 重置（防止跨会话状态脏）
+  if (st.lastSeq >= 0 && (seq - st.lastSeq > 30)) st.preSmall = 0;
+  st.lastSeq = seq;
+  st.preSmall++;
+  // 冷却中？（seq 号比 cueSeq 大 5 以上才能再提示）
+  if (seq - st.cueSeq < VOL_COOLDOWN) return null;
+  if (st.preSmall >= VOL_CUE_K) {
+    st.cueSeq = seq;
+    st.preSmall = 0;
+    return "偏小时";
+  }
+  return null;
+}
+
+// =====================================================================
 // 3.7 形态门限 v2（APP-B70）—— 视频大样本分布 + K 变量归一化
 // 依据 docs/APP-B70任务书_视频校准规则v2_20261028.md：
 //   K1 身高（像素级归一化，±10% 残余可接受）
@@ -1687,6 +1990,9 @@ const FORM = {
   // 混用一条基线会让反手 ratio 恒低于门限 → 全体误判「引拍不足」
   k3Buf: { "正手": [], "反手": [] },   // 近 20 球引拍占比（rolling，分侧）
   k3: { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } },
+  // volState：触发逻辑状态（2026-11-02 新幅度指标影子期，volCheckCue 消费）
+  volState: { "正手": { preSmall: 0, lastSeq: -1, cueSeq: -999 },
+              "反手": { preSmall: 0, lastSeq: -1, cueSeq: -999 } },
 };
 
 // 拍长系数 K4（未设置按 26" → 1.0，保证默认零改动）
@@ -2337,28 +2643,51 @@ function updateDiagnosis(w) {
     tipEl.textContent = txt; tipEl.style.color = "";
   };
   if (!w) { idle("—"); return; }
-  // 无效窗口（丢包/拍框/异物/无冲击等）不做动作诊断
-  if (!isQcOk(w.qc.code, w.meta)) { idle("（非有效击球窗，不做动作诊断）"); return; }
 
+  // ---------- 2026-11-02 新幅度指标（pre_deg / post_deg）· 影子期展示 ----------
+  // 影子期 = 数值全展示 + 档位占位 + 话术停更（等 2 场基线数据稳定后再开档位颜色和提示文案）
+  const VSHADOW = true;  // §8 阶段 1+2：只展示数值，档位颜色/话术停更
+  const vol = w.meta && w.meta.vol;
+  const vtier = w.meta && w.meta.volTier;
+  const side = w.meta && w.meta.strokeFhBh && w.meta.strokeFhBh.side;
+  if (vol && !VSHADOW) {
+    // 档位颜色 + 提示文案（影子期关闭，先占位）
+    const tierCls = t => (t === "偏小" ? "warn" : t === "偏大" ? "warn" : t === "正常" ? "pass" : "idle");
+    tbEl.innerHTML = `<span class="badge ${tierCls(vtier.pre_tier)}">${vtier.pre_tier || (vol.confidence === "low" ? "校准中" : "—")}</span>`;
+    ftEl.innerHTML = `<span class="badge ${tierCls(vtier.post_tier)}">${vtier.post_tier || (vol.confidence === "low" ? "校准中" : "—")}</span>`;
+  } else {
+    // 影子期：展示 confidence 状态（ok 灰 / low 黄边）
+    const cCls = vol && vol.confidence === "ok" ? "idle" : (vol ? "warn" : "idle");
+    tbEl.innerHTML = `<span class="badge ${cCls}">引拍量</span>`;
+    ftEl.innerHTML = `<span class="badge ${cCls}">随挥量</span>`;
+  }
+
+  // 数值行：pre_deg / post_deg / ratio / rev / baseline 统计
+  if (vol && Number.isFinite(vol.pre_deg)) {
+    const pct = b => b != null && Number.isFinite(b) ? ` · 基 ${b.toFixed(0)}°` : "";
+    tbNum.textContent = `${vol.pre_deg.toFixed(1)}° / ${vol.pre_m.toFixed(2)}m`
+      + ` · ratio ${isFinite(vol.ratio) ? vol.ratio.toFixed(2) : "—"}`
+      + ` · revIdx ${vol.revIdx} (${vol.revReason})`
+      + ` · pk ${vol.peakDps ? vol.peakDps.toFixed(0) + "dps" : "—"}`
+      + pct(vtier.base_deg) + (vtier.base_src ? ` · src=${vtier.base_src}` : "")
+      + ` · conf ${vol.confidence} · side ${side}`;
+  } else {
+    tbNum.textContent = "（影子期计算异常，不展示）";
+  }
+  if (vol && Number.isFinite(vol.post_deg)) {
+    ftNum.textContent = `${vol.post_deg.toFixed(1)}° / ${vol.post_m.toFixed(2)}m`
+      + ` · conf ${vol.confidence} · side ${side}`
+      + ` · 窗末截断（真实随挥长 200-400ms，当前仅到 +168ms，§10 产品限制）`;
+  } else {
+    ftNum.textContent = "（影子期计算异常，不展示）";
+  }
+
+  // 话术提示（影子期停更，沿用旧口径直到基线稳定后正式启用 vol 文案）
+  if (!isQcOk(w.qc.code, w.meta)) { idle("（非有效击球窗，不做动作诊断）"); return; }
   const t0 = w.meta.t0Index != null ? w.meta.t0Index : findT0Index(w.data);
-  const d = diagnoseSwing(w.data, t0, w.meta.form, w.meta.strokeFhBh && w.meta.strokeFhBh.side);
+  const d = diagnoseSwing(w.data, t0, w.meta.form, side);
   w.diag = d;
   if (!d.alive) { idle("（本窗无陀螺数据，无法诊断引拍/随挥）"); return; }
-
-  tbEl.innerHTML = `<span class="badge ${VERDICT_CLS[d.tbVerdict]}">${d.tbVerdict}</span>`;
-  ftEl.innerHTML = `<span class="badge ${VERDICT_CLS[d.ftVerdict]}">${d.ftVerdict}</span>`;
-  // score 行默认在家庭视图隐藏；技术演示视图显示判决通道来源（幅度 / 时长 / 个人基线）
-  const f = w.meta.form || {};
-  tbNum.textContent = `score ${d.tbScore.toFixed(2)}（${d.tbArc.toFixed(0)}° / ${d.tbMean.toFixed(0)}dps, K4=${d.k4.toFixed(2)}）`
-    + ` · 幅度判${d.tbVerdictV1}` + (d.tbGate ? ` · ${d.tbGate}` : "")
-    + (isFinite(f.preDur) ? ` · pre ${f.preDur.toFixed(3)}s` : "")
-    + (f.k3P50 != null ? ` · 个人P50 ${f.k3P50.toFixed(2)}` : "");
-  ftNum.textContent = `score ${d.ftScore.toFixed(2)}（${d.postTotal.toFixed(0)}°）`
-    + ` · 幅度判${d.ftVerdictV1}` + (d.ftGate ? ` · ${d.ftGate}` : "")
-    + (isFinite(f.postDur) ? ` · post ${f.postDur.toFixed(3)}s${f.trunc ? "(截断)" : ""}` : "");
-
-  // 一次只报最严重一项：引拍缺失是根本原因，此时不重复报随挥不足
-  // 家庭视图话术：零术语、正向、不说数字
   let tip, col = "";
   if (d.tbVerdict === "无") { tip = "引拍不足：球拍没有充分向后拉开，先解决引拍"; col = "var(--fail)"; }
   else if (d.ftVerdict === "不足") { tip = "随挥不足：触球后没有把球拍送完整"; col = "var(--fail)"; }
@@ -2410,6 +2739,7 @@ function setSessionState(st) {
     currentWindow.meta.vti = vtiEvaluate(currentWindow, false);
     updateVti(currentWindow);
   }
+  colRefresh();                     // 采集页会话状态同步
 }
 
 // ---------- 连击计数：只统计有效击球；拍框球/丢包清零，异物与无冲击（捡球、落球）不计 ----------
@@ -2521,7 +2851,141 @@ function updateQcPanel(res) {
     : `<span class="badge warn">${res.passRate.toFixed(0)}%</span>`;
 }
 
+// =====================================================================
+// 断连监控 + 空档告警 + 会话日志（2026-11-01 需求通知）
+//   背景：现场曾 4 段视频（6.7 分钟、上百球）一个窗口都没收到，且事后无法追溯原因。
+//   规则：连接事件进 connLog（独立导出 session_log_*.csv），窗口 CSV 结构一律不动。
+// =====================================================================
+const CONNLOG_MAX = 500;
+let connLog = [];            // {t,event,device,sessionTag,reason,lastSeq,gapS,windows60s,rssi,note}
+let lastWinT = 0;            // 最近一次窗口到达的本地 ms
+let winTimes = [];           // 窗口到达时刻（beat 统计近 60s）
+let manualDisc = false;      // 用户主动断开 → 不自动重连
+let retryTimers = [];        // 待执行的自动重连定时器
+let lastConnMode = "";       // 本次连接模式（自动重连只对 impact 生效）
+let sessLock = null;         // 采集期屏幕常亮（R5 顺手项）
+
+function connLogAdd(ev) {
+  ev.t = Date.now();
+  connLog.push(ev);
+  if (connLog.length > CONNLOG_MAX) connLog.splice(0, connLog.length - CONNLOG_MAX);
+}
+
+// 采集期屏幕常亮：失败不影响主流程，只在日志记一条（R5）
+async function sessWake(on) {
+  if (!("wakeLock" in navigator)) return;
+  try {
+    if (on && !sessLock) {
+      sessLock = await navigator.wakeLock.request("screen");
+      sessLock.addEventListener("release", () => { sessLock = null; });
+      log("屏幕常亮已开启（采集期）", "log-info");
+    } else if (!on && sessLock) {
+      await sessLock.release(); sessLock = null;
+    }
+  } catch (e) { log(`屏幕常亮申请失败：${e.name}（不影响采集）`, "log-warn"); }
+}
+
+// 连接态判定：真实 BLE 看 GATT，Mock 看发生器（否则 Mock 下空档指示永不显示）
+function linkConnected() {
+  return !!(btDevice && btDevice.gatt && btDevice.gatt.connected) || !!mockDev;
+}
+
+// R2 空档显示：首页「距上一窗口 Ns」，≥15s 变黄、≥40s 变红闪烁
+setInterval(() => {
+  const el = $("gapStat");
+  if (!el) return;
+  const connected = linkConnected();
+  if (!connected || !lastWinT) {
+    el.textContent = connected ? "等待首个窗口…" : "";
+    el.style.color = ""; el.style.fontWeight = ""; el.style.animation = "";
+    return;
+  }
+  const s = Math.round((Date.now() - lastWinT) / 1000);
+  el.textContent = `距上一窗口 ${s}s`;
+  el.style.color = s >= 40 ? "var(--fail)" : s >= 15 ? "var(--warn)" : "var(--muted)";
+  el.style.fontWeight = s >= 15 ? "700" : "";
+  el.style.animation = s >= 40 ? "vpulse .8s infinite" : "";
+}, 1000);
+
+// R2 数据率快照：每 60s 一条 beat（rssi 浏览器不暴露，留空）
+setInterval(() => {
+  const now = Date.now();
+  winTimes = winTimes.filter(t => now - t < 60000);
+  connLogAdd({ event: "beat", connected: linkConnected() ? 1 : 0, windows60s: winTimes.length, rssi: "" });
+}, 60000);
+
+// R5 顺手项：区分「锁屏/切后台」导致的数据空档
+document.addEventListener("visibilitychange", () => {
+  connLogAdd({ event: "vis", note: document.hidden ? "hidden" : "visible" });
+});
+
+// R4 会话日志导出：固定列结构，缺项留空；与窗口 CSV 完全分离
+function sessionLogCsvRows() {
+  const rows = ["t_iso,event,device,sessionTag,reason,lastSeq,gapS,windows60s,rssi,note"];
+  for (const e of connLog) {
+    rows.push([new Date(e.t).toISOString(), e.event || "", e.device || "", e.sessionTag || "",
+               e.reason || "", e.lastSeq ?? "", e.gapS ?? "", e.windows60s ?? "", e.rssi ?? "",
+               `"${String(e.note || e.err || "").replace(/"/g, '""')}"`].join(","));
+  }
+  return rows;
+}
+function sessionLogExport() {
+  if (!connLog.length) { log("暂无会话日志可导出", "log-warn"); return; }
+  download(`session_log_${sessionTag()}.csv`, "\ufeff" + sessionLogCsvRows().join("\n") + "\n", "text/csv");
+  log(`已导出会话日志：${connLog.length} 条`, "log-info");
+}
+
+// R3 断连后自动重连 3 次（间隔 2s/4s/8s 累计 = 2/6/14s）；仅冲击协议、非用户主动断开时
+function scheduleReconnect(dev) {
+  const delays = [2000, 6000, 14000];
+  delays.forEach((d, i) => {
+    retryTimers.push(setTimeout(async () => {
+      if (manualDisc) return;
+      if (btDevice && btDevice.gatt && btDevice.gatt.connected) return;   // 已被手动重连
+      connLogAdd({ event: "retry", device: dev.name, sessionTag: sessionTag(), note: `attempt ${i + 1}` });
+      log(`自动重连第 ${i + 1}/3 次…`, "log-warn");
+      try {
+        btDevice = dev;
+        dev.addEventListener("gattserverdisconnected", onDisconnect);
+        await openImpactGatt(dev);
+        const gap = lastWinT ? Math.round((Date.now() - lastWinT) / 1000) : 0;
+        setConn("已连接", "pass");
+        connBadge.textContent = `已重连（空档 ${gap}s）`;
+        $("devName").textContent = dev.name;
+        connLogAdd({ event: "conn", device: dev.name, sessionTag: sessionTag(), note: `reconnect gap ${gap}s` });
+        log(`已重连（空档 ${gap} 秒）——这段空档的球没有数据`, "log-pass");
+        sessWake(true);
+        colRefresh();
+      } catch (err) {
+        connLogAdd({ event: "retry", device: dev.name, sessionTag: sessionTag(), err: err.message });
+        log(`自动重连第 ${i + 1}/3 次失败：${err.message}`, "log-fail");
+        if (i === 2) { setConn("重连失败", "fail"); log("自动重连 3 次均失败，请手动点【连接设备】", "log-fail"); }
+      }
+    }, d));
+  });
+}
+
 // ---------- Web Bluetooth 连接（冲击窗口协议） ----------
+// 通知处理抽成具名函数：首次连接与断连自动重连共用（2026-11-01 需求通知 R3）
+function onImpactNotify(e) {
+  try {
+    const dv = e.target.value;
+    const buf = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+    parser.handleChunk(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+  } catch (err) {
+    log(`[DBG] 处理通知异常: ${err.message}`, "log-fail");
+  }
+}
+
+// GATT 链路建立（connect + service + characteristic + 订阅）：首连与自动重连共用
+async function openImpactGatt(dev) {
+  btServer = await dev.gatt.connect();
+  const svc = await btServer.getPrimaryService(PROTO.IMPACT.serviceUUID);
+  btChar = await svc.getCharacteristic(PROTO.IMPACT.charUUID);
+  btChar.addEventListener("characteristicvaluechanged", onImpactNotify);   // 先监听后订阅（经验教训）
+  await btChar.startNotifications();
+}
+
 async function connectImpact() {
   if (!navigator.bluetooth) { log("当前浏览器不支持 Web Bluetooth，请用 Chrome/Edge", "log-fail"); return; }
   // 防多连接堆叠：旧连接未断开时再点连接，会产生多条并存 GATT 链路，
@@ -2538,33 +3002,23 @@ async function connectImpact() {
     btDevice.addEventListener("gattserverdisconnected", onDisconnect);
     // 连接重试：链路刚释放时首次 connect 仍可能被 Chrome 拒绝，退避后重试 2 次
     for (let attempt = 0; ; attempt++) {
-      try { btServer = await btDevice.gatt.connect(); break; }
+      try { await openImpactGatt(btDevice); break; }
       catch (err) {
+        connLogAdd({ event: "retry", device: btDevice.name, sessionTag: sessionTag(),
+                     note: `attempt ${attempt + 1}`, err: err.message });
         if (attempt >= 2) throw err;
         log(`连接重试 ${attempt + 1}/3 …`, "log-warn");
         await new Promise(r => setTimeout(r, 700));
       }
     }
-    const svc = await btServer.getPrimaryService(PROTO.IMPACT.serviceUUID);
-    btChar = await svc.getCharacteristic(PROTO.IMPACT.charUUID);
-    // 先监听后订阅（经验教训）
-    let _dbgChunks = 0;
-    btChar.addEventListener("characteristicvaluechanged", e => {
-      try {
-        const dv = e.target.value;
-        const buf = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
-        parser.handleChunk(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
-      } catch (err) {
-        log(`[DBG] 处理通知异常: ${err.message}`, "log-fail");
-      }
-    });
-    await btChar.startNotifications();
     setConn("已连接", "pass");
     $("devName").textContent = btDevice.name;
     $("t0off").textContent = "T0 偏移 —"; $("t0off").style.color = "";
     $("devMode").textContent = "冲击窗口协议";
     $("devMtu").textContent = "BLE 5.3 DLE";
+    connLogAdd({ event: "conn", device: btDevice.name, sessionTag: sessionTag() });
     log(`已连接 ${btDevice.name}，监听 0x19B10001`, "log-pass");
+    sessWake(true);                    // R5：采集期屏幕常亮
   } catch (e) {
     log("连接失败: " + e.message, "log-fail");
     setConn("连接失败", "fail");
@@ -2591,6 +3045,7 @@ async function connectStep1() {
     $("t0off").textContent = "T0 偏移 —"; $("t0off").style.color = "";
     $("devMode").textContent = "Step1 实时流桥接";
     $("devMtu").textContent = "62B/pkt ~83Hz";
+    connLogAdd({ event: "conn", device: btDevice.name, sessionTag: sessionTag(), note: "step1" });
     log(`已连接 ${btDevice.name}，将 3 轴流重组为 12x396 窗口`, "log-pass");
   } catch (e) {
     log("连接失败: " + e.message, "log-fail");
@@ -2629,15 +3084,30 @@ function connectMock() {
   $("t0off").textContent = "T0 偏移 —"; $("t0off").style.color = "";
   $("devMode").textContent = "合成冲击数据";
   $("devMtu").textContent = "模拟分片 232B";
+  connLogAdd({ event: "conn", device: "Mock", sessionTag: sessionTag(), note: "mock" });
   log("Mock 设备已启动，每 1.2~2.5s 产生一次冲击窗口", "log-info");
 }
 
 function onDisconnect(e) {
   // 只处理"当前设备"的断开：旧连接迟到的 gattserverdisconnected 会误拆掉新建立的连接
   if (e && e.target && e.target !== btDevice) return;
+  const dev = btDevice;
+  const name = dev && dev.name || "";
+  const gapS = lastWinT ? Math.round((Date.now() - lastWinT) / 1000) : "";
+  const lastSeq = sessionWindows.length ? sessionWindows[sessionWindows.length - 1].meta.seq : "";
+  // R1：断连事件留痕（reason/lastSeq/距最后窗口秒数），事后可追溯
+  connLogAdd({ event: "disc", device: name, sessionTag: sessionTag(),
+               reason: "gattserverdisconnected", lastSeq, gapS });
   setConn("已断开", "warn");
-  log("设备已断开", "log-warn");
+  // R3 断连提醒：状态行变红 + 震动 + 短提示音（不用 TTS 长播报）
+  connBadge.textContent = `蓝牙已断开（已 ${gapS === "" ? "?" : gapS} 秒无数据）`;
+  connBadge.className = "badge fail";
+  try { if (navigator.vibrate) navigator.vibrate(300); } catch (_) {}
+  try { if (audio.ctx) audio.playCombo(); } catch (_) {}
+  log(`设备已断开（距最后窗口 ${gapS === "" ? "?" : gapS}s，lastSeq=${lastSeq === "" ? "?" : lastSeq}）`, "log-warn");
   cleanupBt();
+  // R3：非用户主动断开 → 自动重连 3 次（仅冲击协议；mock/step1 无意义）
+  if (!manualDisc && dev && lastConnMode === "impact") scheduleReconnect(dev);
 }
 // 断开必须"等链路真正释放"再允许重连：Chrome 的 GATT 释放是异步的，JS 变量置 null 后
 // 底层旧链路仍在拆。此时立刻 gatt.connect() 会撞上正在消失的旧链路 → 失败一次；
@@ -2652,6 +3122,7 @@ function cleanupBt() {
   btChar = null; btServer = null; btDevice = null;
   if (mockDev) { mockDev.stop(); mockDev = null; }
   parser.reset();
+  sessWake(false);                 // 采集期屏幕常亮随链路释放（幂等）
   if (!chr && !dev) return Promise.resolve();
   cleaningUp = (async () => {
     if (chr) { try { chr.stopNotifications(); } catch(e){} }   // 不 await：避免陈旧引用把清理挂死
@@ -2674,6 +3145,9 @@ function cleanupBt() {
 // ---------- 按钮绑定 ----------
 $("connectBtn").addEventListener("click", async () => {
   const mode = $("modeSel").value;
+  manualDisc = false;              // 手动点连接 = 允许后续断连自动重连
+  retryTimers.forEach(clearTimeout); retryTimers = [];   // 取消上次遗留的重连定时器
+  lastConnMode = mode;
   // 必须等旧链路真正释放（cleanupBt 现在返回 Promise）再发起新连接，
   // 否则会撞上正在拆的旧 GATT 链路 → "一次失败一次成功"交替
   await cleanupBt();
@@ -2681,6 +3155,8 @@ $("connectBtn").addEventListener("click", async () => {
   parser.reset();
   // 新连接：清空上一次连接的全部窗口，重新累积本次会话
   sessionWindows = [];
+  colBlkBase = 0;                  // 采集页「本块球数」按新会话重新计（块选择保留）
+  try { localStorage.setItem("nt_collect_base", "0"); } catch (_) {}
   shareCanvas = null;      // 上一次的分享卡片不再复用
   if ($("shareImg")) { $("shareImg").classList.remove("on"); $("shareImg").removeAttribute("src"); }
   // K3 个人基线按会话冷启动（换拍/换人/换天不继承旧基线）
@@ -2698,6 +3174,8 @@ $("connectBtn").addEventListener("click", async () => {
   else if (mode === "step1") connectStep1();
 });
 $("disconnectBtn").addEventListener("click", () => {
+  manualDisc = true;               // 用户主动断开 → 不触发自动重连
+  retryTimers.forEach(clearTimeout); retryTimers = [];
   cleanupBt();
   reviewCommit();          // 断开即入账（回顾页数字落盘）
   setConn("未连接", "idle");
@@ -2813,6 +3291,15 @@ async function idbDel(id) {
     rq.onerror = () => rej(rq.error);
   });
 }
+// 清空全部本地录音（2026-11-01 需求通知 R2/R3：导出成功后由用户决定是否清空）
+async function idbClear() {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const rq = db.transaction(VOICE_STORE, "readwrite").objectStore(VOICE_STORE).clear();
+    rq.onsuccess = () => res();
+    rq.onerror = () => rej(rq.error);
+  });
+}
 
 let voiceRec = null, voiceChunks = [], voiceTimer = null;
 let voiceStart = 0, voiceTarget = null, voiceLastId = null, voiceBusy = false;
@@ -2835,6 +3322,14 @@ async function voiceUpdateStat() {
     st.textContent = base
       + (voiceMicError ? `｜麦克风未就绪${voiceMicReason ? "：" + voiceMicReason : ""}` : "")
       + (voiceMissed ? `｜排队溢出 ${voiceMissed}` : "");
+    // 首页「待导出语音 N 段」（2026-11-01 需求通知 R2）：>0 高亮，提醒刷新/关闭可能丢失
+    const vp = $("voicePend");
+    if (vp) {
+      vp.textContent = all.length ? `待导出语音 ${all.length} 段` : "";
+      vp.style.color = all.length ? "var(--warn)" : "";
+      vp.style.fontWeight = all.length ? "700" : "";
+      vp.title = all.length ? "刷新/关闭浏览器可能丢失，打完请导出" : "";
+    }
   } catch (e) {
     $("voiceStat").textContent = "存储不可用";
   }
@@ -3081,6 +3576,13 @@ async function voiceStartRec(auto = false, winMeta = null) {
   voiceStart = Date.now();
   voiceLastStart = voiceStart;
   voiceRec.start();
+  // 录音开始即写 @v 标记（2026-11-01 需求通知 R1）：CSV 的 note 列留下「这窗有录音」的痕迹，
+  // 即使音频丢失，掌拍窗(高g/FOREIGN)+@v 也能定块边界；不新增列、不改 CSV 结构
+  const wMeta = sessionWindows[ti].meta;
+  if (!wMeta.note) wMeta.note = "@v";
+  else if (!wMeta.note.split(/\s+/).includes("@v")) wMeta.note += " @v";
+  voiceTarget.note = wMeta.note;                 // 录音记录里的 note 与窗口保持一致
+  updateWinSelector(false);
   $("voiceRecBtn").classList.add("rec");
   $("voiceRecBtn").textContent = "● 录音中…";
   const tick = () => {
@@ -3188,6 +3690,12 @@ async function voiceExport() {
                   data: new TextEncoder().encode("\ufeff" + rows.join("\n") + "\n") });
   download(`voice_${sessionTag()}.zip`, zipBuild(files), "application/zip");
   log(`已导出语音包：${all.length} 段音频 + voice_labels.csv`, "log-info");
+  // 需求通知 R2/R3：导出成功后由用户决定是否清空本地录音（不自动清，避免误丢）
+  if (confirm(`语音包已导出（${all.length} 段）。是否清空本地录音？`)) {
+    await idbClear();
+    log("本地录音已清空", "log-info");
+  }
+  await voiceUpdateStat();
 }
 
 $("voiceRecBtn").addEventListener("click", () => {
@@ -3196,6 +3704,15 @@ $("voiceRecBtn").addEventListener("click", () => {
 });
 $("voiceUndoBtn").addEventListener("click", voiceUndo);
 $("voiceExportBtn").addEventListener("click", voiceExport);
+$("voiceExportBtnHome").addEventListener("click", voiceExport);   // 首页同款（需求通知 R3：导出入口前移）
+$("voiceClearBtn").addEventListener("click", async () => {
+  const all = await idbAll().catch(() => []);
+  if (!all.length) { log("本地没有录音", "log-info"); return; }
+  if (confirm(`确定清空本地 ${all.length} 段录音？（未导出的将丢失）`)) {
+    await idbClear(); await voiceUpdateStat();
+    log("本地录音已清空", "log-info");
+  }
+});
 
 function paintVoiceAuto() {
   const b = $("voiceAutoBtn");
@@ -3207,6 +3724,7 @@ function paintVoiceAuto() {
     h.classList.toggle("on", voiceAuto);
   }
   voiceUpdateStat();
+  colRefresh();                     // 采集页录音开关同步
 }
 async function voiceAutoToggle() {
   voiceAuto = !voiceAuto;
@@ -3215,6 +3733,13 @@ async function voiceAutoToggle() {
   ttsMute(voiceAuto);                     // 开=静音播报（防 TTS 录进音频）；关=恢复正常鼓励语音
   if (voiceAuto) await voicePrimeMic();   // 紧接点击调用，保住用户手势（先 await 别的会丢手势导致授权失败）
   await voiceWakeLock(voiceAuto);
+  // 需求通知 R2：开启自动录音时申请本地存储持久化，避免浏览器在存储压力下清掉 IndexedDB 录音
+  if (voiceAuto && navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist()
+      .then(ok => log(`本地存储持久化：${ok ? "已授权（录音防清理）" : "未授权（浏览器可能在压力下清理）"}`,
+                      ok ? "log-info" : "log-warn"))
+      .catch(() => {});
+  }
   log(voiceAuto ? "自动录音已开启：每球窗口到达即录 5 秒（保持页面在前台；语音播报自动静音）"
                 : "录音打标已关闭：不录音，恢复正常语音播报", "log-info");
 }
@@ -3270,7 +3795,7 @@ $("exportCsvBtn").addEventListener("click", () => {
 // CSV 表头与行构建（单窗口 / 会话导出共用；impact_type 为固件板判）
 // stroke_type：固件已停发该字段（Step4 移交 App），改为 App W2 零校准判决写入（FH→FOREHAND / BH→BACKHAND），
 // 仅 NORMAL_HIT(0) 且判决有效时填写；列名不变、不写 note，不影响块名解析。
-const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,vti,vti_level\n";
+const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,vti,vti_level,fw_ms\n";
 function buildCsvRows(m) {
   const impactType = m.meta.quickClass != null
     ? ["NORMAL_HIT", "FRAME_HIT", "FOREIGN_IMPACT"][m.meta.quickClass] : "";
@@ -3292,7 +3817,7 @@ function buildCsvRows(m) {
   for (let i = 0; i < PROTO.WINDOW.samples; i++) {
     rows += `${m.meta.seq},${m.meta.timestamp},${i},`;
     for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) rows += m.data[ch][i].toFixed(6) + ",";
-    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${vtiVal},${vtiLvl}\n`;
+    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${vtiVal},${vtiLvl},${m.meta.fwMs || 0}\n`;
   }
   return rows;
 }
@@ -3307,6 +3832,113 @@ $("exportSessionCsvBtn").addEventListener("click", () => {
   log(`已导出本次连接全部 ${sessionWindows.length} 个窗口 ` +
       `(${sessionWindows.length * PROTO.WINDOW.samples} 行)`, "log-info");
 });
+
+$("exportSessionLogBtn").addEventListener("click", sessionLogExport);
+
+// =====================================================================
+// 一键导出采集包（2026-11-01 需求通知）：pack_<tag>.zip = 窗口 CSV + 录音 + 会话日志 + meta.json
+//   视频不复制（浏览器权限不足 + 大文件内存必崩），只生成 videos/manifest.csv 清单。
+//   打包复用现有 zipBuild（STORE）；窗口 CSV / voice_labels.csv 结构与单独导出逐字节一致。
+// =====================================================================
+let packExported = null;        // {clips, sessions, at} 内存标记，首页显示「已导出…」
+let videoManifest = [];         // {name, sizeMb, lastModified} 只记元数据
+
+function paintPackStat() {
+  const el = $("packStat");
+  if (el) el.textContent = packExported
+    ? `已导出（${packExported.clips} 段语音 / ${packExported.sessions} 个会话）` : "";
+}
+
+$("videoPick").addEventListener("change", (e) => {
+  videoManifest = Array.from(e.target.files || []).map(f => ({
+    name: f.name, sizeMb: (f.size / 1048576).toFixed(1),
+    lastModified: new Date(f.lastModified).toISOString()
+  }));
+  $("videoPickStat").textContent = videoManifest.length
+    ? `已选 ${videoManifest.length} 个视频（只记清单，不复制）`
+    : "不复制视频，只生成 manifest.csv 随「导出采集包」打包";
+  if (videoManifest.length) log(`视频清单：${videoManifest.length} 个文件（仅元数据）`, "log-info");
+});
+
+async function packExport() {
+  try {
+    const all = await idbAll().catch(() => []);
+    if (!sessionWindows.length && !all.length) {
+      log("导出失败：本次没有窗口也没有录音，先采集再导出", "log-fail");
+      return;
+    }
+    const tag = sessionTag();
+    const root = `pack_${tag}/`;
+    const enc = new TextEncoder();
+    const files = [];
+    // windows/：会话 CSV 与「导出本次全部 CSV」按钮产出逐字节一致
+    let sessCsvName = "";
+    if (sessionWindows.length) {
+      let body = "";
+      for (const w of sessionWindows) body += buildCsvRows(w);
+      sessCsvName = `tennis_session_${tag}.csv`;
+      files.push({ name: root + "windows/" + sessCsvName, data: enc.encode(CSV_HEADER + body) });
+    }
+    // voice/：clips + voice_labels.csv（9 列结构与单独导出语音包一致）
+    const vrows = ["file,seq,window_index,recorded_at,delta_ms,dur_ms,clip,note,source"];
+    const sessSeqs = new Set(sessionWindows.map(w => w.meta.seq));
+    const missingSeq = [];
+    for (let i = 0; i < all.length; i++) {
+      const r = all[i];
+      const ext = (r.mime || "").includes("mp4") ? "m4a" : "webm";
+      const clip = `clips/${r.sessionTag}_${String(r.seq).padStart(3, "0")}_${String(i + 1).padStart(4, "0")}.${ext}`;
+      files.push({ name: root + "voice/" + clip, data: new Uint8Array(await r.blob.arrayBuffer()) });
+      vrows.push([`tennis_session_${r.sessionTag}.csv`, r.seq, r.windowIndex, r.recordedAt,
+                  r.deltaMs, r.durMs, clip,
+                  `"${String(r.note || "").replace(/"/g, '""')}"`, "voice"].join(","));
+      if (!sessSeqs.has(r.seq)) missingSeq.push(r.seq);
+    }
+    if (all.length) {
+      files.push({ name: root + "voice/voice_labels.csv",
+                   data: enc.encode("\ufeff" + vrows.join("\n") + "\n") });
+    }
+    // logs/：会话日志（断连监控模块）；无事件则该目录为空
+    if (connLog.length) {
+      files.push({ name: root + `logs/session_log_${tag}.csv`,
+                   data: enc.encode("\ufeff" + sessionLogCsvRows().join("\n") + "\n") });
+    }
+    // videos/manifest.csv：只记文件名/大小/修改时刻，不复制视频本体
+    if (videoManifest.length) {
+      const mrows = ["file,size_mb,last_modified,note"];
+      for (const v of videoManifest) mrows.push([v.name, v.sizeMb, v.lastModified, ""].join(","));
+      files.push({ name: root + "videos/manifest.csv",
+                   data: enc.encode("\ufeff" + mrows.join("\n") + "\n") });
+    }
+    // meta.json
+    const meta = {
+      app_version: APP_BUILD,
+      sessionTag: tag,
+      exported_at: new Date().toISOString(),
+      device_name: $("devName").textContent || "",
+      window_contract: { samples: PROTO.WINDOW.samples, channels: PROTO.WINDOW.channels,
+                         t0_index: PROTO.WINDOW.T0_INDEX },
+      sessions: sessionWindows.length ? [{
+        file: sessCsvName, windows: sessionWindows.length,
+        start: sessionWindows[0].meta.receivedAt,
+        end: sessionWindows[sessionWindows.length - 1].meta.receivedAt }] : [],
+      voice: { clips: all.length, missing_seq: missingSeq },
+      video_hint: "视频不在此包内，请与 MP4 放同一目录"
+    };
+    files.push({ name: root + "meta.json", data: enc.encode(JSON.stringify(meta, null, 2)) });
+    download(`pack_${tag}.zip`, zipBuild(files), "application/zip");
+    packExported = { clips: all.length, sessions: sessionWindows.length ? 1 : 0, at: new Date() };
+    paintPackStat();
+    log(`已导出采集包 pack_${tag}.zip（窗口 ${sessionWindows.length} + 语音 ${all.length} 段 + 日志 ${connLog.length} 条）`, "log-pass");
+    // R3：导出成功后提示可清空本地录音（用户决定，不自动清）
+    if (all.length && confirm(`采集包已导出（含 ${all.length} 段录音）。是否清空本地录音？`)) {
+      await idbClear(); await voiceUpdateStat();
+      log("本地录音已清空", "log-info");
+    }
+  } catch (e) {
+    log(`导出采集包失败：${e.message}（未生成文件，请重试）`, "log-fail");
+  }
+}
+$("exportPackBtn").addEventListener("click", packExport);
 
 // ---------- 页4：家长回顾（只和自己比；零术语、不给排名）----------
 const REVIEW_KEY = "nt_review_v1";
@@ -3578,7 +4210,189 @@ if (urlMode && ["mock", "impact", "step1"].includes(urlMode)) {
   log(`已通过快捷方式选择模式：${urlMode}`, "log-info");
 }
 
-// ---------- 页签切换（页1 打球 / 页5 技术 / 页4 回顾 / 页3 我的）----------
+// ---------- 采集页：本机摄像头录像 + 大字计数（2026-11-01 用户要求） ----------
+// App 内直接录像省掉独立相机：手机固定在三脚架、本页保持前台；录像只做块级对齐，
+// 逐拍同步仍靠事后音频/锚点匹配。MediaRecorder 按 3s 分片，长录像不驻留内存峰值。
+let camStream = null, camRec = null, camChunks = [], camRecStart = 0, camTimer = null, camLock = null;
+
+function camLog(txt, err) {
+  const el = $("camStat");
+  if (!el) return;
+  el.textContent = txt;
+  el.style.color = err ? "var(--fail)" : "";
+}
+function camPickMime() {
+  if (!window.MediaRecorder) return "";
+  const cands = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm", "video/mp4"];
+  for (const c of cands) if (MediaRecorder.isTypeSupported(c)) return c;
+  return "";
+}
+async function camWake(on) {
+  try {
+    if (on) {
+      if (navigator.wakeLock && !camLock) {
+        camLock = await navigator.wakeLock.request("screen");
+        camLock.addEventListener("release", () => { camLock = null; });
+      }
+    } else if (camLock) { await camLock.release(); camLock = null; }
+  } catch (_) {}
+}
+async function camOpen() {
+  if (camStream) return true;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    camLog("当前浏览器不支持摄像头（需 https 或 localhost）", true); return false;
+  }
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: { facingMode: { ideal: "environment" },
+               width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+    });
+  } catch (e) {
+    camLog("摄像头开启失败：" + (e && e.message ? e.message : e), true); return false;
+  }
+  const v = $("camVideo");
+  v.srcObject = camStream;
+  try { await v.play(); } catch (_) {}
+  $("camOff").style.display = "none";
+  camLog("摄像头已开启（后置优先，含麦克风）", false);
+  log("采集页：摄像头已开启", "log-info");
+  return true;
+}
+function camStopRec() {
+  if (!camRec || camRec.state === "inactive") { camLog("当前没有在录像", false); return; }
+  camRec.stop();
+  camWake(false);
+}
+async function camStartRec() {
+  if (camRec && camRec.state !== "inactive") { camLog("已在录像中", false); return; }
+  if (!(await camOpen())) return;
+  const mime = camPickMime();
+  if (!mime) { camLog("本浏览器不支持 MediaRecorder", true); return; }
+  camChunks = [];
+  camRec = new MediaRecorder(camStream, { mimeType: mime, videoBitsPerSecond: 4000000 });
+  camRec.ondataavailable = e => { if (e.data && e.data.size) camChunks.push(e.data); };
+  camRec.onerror = e => camLog("录像出错：" + (e.error ? e.error.name : "unknown"), true);
+  camRec.onstop = () => {
+    clearInterval(camTimer); camTimer = null;
+    $("camRecTag").classList.remove("on");
+    camRecStart = 0;
+    $("camRecBtn").textContent = "开始录像";
+    if (!camChunks.length) { camLog("已停止，但没有录到数据", true); return; }
+    const blob = new Blob(camChunks, { type: mime.split(";")[0] });
+    camChunks = [];
+    const d = new Date(), p = n => String(n).padStart(2, "0");
+    const name = `video_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_` +
+                 `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.webm`;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    camLog(`已保存 ${name}（${(blob.size / 1048576).toFixed(1)} MB）`, false);
+    log(`采集页：视频已保存 ${name}`, "log-info");
+  };
+  camRec.start(3000);        // 3s 分片
+  camRecStart = Date.now();
+  $("camRecTag").classList.add("on");
+  $("camRecBtn").textContent = "录像中…";
+  camWake(true);
+  camTimer = setInterval(() => {
+    const s = Math.round((Date.now() - camRecStart) / 1000);
+    camLog(`录像中 ${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}　点「停止并下载」结束`, false);
+  }, 1000);
+  log("采集页：已开始录像", "log-info");
+}
+
+// ---------- 采集页：当前采集块（大字显示「这一块要做什么」，不是判决话术） ----------
+// 块菜单与动作要求取自《映射标定与儿童验证采集协议_20261027》§3 / §3.1 / §4。
+const COL_BLOCKS = [
+  { id: "自由", act: "自由采集（未指定块）", plan: 0,
+    tip: "现场自由安排；开始/结束一块时用上方选择，块首块尾记得敲拍 + 口述。" },
+  { id: "A", act: "正常正手上旋（个人基线）", plan: 10,
+    tip: "按平时最自然的方式打，不做任何刻意调整。" },
+  { id: "B1", act: "有引拍 + 有随挥（刻意标准）", plan: 8,
+    tip: "拍头充分向后下方引，触球后完整送到肩后——教科书动作。" },
+  { id: "B2", act: "无引拍 + 有随挥", plan: 8,
+    tip: "拍头不越过身体中线就向前送，随挥照常做满。" },
+  { id: "B3", act: "有引拍 + 随挥不足", plan: 8,
+    tip: "引拍照常，触球即刹车，拍头不过肩。" },
+  { id: "B4", act: "无引拍 + 随挥不足（双缺陷）", plan: 8,
+    tip: "小引拍快打，触球即停，拍头不过肩。" },
+  { id: "B6", act: "力度梯度（正手）", plan: 12,
+    tip: "轻 4 球 → 中 4 球 → 重 4 球；动作形态保持一致，只变力度。" },
+  { id: "C", act: "回到正常打", plan: 10,
+    tip: "回到与 A 块一致的常态击球。" },
+  { id: "B5", act: "击球点偏后（被挤到）", plan: 8,
+    tip: "刻意等球到身体侧面/前髋线才击球，制造「被挤到」正例。" },
+  { id: "B1'", act: "反手 有引拍 + 有随挥", plan: 6,
+    tip: "反手教科书动作：充分引拍，完整随挥到肩后。" },
+  { id: "B2'", act: "反手 无引拍 + 有随挥", plan: 6,
+    tip: "反手小引拍快打，随挥照常做满。" },
+  { id: "B3'", act: "反手 有引拍 + 随挥不足", plan: 6,
+    tip: "反手引拍照常，触球即刹车，拍头不过肩。" },
+  { id: "B4'", act: "反手 无引拍 + 随挥不足", plan: 6,
+    tip: "反手小引拍 + 触球即停。" },
+  { id: "C1", act: "儿童 正手正常打", plan: 15,
+    tip: "孩子自然打，不干预；教练逐球盲判引拍/随挥质量。" },
+  { id: "C2", act: "儿童 反手正常打", plan: 15,
+    tip: "孩子自然打反手，不干预；教练逐球盲判。" },
+  { id: "C3", act: "儿童 对比指令", plan: 10,
+    tip: "前 5 球喊「引拍大一点」，后 5 球喊「别引拍直接打」；做不到如实记录。" },
+];
+// 当前块选择与块起点窗口号：换块即从此刻重新计本块球数（持久化，切页/重载不丢）
+let colBlk = Math.max(0, Math.min(COL_BLOCKS.length - 1, parseInt(localStorage.getItem("nt_collect_block") || "0", 10) || 0));
+let colBlkBase = parseInt(localStorage.getItem("nt_collect_base") || "0", 10) || 0;
+
+function colBlkSet(i) {
+  colBlk = Math.max(0, Math.min(COL_BLOCKS.length - 1, i));
+  colBlkBase = sessionWindows.length;
+  try {
+    localStorage.setItem("nt_collect_block", String(colBlk));
+    localStorage.setItem("nt_collect_base", String(colBlkBase));
+  } catch (_) {}
+  colRefresh();
+  log(`采集页：切到 ${COL_BLOCKS[colBlk].id} 块（${COL_BLOCKS[colBlk].act}）`, "log-info");
+}
+
+// 采集页大字刷新（计数口径：有效 = QC 通过且板判 NORMAL；其余都算被过滤）
+function colRefresh() {
+  try {
+    const okN = sessionWindows.filter(w => isQcOk(w.qc.code, w.meta) && w.meta.quickClass === 0).length;
+    if ($("cBalls")) $("cBalls").textContent = okN;
+    if ($("cDrop")) $("cDrop").textContent = Math.max(0, sessionWindows.length - okN);
+    const cs = $("connStatus");
+    if ($("cConn") && cs) { $("cConn").textContent = cs.textContent; $("cConn").className = cs.className; }
+    if ($("cDev")) $("cDev").textContent = $("devName").textContent;
+    if ($("cBatt")) $("cBatt").textContent = "电量 " + $("devBatt").textContent;
+    if ($("cVoice")) $("cVoice").textContent = voiceAuto ? "开（每球 5 秒）" : "关";
+    if ($("cState")) $("cState").textContent = sessionState === "train" ? "训练中" : "捡球/暂停";
+    // 大字提示 = 当前采集块的动作要求（不是判决话术）
+    const b = COL_BLOCKS[colBlk] || COL_BLOCKS[0];
+    const base = colBlkBase > sessionWindows.length ? 0 : colBlkBase;
+    const blkOk = sessionWindows.slice(base)
+      .filter(w => isQcOk(w.qc.code, w.meta) && w.meta.quickClass === 0).length;
+    if ($("cPhrase")) $("cPhrase").textContent = `${b.id} · ${b.act}`;
+    if ($("cBlkTip")) $("cBlkTip").textContent = b.tip;
+    if ($("cBlkCnt")) $("cBlkCnt").textContent = b.plan ? `本块 ${blkOk} / ${b.plan} 球` : `本块 ${blkOk} 球`;
+    if ($("cBlkSel") && document.activeElement !== $("cBlkSel")) $("cBlkSel").selectedIndex = colBlk;
+  } catch (_) {}
+}
+
+// 块选择控件：下拉 + 上一块 / 下一块（按钮切换是给现场单手操作的）
+if ($("cBlkSel")) {
+  $("cBlkSel").innerHTML = COL_BLOCKS.map((b, i) => `<option value="${i}">${b.id} · ${b.act}</option>`).join("");
+  $("cBlkSel").selectedIndex = colBlk;
+  $("cBlkSel").addEventListener("change", (e) => colBlkSet(parseInt(e.target.value, 10) || 0));
+}
+if ($("cPrevBlk")) $("cPrevBlk").addEventListener("click", () => colBlkSet(colBlk - 1));
+if ($("cNextBlk")) $("cNextBlk").addEventListener("click", () => colBlkSet(colBlk + 1));
+
+if ($("camOpenBtn")) $("camOpenBtn").addEventListener("click", () => camOpen());
+if ($("camRecBtn")) $("camRecBtn").addEventListener("click", () => camStartRec());
+if ($("camSaveBtn")) $("camSaveBtn").addEventListener("click", camStopRec);
+
+// ---------- 页签切换（页1 打球 / 页6 采集 / 页5 技术 / 页4 回顾 / 页3 我的）----------
 const tabBtns = Array.from(document.querySelectorAll(".tab"));
 function switchPage(id) {
   tabBtns.forEach(b => b.classList.toggle("active", b.dataset.page === id));
@@ -3590,6 +4404,8 @@ function switchPage(id) {
     if (l) l.scrollTop = l.scrollHeight;
   } else if (id === "page4") {
     reviewRender();           // 进页时把本次训练入账（幂等）并刷新回顾数据
+  } else if (id === "page6") {
+    colRefresh();             // 采集页：大字计数/连接/录音状态
   }
 }
 tabBtns.forEach(b => b.addEventListener("click", () => switchPage(b.dataset.page)));
