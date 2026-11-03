@@ -559,7 +559,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B88-20261103-2140";   // B88：新增 [perf] 传输诊断日志——每窗记「首片→末片耗时 / 末片→交付 / 通知包数 / 单包字节 / 平均包间隔」，用于区分 MTU 拆包（单包≈20B）与连接间隔过大（单包 244B 但间隔>30ms）；B87 内容：麦克风判定规则修正（BT_MIC_LABEL_RE 去 headset、新增 PHONE_MIC_RE 排除 earpiece/听筒、自动选麦不再回退 Headset earpiece、采集页显示 mic_label 原文、播报输出用独立 BT_OUT_RE）；sw.js CACHE nexttennis-v29
+const APP_BUILD = "APP-B89-20261103-2230";   // B89：B88 的 perf 日志加上包间隔分布（最小/最大/均值 + ≤20ms 占比），用于区分「每包一个连接间隔」与「突发后停顿」；sw.js CACHE nexttennis-v30。B88：新增 [perf] 传输诊断日志（首片→末片/末片→交付/通知包数/单包字节/包间隔）。B87：麦克风判定规则修正
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -686,11 +686,22 @@ class BleStreamParser {
       slot = { bytes: new Uint8Array(PROTO.WINDOW.bytes), createdAt: Date.now(),
                total, fw, fwMs: ts24, filled: 0, crcFail: 0, quickClass: null, seen: new Set(),
                // [传输诊断] 首片/末片时刻与通知长度，用来判定是 MTU 拆分还是包间隔过大
-               tLast: 0, nPk: 0, minB: 9999, maxB: 0, sumB: 0 };
+               tLast: 0, nPk: 0, minB: 9999, maxB: 0, sumB: 0,
+               gMin: 9999, gMax: 0, gSum: 0, gN: 0, gBurst: 0 };   // 包间隔分布
       this._buf.set(seq, slot);
     }
     // 统计每条真实到达的通知（重复分片也计入，可反映重传量）
-    slot.tLast = Date.now();
+    {
+      const pkAt = Date.now();
+      if (slot.tLast) {
+        const g = pkAt - slot.tLast;
+        slot.gN++; slot.gSum += g;
+        if (g < slot.gMin) slot.gMin = g;
+        if (g > slot.gMax) slot.gMax = g;
+        if (g <= 20) slot.gBurst++;      // ≤20ms 视为「紧跟上一包」
+      }
+      slot.tLast = pkAt;
+    }
     slot.nPk++;
     slot.sumB += buf.byteLength;
     if (buf.byteLength < slot.minB) slot.minB = buf.byteLength;
@@ -746,9 +757,11 @@ class BleStreamParser {
       const n = slot.nPk || 1;
       const lastAt = slot.tLast || slot.createdAt;
       const span = lastAt - slot.createdAt;
+      const gn = slot.gN || 0;
       log(`[perf] seq=${seq} 首片→末片 ${span}ms，末片→交付 ${endAt - lastAt}ms，`
           + `通知 ${n} 包 ${slot.minB}~${slot.maxB}B（均 ${Math.round((slot.sumB || 0) / n)}B），`
-          + `包间隔≈${n > 1 ? Math.round(span / (n - 1)) : 0}ms`, "log-info");
+          + `包间隔 ${gn ? Math.round(slot.gSum / gn) : 0}ms（最小 ${gn ? slot.gMin : 0} / 最大 ${gn ? slot.gMax : 0}），`
+          + `≤20ms 占 ${gn ? Math.round(slot.gBurst * 100 / gn) : 0}%`, "log-info");
     }
     const meta = { seq, timestamp: slot.createdAt, source: "impact",
                    recvBytes: slot.filled, total: slot.total, fw: slot.fw,
