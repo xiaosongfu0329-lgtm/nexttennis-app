@@ -323,6 +323,8 @@
       <span>录音打标：<span id="cVoice">开</span></span>
       <span id="cState" style="margin-left:auto">训练中</span>
     </div>
+    <!-- 2026-11-03 用户要求：采集页直接显示当前 mic_label 原文 -->
+    <div class="c-hint" id="micNow" style="font-size:11px;color:var(--muted);margin-top:2px">麦克风：待授权</div>
     <!-- 2026-11-03 用户要求：所有录音控件挪到采集页，一屏内可见 -->
     <div class="c-row" style="margin-top:6px;gap:6px;flex-wrap:wrap">
       <button id="voiceRecBtn" class="chip" style="flex:1;min-width:110px">● 手动录一句</button>
@@ -343,11 +345,11 @@
       <button id="exportPackBtn" class="chip" style="border-color:var(--accent);color:var(--accent)">导出采集包</button>
     </div>
     <div class="c-hint" id="packStat"></div>
-    <!-- 2026-11-02 锁屏兜底：醒目提示用户 -->
+    <!-- 2026-11-02 锁屏兜底：醒目提示用户（2026-11-03 合并成两行，给 micNow 腾高度） -->
     <p class="c-hint" style="color:var(--fail);font-weight:600;margin-top:4px">
-      📱 开拍前请确认：手机「自动锁屏/息屏」设为 <u>永不</u>，省电模式建议关闭。
+      📱 开拍前确认：自动锁屏/息屏 = <u>永不</u>，省电模式关闭。
     </p>
-    <p class="c-hint">iOS 还可开「引导式访问」（三次电源键）锁前台，锁屏键禁用，训练完再解。</p>
+    <p class="c-hint">iOS 可开「引导式访问」（三次电源键）锁前台，训练完再解。</p>
   </div>
 </section>
 
@@ -557,7 +559,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B86-20261103-1738";   // B86：录音控件全挪到采集页 + 默认开——①首页删 voiceAutoBtnHome/voiceExportBtnHome，只留录音中状态点 ②「我的」页录音面板整块删除 ③采集页加 voiceRecBtn/voiceAutoBtn/voiceUndoBtn/voiceDevSel/voiceMicRetry/voiceExportBtn/voiceBar/voiceStat 全套 ④默认开（voiceAuto = localStorage.getItem("nt_voice_auto") !== "0"）⑤首次启动等用户首次手势再 prime 麦克风（否则授权框会被浏览器拒）⑥cVoice 初始文本改"开"；sw.js CACHE nexttennis-v27
+const APP_BUILD = "APP-B87-20261103-1902";   // B87：麦克风判定的蓝牙/本机规则修正——①BT_MIC_LABEL_RE 去掉 headset，改为 bluetooth|蓝牙|airpods|tws|buds|earbud|hfp|a2dp|sco ②新增 PHONE_MIC_RE（earpiece|听筒|speaker|扬声器|phone|本机|receiver|built-in|internal）命中一律判本机麦，排除规则优先 ③自动选麦只认真正的蓝牙输入，挑不到回退浏览器默认（不再回退 Headset earpiece），并置 voiceMicFallback ④采集页新增 micNow 行直接显示 mic_label 原文（蓝牙耳机｜XX / 本机麦克风（未选到蓝牙）｜XX）⑤播报输出判定改用独立 BT_OUT_RE（headset 仍算蓝牙，免得把蓝牙音箱当手机扬声器）⑥锁屏提示压成两行腾高度；sw.js CACHE nexttennis-v28
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -3394,10 +3396,14 @@ let voiceLastSeq = -1, voiceQueue = null;
 let voiceMicReason = "";
 let voiceLastFailKey = "";
 let voiceMicLabel = "";          // 实际在用麦克风的设备名（首页蓝牙状态用）
+let voiceMicFallback = false;    // 2026-11-03：true = 没选到蓝牙，回退了浏览器默认输入（本机麦）
+let voiceFallbackLogged = false; // 只在状态变化时打一次日志，避免每球刷屏
 let phoneSinkId = "";            // 手机扬声器 deviceId（播报强制走扬声器，录音仍用耳机麦）
 
-// 2026-11-03：蓝牙耳机 label 关键字 —— 自动匹配优先选，无需用户手动下拉
-const BT_MIC_LABEL_RE = /bluetooth|蓝牙|airpods|air pod|hands-?free|hfp|a2dp|tws|buds|earbud|headset|耳机|wireless/i;
+// 2026-11-03 修订（用户实测）：Android 的 "Headset earpiece" 其实是手机听筒，不是蓝牙，
+// 所以 BT 关键字里删掉 headset；并新增排除规则，命中即判定为本机麦克风。
+const BT_MIC_LABEL_RE = /bluetooth|蓝牙|airpods|tws|buds|earbud|hfp|a2dp|sco/i;
+const PHONE_MIC_RE = /earpiece|听筒|speaker|扬声器|phone|本机|receiver|built-?in|internal/i;
 
 async function voiceUpdateStat() {
   try {
@@ -3430,20 +3436,25 @@ async function voiceResolvePreferredDevice() {
   try {
     const devs = (await navigator.mediaDevices.enumerateDevices())
       .filter(d => d.kind === "audioinput" && d.deviceId && d.deviceId !== "default");
-    if (!devs.length) return { deviceId: "", label: "", resolved: false };
+    if (!devs.length) return { deviceId: "", label: "", resolved: true, autoDefault: true, fallback: true };
+    // 真正的蓝牙输入 = 命中 BT 关键字且不命中本机排除词（Headset earpiece / Speakerphone 都排除）
+    const btDevs = devs.filter(d => BT_MIC_LABEL_RE.test(d.label) && !PHONE_MIC_RE.test(d.label));
     // 1) 用户之前手动选过 label —— 精确匹配（耳机拔了也能靠 label 找回来）
-    if (voiceDevLabel) {
+    const savedUsable = voiceDevLabel && !PHONE_MIC_RE.test(voiceDevLabel);
+    if (savedUsable) {
       const exact = devs.find(d => d.label === voiceDevLabel);
-      if (exact) return { deviceId: exact.deviceId, label: exact.label, resolved: true };
+      if (exact) return { deviceId: exact.deviceId, label: exact.label, resolved: true,
+                          isBT: btDevs.some(d => d.deviceId === exact.deviceId) };
       // label 不再精确匹配但含蓝牙关键字 —— 模糊匹配
-      const btByLabel = devs.find(d => BT_MIC_LABEL_RE.test(voiceDevLabel) && BT_MIC_LABEL_RE.test(d.label));
-      if (btByLabel) return { deviceId: btByLabel.deviceId, label: btByLabel.label, resolved: true };
-      return { deviceId: "", label: "", resolved: false, reason: `找不到「${voiceDevLabel}」` };
+      if (BT_MIC_LABEL_RE.test(voiceDevLabel) && btDevs.length) {
+        return { deviceId: btDevs[0].deviceId, label: btDevs[0].label, resolved: true, isBT: true };
+      }
+      return { deviceId: "", label: "", resolved: true, autoDefault: true, fallback: true,
+               reason: `找不到「${voiceDevLabel}」` };
     }
-    // 2) 没手动选 —— 自动挑蓝牙耳机
-    const bt = devs.find(d => BT_MIC_LABEL_RE.test(d.label));
-    if (bt) return { deviceId: bt.deviceId, label: bt.label, resolved: true, autoBT: true };
-    return { deviceId: "", label: "", resolved: true, autoDefault: true };   // 让浏览器选默认
+    // 2) 没手动选 —— 自动挑真正的蓝牙输入；挑不到就用浏览器默认（不再回退听筒）
+    if (btDevs.length) return { deviceId: btDevs[0].deviceId, label: btDevs[0].label, resolved: true, isBT: true, autoBT: true };
+    return { deviceId: "", label: "", resolved: true, autoDefault: true, fallback: true };
   } catch (e) {
     return { deviceId: "", label: "", resolved: false, reason: e.message };
   }
@@ -3455,18 +3466,19 @@ async function voiceListDevices() {
     const devs = (await navigator.mediaDevices.enumerateDevices())
       .filter(d => d.kind === "audioinput");
     const sel = $("voiceDevSel");
-    const autoBt = devs.find(d => d.deviceId && d.deviceId !== "default" && BT_MIC_LABEL_RE.test(d.label));
-    let autoHint = "";
-    if (autoBt) autoHint = `<option value="__auto_bt__">🔵 自动选蓝牙耳机（${autoBt.label.replace(/\(.*?\)/g, "").trim().slice(0, 18)}）</option>`;
-    sel.innerHTML = `<option value="">默认</option>` + autoHint + devs.map((d, i) =>
+    // 自动选项只认真正的蓝牙输入（排除 Headset earpiece / Speakerphone 这类本机设备）
+    const autoBt = devs.find(d => d.deviceId && d.deviceId !== "default"
+      && BT_MIC_LABEL_RE.test(d.label) && !PHONE_MIC_RE.test(d.label));
+    const autoOptTxt = autoBt
+      ? `🔵 自动选麦（蓝牙：${autoBt.label.replace(/\(.*?\)/g, "").trim().slice(0, 16)}）`
+      : "自动选麦（未发现蓝牙，用默认麦）";
+    sel.innerHTML = `<option value="__auto_bt__">${autoOptTxt}</option>` + devs.map((d, i) =>
       `<option value="${d.deviceId || "default"}">${d.label || ("输入设备 " + (i + 1))}</option>`).join("");
     if (voiceDevLabel) {
       const match = devs.find(d => d.label === voiceDevLabel);
-      sel.value = match ? (match.deviceId || "default") : "";
-    } else if (autoHint) {
-      sel.value = "__auto_bt__";
+      sel.value = match ? (match.deviceId || "default") : "__auto_bt__";
     } else {
-      sel.value = "";
+      sel.value = "__auto_bt__";
     }
   } catch (e) { /* 忽略 */ }
   await pinPlaybackToSpeaker();
@@ -3475,11 +3487,17 @@ async function voiceListDevices() {
 
 // ---------- 首页：麦克风/蓝牙耳机状态 + 播报输出（2026-11-01 用户要求） ----------
 // 目标行为：录音走耳机麦，播报与音效走手机扬声器。
-const BT_NAME_RE = /bluetooth|蓝牙|airpods|hands-?free|hfp|a2dp|tws|buds|earbud|headset|耳机/i;
+// 2026-11-03：蓝牙输入判定统一走 BT_MIC_LABEL_RE + PHONE_MIC_RE 排除（见 3402 行）
 
 function micKindOf(lbl) {
-  return BT_NAME_RE.test(lbl || "") ? "蓝牙耳机" : "本机麦克风";
+  const s = lbl || "";
+  // 排除规则优先：Headset earpiece / Speakerphone / 听筒 / 本机 一律算本机麦克风
+  if (PHONE_MIC_RE.test(s)) return "本机麦克风";
+  return BT_MIC_LABEL_RE.test(s) ? "蓝牙耳机" : "本机麦克风";
 }
+
+// 输出设备判定（播报用）：这里 headset/耳机 仍算蓝牙，避免把蓝牙音箱当手机扬声器
+const BT_OUT_RE = /bluetooth|蓝牙|airpods|tws|buds|earbud|hfp|a2dp|headset|耳机|wireless/i;
 
 // 找出手机扬声器的 audiooutput deviceId；找不到就保持空（跟随系统）
 async function pinPlaybackToSpeaker() {
@@ -3490,26 +3508,34 @@ async function pinPlaybackToSpeaker() {
       .filter(d => d.kind === "audiooutput" && d.deviceId && d.deviceId !== "default");
     if (!outs.length) { phoneSinkId = ""; }
     else {
-      const pick = outs.find(d => !BT_NAME_RE.test(d.label) && /speaker|扬声器|phone|internal|built-?in|本机/i.test(d.label))
-                || outs.find(d => !BT_NAME_RE.test(d.label));
+      const pick = outs.find(d => !BT_OUT_RE.test(d.label) && /speaker|扬声器|phone|internal|built-?in|本机/i.test(d.label))
+                || outs.find(d => !BT_OUT_RE.test(d.label));
       phoneSinkId = pick ? pick.deviceId : "";
     }
   } catch (e) { phoneSinkId = ""; }
   if (st) st.textContent = phoneSinkId ? "播报：手机扬声器" : "播报：跟随系统（蓝牙已连时可能走耳机）";
 }
 
+// 采集页/首页统一麦克风文案：直接显示 mic_label 原文（2026-11-03 用户要求）
+function micNowTxt() {
+  if (!voiceMicLabel) return "待授权（点「检测麦」）";
+  if (micKindOf(voiceMicLabel) === "蓝牙耳机") return "蓝牙耳机｜" + voiceMicLabel;
+  return (voiceMicFallback ? "本机麦克风（未选到蓝牙）｜" : "本机麦克风｜") + voiceMicLabel;
+}
+
 function micStatRefresh() {
   const st = $("micStat"), dot = $("micDot");
+  const now = $("micNow");
   if (!st) return;
   const set = (txt, color) => {
     st.textContent = "麦克风：" + txt;
+    if (now) { now.textContent = "麦克风：" + txt; now.style.color = color; }
     if (dot) dot.style.color = color;
   };
   if (voiceMicError) { set("未就绪" + (voiceMicReason ? "（" + voiceMicReason.slice(0, 24) + "）" : ""), "var(--fail)"); return; }
-  if (!voiceMicLabel) { set("待授权（点「检测麦克风」）", "var(--muted)"); return; }
-  const kind = micKindOf(voiceMicLabel);
-  const bt = kind === "蓝牙耳机";
-  set(kind + "｜" + voiceMicLabel.replace(/\(.*?\)/g, "").trim().slice(0, 18), bt ? "var(--pass)" : "var(--warn)");
+  if (!voiceMicLabel) { set("待授权（点「检测麦」）", "var(--muted)"); return; }
+  const bt = micKindOf(voiceMicLabel) === "蓝牙耳机";
+  set(micNowTxt(), bt ? "var(--pass)" : "var(--warn)");
 }
 
 async function voiceWakeLock(on) {
@@ -3533,8 +3559,9 @@ async function voicePrimeMic() {
   if (pick.resolved && pick.deviceId) {
     audio = Object.assign({ deviceId: { exact: pick.deviceId } }, baseAudio);
   } else {
+    // 没选到蓝牙 → 回退浏览器默认输入（不再回退听筒/耳返）
     audio = baseAudio;
-    if (pick.reason) log(`预选设备「${voiceDevLabel || "蓝牙耳机"}」不可用，将回退默认输入`, "log-warn");
+    if (pick.reason) log(`预选设备「${voiceDevLabel || "蓝牙耳机"}」不可用，回退默认输入`, "log-warn");
   }
   try {
     const s = await navigator.mediaDevices.getUserMedia({ audio });
@@ -3542,9 +3569,13 @@ async function voicePrimeMic() {
     s.getTracks().forEach(t => t.stop());
     voiceMicError = false;
     voiceMicReason = "";
+    // 回退标记：没选到蓝牙就置 true，采集页显示「本机麦克风（未选到蓝牙）」
+    voiceMicFallback = !pick.isBT;
     await voiceListDevices();
     await voiceUpdateStat();
-    log(`麦克风已就绪：${voiceMicLabel || "默认输入"}${pick.autoBT ? "（自动选到蓝牙耳机）" : pick.autoDefault ? "（未发现蓝牙耳机，用手机麦）" : ""}`, "log-info");
+    micStatRefresh();
+    log(`麦克风已就绪：${voiceMicLabel || "默认输入"}`
+      + (pick.isBT ? "（蓝牙输入）" : "（本机麦克风，未选到蓝牙）"), pick.isBT ? "log-info" : "log-warn");
   } catch (e) {
     paintVoiceAuto();
     await voiceMarkFail(e);
@@ -3688,12 +3719,11 @@ async function voiceStartRec(auto = false, winMeta = null) {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio });
   } catch (e) {
-    // 2026-11-03：exact 失败 → 明确提示回退手机麦
+    // 2026-11-03：exact 失败 → 明确提示，并回退浏览器默认输入（不回退听筒）
     if (pick.deviceId || voiceDevLabel) {
       voiceMicLabel = ""; voiceMicError = true; voiceMicReason = (e && e.message) || e.name || "exact 拒绝";
-      log(`所选麦克风不可用（${fallbackReason || voiceMicReason}），已回退手机麦 —— 请检查蓝牙耳机是否已连接`, "log-warn");
-      const st = $("micStat"); if (st) st.textContent = "麦克风：已回退手机麦（蓝牙耳机不可用）";
-      const dot = $("micDot"); if (dot) dot.style.color = "var(--warn)";
+      log(`所选麦克风不可用（${fallbackReason || voiceMicReason}），已回退默认输入 —— 请检查蓝牙耳机是否已连接`, "log-warn");
+      voiceMicFallback = true;
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: baseAudio });
       } catch (e2) {
@@ -3705,6 +3735,16 @@ async function voiceStartRec(auto = false, winMeta = null) {
   }
   voiceMicError = false; voiceMicReason = ""; voiceLastFailKey = "";
   voiceMicLabel = (stream.getAudioTracks()[0] && stream.getAudioTracks()[0].label) || voiceMicLabel;
+  // 2026-11-03：以实际拿到的 track.label 为准判定耳机/本机；状态变化时才打日志，避免每球刷屏
+  const nowFallback = micKindOf(voiceMicLabel) !== "蓝牙耳机";
+  voiceMicFallback = nowFallback;
+  if (nowFallback && !voiceFallbackLogged) {
+    log(`麦克风：${voiceMicLabel || "默认输入"}（本机麦克风，未选到蓝牙输入）`, "log-warn");
+    voiceFallbackLogged = true;
+  } else if (!nowFallback && voiceFallbackLogged) {
+    log(`麦克风已切到蓝牙输入：${voiceMicLabel}`, "log-pass");
+    voiceFallbackLogged = false;
+  }
   micStatRefresh();
   voiceListDevices();
   voiceAnalyserAttach(stream);          // 实时能量检测 → 判 silent
