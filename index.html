@@ -264,13 +264,9 @@
     <span id="micStat">麦克风：待授权</span>
     <span id="spkStat" style="margin-left:auto">播报：手机扬声器</span>
   </div>
-  <!-- 首页录音打标开关（2026-11-01 用户要求）：与「我的」页 voiceAutoBtn 同一状态 voiceAuto，
-       开=每球后录 5 秒（此时静音播报），关=不录音、正常播放鼓励语音；录音中显示跳动红点 -->
+  <!-- 录音控制全部挪到采集页（2026-11-03 用户要求）：现场只用一个页面，首页只留录音中状态点 -->
   <div style="display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap">
-    <button id="voiceAutoBtnHome" class="chip">录音打标：关</button>
     <span id="homeRecInd"><span style="color:var(--fail)">●</span>&nbsp;<span id="homeRecIndTxt">录音中</span></span>
-    <button id="voiceExportBtnHome" class="chip">导出语音包</button>
-    <!-- 导出采集包已移到采集页（2026-11-02 用户要求：现场只在一个页面操作） -->
   </div>
   <!-- 现场状态行（2026-11-01 三份需求通知）：空档秒数 / 待导出语音 -->
   <div style="display:flex;align-items:center;gap:12px;margin-top:4px;font-size:12px;color:var(--muted);flex-wrap:wrap">
@@ -324,9 +320,22 @@
 
   <div class="panel">
     <div class="c-row" style="font-size:13px">
-      <span>录音打标：<span id="cVoice">关</span></span>
+      <span>录音打标：<span id="cVoice">开</span></span>
       <span id="cState" style="margin-left:auto">训练中</span>
     </div>
+    <!-- 2026-11-03 用户要求：所有录音控件挪到采集页，一屏内可见 -->
+    <div class="c-row" style="margin-top:6px;gap:6px;flex-wrap:wrap">
+      <button id="voiceRecBtn" class="chip" style="flex:1;min-width:110px">● 手动录一句</button>
+      <button id="voiceAutoBtn" class="chip on" style="flex:1;min-width:110px">自动录音：开</button>
+      <button id="voiceUndoBtn" class="chip">撤销</button>
+    </div>
+    <div class="c-row" style="margin-top:4px;gap:6px;flex-wrap:wrap">
+      <select id="voiceDevSel" style="flex:1;min-width:140px;font-size:12px;padding:5px"><option value="">自动选麦</option></select>
+      <button id="voiceMicRetry" class="chip">检测麦</button>
+      <button id="voiceExportBtn" class="chip">导出语音</button>
+    </div>
+    <div id="voiceBarWrap" style="margin-top:4px"><div id="voiceBar"></div></div>
+    <div class="c-hint" id="voiceStat" style="font-size:11px">就绪</div>
     <!-- 2026-11-02 用户要求：捡球/暂停与导出采集包都放到采集页（现场只用一个页面） -->
     <div class="c-row" style="margin-top:6px;gap:6px;flex-wrap:nowrap">
       <button id="cSessTrain" class="chip on">训练中</button>
@@ -473,25 +482,7 @@
 
   <!-- 块名卡片已删除（2026-11-01 二次拍板）：块边界改由「敲拍窗口 + 同 seq 口述录音」承载，课后离线转写解析 -->
 
-  <!-- 录音打标（课后自动转写，APP-B72）：App 只录音，课后电脑端 faster-whisper 离线转写回填 -->
-  <div class="panel">
-    <h2>录音打标（课后自动转写）</h2>
-    <div class="voice-row">
-      <span class="lbl-key">语音</span>
-      <button id="voiceRecBtn" class="chip">● 录音打标</button>
-      <button id="voiceUndoBtn" class="chip">撤销上一条</button>
-      <button id="voiceExportBtn" class="chip">导出语音包</button>
-      <span id="voiceStat">就绪</span>
-    </div>
-    <p class="hint">每球后说一个词（打框 / 被挤到 / 好球 / 差球 / 随挥不足 / 引拍不足），5 秒自动停，录音自动挂到最近一个窗口。课后导出 ZIP（clips/ + voice_labels.csv），电脑端跑 tools/asr_tag_offline.py 自动转写回填。</p>
-    <div class="voice-row">
-      <button id="voiceAutoBtn" class="chip">自动录音：关</button>
-      <select id="voiceDevSel"><option value="">麦克风：默认</option></select>
-      <button id="voiceMicRetry" class="chip">检测麦克风</button>
-    </div>
-    <div id="voiceBarWrap"><div id="voiceBar"></div></div>
-    <p class="hint">自动录音开启后，每球窗口到达即录 5 秒，无需按键（需保持页面在前台，录音期间自动静音语音播报）。「录音打标」= 手动补录/重录当前球，与自动录音不重复。</p>
-  </div>
+  <!-- 录音打标控件已全部挪到采集页（2026-11-03 用户要求）：现场只用一个页面操作，避免来回切换 -->
 
   <div class="panel">
     <h2>数据导出</h2>
@@ -566,7 +557,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B85-20261103-1642";   // B85：录音模块大改——①按 label 自动选蓝牙耳机（BT_MIC_LABEL_RE 模糊匹配），不再存 deviceId 只存 label，每次录音前 voiceResolvePreferredDevice() 重新解析 ②voiceDevSel 下拉加「🔵 自动选蓝牙耳机」占位，用户手动选后存 label 并立刻 voicePrimeMic 验证 ③exact 失败明确 log + micStat 警示「已回退手机麦（蓝牙耳机不可用）」 ④voiceAnalyserAttach 实时能量检测 → onstop 判 silent（peak<0.015 或短段<800ms 且 peak<0.03），IndexedDB 新字段 silent+micLabel ⑤voice_labels.csv 扩 11 列（+silent+mic_label），meta.json voice 加 silent_count/mic_bt_count/mic_phone_count/mic_auto_label ⑥采集页+首页录音中提示「蓝牙耳机正在录音 🔵」vs「本机麦克风正在录音 📱」；sw.js CACHE nexttennis-v26
+const APP_BUILD = "APP-B86-20261103-1738";   // B86：录音控件全挪到采集页 + 默认开——①首页删 voiceAutoBtnHome/voiceExportBtnHome，只留录音中状态点 ②「我的」页录音面板整块删除 ③采集页加 voiceRecBtn/voiceAutoBtn/voiceUndoBtn/voiceDevSel/voiceMicRetry/voiceExportBtn/voiceBar/voiceStat 全套 ④默认开（voiceAuto = localStorage.getItem("nt_voice_auto") !== "0"）⑤首次启动等用户首次手势再 prime 麦克风（否则授权框会被浏览器拒）⑥cVoice 初始文本改"开"；sw.js CACHE nexttennis-v27
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -3394,7 +3385,8 @@ async function idbClear() {
 
 let voiceRec = null, voiceChunks = [], voiceTimer = null;
 let voiceStart = 0, voiceTarget = null, voiceLastId = null, voiceBusy = false;
-let voiceAuto = localStorage.getItem("nt_voice_auto") === "1";
+// 2026-11-03 用户要求：默认开（首次启动/无 localStorage 时为 true）；用户主动关才记忆
+let voiceAuto = localStorage.getItem("nt_voice_auto") !== "0";
 // 2026-11-03：不再存 deviceId（重连/重启/换蓝牙模块会变），存 label，每次录音前重新解析成当前 deviceId
 let voiceDevLabel = localStorage.getItem("nt_voice_label") || "";
 let voiceMissed = 0, voiceLastStart = 0, wakeLock = null, voiceMicError = false;
@@ -3901,7 +3893,7 @@ $("voiceRecBtn").addEventListener("click", () => {
 });
 $("voiceUndoBtn").addEventListener("click", voiceUndo);
 $("voiceExportBtn").addEventListener("click", voiceExport);
-$("voiceExportBtnHome").addEventListener("click", voiceExport);   // 首页同款（需求通知 R3：导出入口前移）
+// 2026-11-03：首页/我的页录音按钮已删除（全挪到采集页），此处只绑采集页的控件
 $("voiceClearBtn").addEventListener("click", async () => {
   const all = await idbAll().catch(() => []);
   if (!all.length) { log("本地没有录音", "log-info"); return; }
@@ -3913,12 +3905,9 @@ $("voiceClearBtn").addEventListener("click", async () => {
 
 function paintVoiceAuto() {
   const b = $("voiceAutoBtn");
-  b.textContent = `自动录音：${voiceAuto ? "开" : "关"}`;
-  b.classList.toggle("on", voiceAuto);
-  const h = $("voiceAutoBtnHome");           // 首页开关与「我的」页同一状态（2026-11-01）
-  if (h) {
-    h.textContent = `录音打标：${voiceAuto ? "开" : "关"}`;
-    h.classList.toggle("on", voiceAuto);
+  if (b) {
+    b.textContent = `自动录音：${voiceAuto ? "开" : "关"}`;
+    b.classList.toggle("on", voiceAuto);
   }
   voiceUpdateStat();
   colRefresh();                     // 采集页录音开关同步
@@ -3941,7 +3930,6 @@ async function voiceAutoToggle() {
                 : "录音打标已关闭：不录音，恢复正常语音播报", "log-info");
 }
 $("voiceAutoBtn").addEventListener("click", voiceAutoToggle);
-$("voiceAutoBtnHome").addEventListener("click", voiceAutoToggle);
 $("voiceDevSel").addEventListener("change", async e => {
   const v = e.target.value;
   if (v === "__auto_bt__" || v === "" || v === "default") {
@@ -3963,10 +3951,26 @@ $("voiceDevSel").addEventListener("change", async e => {
 });
 $("voiceMicRetry").addEventListener("click", () => voicePrimeMic());
 paintVoiceAuto();
-ttsMute(voiceAuto);               // 上次开着自动录音的话，开机即静音播报
+ttsMute(voiceAuto);
 voiceListDevices();
 voiceUpdateStat();
 micStatRefresh();
+// 2026-11-03：首次启动（无 localStorage 标记）自动开自动录音 —— 用户不用记这个开关
+// 需要用户手势才能拿麦克风权限，所以等用户首次点"开始录像 / 连接设备 / 任意按钮"时再 prime
+// 这里只在 voiceAuto=true 时把状态条刷成"待授权（点任意按钮开始录音）"
+if (voiceAuto && !localStorage.getItem("nt_voice_primed")) {
+  log("录音打标已默认开启：首次触碰任意按钮后自动激活麦克风授权", "log-info");
+  // 用户首次手势触发时自动 prime + 标记
+  const primeOnce = async () => {
+    if (localStorage.getItem("nt_voice_primed")) return;
+    localStorage.setItem("nt_voice_primed", "1");
+    await voicePrimeMic();
+    await voiceWakeLock(true);
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    document.removeEventListener("pointerdown", primeOnce);
+  };
+  document.addEventListener("pointerdown", primeOnce, { once: false });
+}
 // 耳机插拔/连断 → 首页状态即时刷新（列表与播报输出都要重新挑）
 if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
   navigator.mediaDevices.addEventListener("devicechange", () => {
