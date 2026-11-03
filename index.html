@@ -559,7 +559,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B87-20261103-1902";   // B87：麦克风判定的蓝牙/本机规则修正——①BT_MIC_LABEL_RE 去掉 headset，改为 bluetooth|蓝牙|airpods|tws|buds|earbud|hfp|a2dp|sco ②新增 PHONE_MIC_RE（earpiece|听筒|speaker|扬声器|phone|本机|receiver|built-in|internal）命中一律判本机麦，排除规则优先 ③自动选麦只认真正的蓝牙输入，挑不到回退浏览器默认（不再回退 Headset earpiece），并置 voiceMicFallback ④采集页新增 micNow 行直接显示 mic_label 原文（蓝牙耳机｜XX / 本机麦克风（未选到蓝牙）｜XX）⑤播报输出判定改用独立 BT_OUT_RE（headset 仍算蓝牙，免得把蓝牙音箱当手机扬声器）⑥锁屏提示压成两行腾高度；sw.js CACHE nexttennis-v28
+const APP_BUILD = "APP-B88-20261103-2140";   // B88：新增 [perf] 传输诊断日志——每窗记「首片→末片耗时 / 末片→交付 / 通知包数 / 单包字节 / 平均包间隔」，用于区分 MTU 拆包（单包≈20B）与连接间隔过大（单包 244B 但间隔>30ms）；B87 内容：麦克风判定规则修正（BT_MIC_LABEL_RE 去 headset、新增 PHONE_MIC_RE 排除 earpiece/听筒、自动选麦不再回退 Headset earpiece、采集页显示 mic_label 原文、播报输出用独立 BT_OUT_RE）；sw.js CACHE nexttennis-v29
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -684,9 +684,17 @@ class BleStreamParser {
     if (!slot) {
       this._gc(seq);
       slot = { bytes: new Uint8Array(PROTO.WINDOW.bytes), createdAt: Date.now(),
-               total, fw, fwMs: ts24, filled: 0, crcFail: 0, quickClass: null, seen: new Set() };
+               total, fw, fwMs: ts24, filled: 0, crcFail: 0, quickClass: null, seen: new Set(),
+               // [传输诊断] 首片/末片时刻与通知长度，用来判定是 MTU 拆分还是包间隔过大
+               tLast: 0, nPk: 0, minB: 9999, maxB: 0, sumB: 0 };
       this._buf.set(seq, slot);
     }
+    // 统计每条真实到达的通知（重复分片也计入，可反映重传量）
+    slot.tLast = Date.now();
+    slot.nPk++;
+    slot.sumB += buf.byteLength;
+    if (buf.byteLength < slot.minB) slot.minB = buf.byteLength;
+    if (buf.byteLength > slot.maxB) slot.maxB = buf.byteLength;
     // 同 (chunk_index,plen) 的重复分片忽略：防止 filled 虚胖导致"伪完整"PASS
     const dupKey = ci * 65536 + plen;
     if (slot.seen.has(dupKey)) return;
@@ -730,6 +738,17 @@ class BleStreamParser {
     }
     if (slot.crcFail > 0) {
       log(`seq=${seq} 有 ${slot.crcFail} 片 CRC 校验失败`, "log-warn");
+    }
+    // [传输诊断] 每窗一条：首片→末片耗时、通知包数、单包字节数、平均包间隔
+    //   单包 ~20B 且包数 ~= 12×片数 → MTU 只有 23（被拆包）；单包 244B 但间隔 >30ms → 连接间隔过大
+    {
+      const endAt = Date.now();
+      const n = slot.nPk || 1;
+      const lastAt = slot.tLast || slot.createdAt;
+      const span = lastAt - slot.createdAt;
+      log(`[perf] seq=${seq} 首片→末片 ${span}ms，末片→交付 ${endAt - lastAt}ms，`
+          + `通知 ${n} 包 ${slot.minB}~${slot.maxB}B（均 ${Math.round((slot.sumB || 0) / n)}B），`
+          + `包间隔≈${n > 1 ? Math.round(span / (n - 1)) : 0}ms`, "log-info");
     }
     const meta = { seq, timestamp: slot.createdAt, source: "impact",
                    recvBytes: slot.filled, total: slot.total, fw: slot.fw,
