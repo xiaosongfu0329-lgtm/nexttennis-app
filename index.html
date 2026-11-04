@@ -559,7 +559,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B89-20261103-2230";   // B89：B88 的 perf 日志加上包间隔分布（最小/最大/均值 + ≤20ms 占比），用于区分「每包一个连接间隔」与「突发后停顿」；sw.js CACHE nexttennis-v30。B88：新增 [perf] 传输诊断日志（首片→末片/末片→交付/通知包数/单包字节/包间隔）。B87：麦克风判定规则修正
+const APP_BUILD = "APP-B90-20261104-1200";   // B90：新增 Android 原生壳桥接（window.__ntChunk/__ntStatus，NATIVE 走前台服务直连 BLE），判决逻辑不动。B89：B88 的 perf 日志加上包间隔分布（最小/最大/均值 + ≤20ms 占比），用于区分「每包一个连接间隔」与「突发后停顿」；sw.js CACHE nexttennis-v30。B88：新增 [perf] 传输诊断日志（首片→末片/末片→交付/通知包数/单包字节/包间隔）。B87：麦克风判定规则修正
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -3075,6 +3075,44 @@ function scheduleReconnect(dev) {
   });
 }
 
+// ---------- 原生壳桥接（Android WebView）----------
+// 原生层只做两件事：GATT 连接/收分片、前台服务保活；分片解析仍由本页 BleStreamParser 完成，
+// 判决规则不搬到 Kotlin，避免两端分叉。原生每收到一片通知就调用 __ntChunk(base64)；
+// 页面被系统挂起期间的分片由原生排队，页面恢复后按序补发。
+var NATIVE = (typeof AndroidBle !== "undefined") ? AndroidBle : null;
+function _ntB64ToBuf(b64) {
+  const bin = atob(b64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return u8.buffer;
+}
+window.__ntChunk = function (b64) {
+  try { parser.handleChunk(_ntB64ToBuf(b64)); }
+  catch (e) { log(`[DBG] 原生分片异常: ${e.message}`, "log-fail"); }
+};
+window.__ntStatus = function (json) {
+  try {
+    const s = typeof json === "string" ? JSON.parse(json) : json;
+    if (s.state === "scanning") { setConn("扫描中…", "idle"); log("原生壳扫描 Tennis_Sensor…", "log-info"); }
+    else if (s.state === "connecting") { setConn("连接中…", "idle"); }
+    else if (s.state === "connected") {
+      setConn("已连接", "pass");
+      $("devName").textContent = s.name || "Tennis_Sensor";
+      $("devMode").textContent = "冲击窗口协议（原生壳）";
+      $("devMtu").textContent = s.mtu ? `MTU ${s.mtu}` : "BLE 5.3 DLE";
+      connLogAdd({ event: "conn", device: s.name, sessionTag: sessionTag(), note: "native" });
+      log(`原生壳已连接 ${s.name}（MTU ${s.mtu || "?"}）`, "log-pass");
+    } else if (s.state === "disconnected") {
+      setConn("已断开", "warn");
+      log("原生壳链路断开，正在自动重连…", "log-warn");
+    } else if (s.state === "error") {
+      setConn("连接失败", "fail");
+      log(`原生壳: ${s.msg || "未知错误"}`, "log-fail");
+    }
+  } catch (e) {}
+};
+window.__ntLog = function (msg) { log(msg, "log-info"); };
+
 // ---------- Web Bluetooth 连接（冲击窗口协议） ----------
 // 通知处理抽成具名函数：首次连接与断连自动重连共用（2026-11-01 需求通知 R3）
 function onImpactNotify(e) {
@@ -3097,6 +3135,13 @@ async function openImpactGatt(dev) {
 }
 
 async function connectImpact() {
+  if (NATIVE) {
+    // 原生壳：BLE 由前台服务直连（WebView 不支持 Web Bluetooth）
+    setConn("扫描中…", "idle");
+    log("已请求原生壳连接 Tennis_Sensor…", "log-info");
+    try { NATIVE.connect(); } catch (e) { log("原生连接调用失败: " + e.message, "log-fail"); }
+    return;
+  }
   if (!navigator.bluetooth) { log("当前浏览器不支持 Web Bluetooth，请用 Chrome/Edge", "log-fail"); return; }
   // 防多连接堆叠：旧连接未断开时再点连接，会产生多条并存 GATT 链路，
   // 每条通知被同一 parser 消费 N 次 => 每个窗口被重复交付（2026-10-09 会话 39=13x3 实测）
@@ -3289,11 +3334,15 @@ $("connectBtn").addEventListener("click", async () => {
 $("disconnectBtn").addEventListener("click", () => {
   manualDisc = true;               // 用户主动断开 → 不触发自动重连
   retryTimers.forEach(clearTimeout); retryTimers = [];
+  try { if (NATIVE) NATIVE.disconnect(); } catch (e) {}
   cleanupBt();
   reviewCommit();          // 断开即入账（回顾页数字落盘）
   setConn("未连接", "idle");
 });
-$("modeSel").addEventListener("change", () => cleanupBt());
+$("modeSel").addEventListener("change", () => {
+  try { if (NATIVE) NATIVE.disconnect(); } catch (e) {}
+  cleanupBt();
+});
 
 // ---------- 会话状态按钮（训练中 / 捡球暂停）----------
 $("sessTrain").addEventListener("click", () => setSessionState("train"));
@@ -4788,7 +4837,9 @@ if ($("pfSave")) $("pfSave").addEventListener("click", () => {
 });
 if ($("pfAuto")) $("pfAuto").addEventListener("click", formSuggestRacket);
 formRenderThresholds();
-if (!navigator.bluetooth) {
+if (NATIVE) {
+  log("原生壳：BLE 由前台服务直连（锁屏/切后台不断链）", "log-info");
+} else if (!navigator.bluetooth) {
   log("提示：当前浏览器不支持 Web Bluetooth。手机请用 Android Chrome，iOS 请用 Bluefy/WebBLE。", "log-warn");
 }
 </script>
