@@ -559,7 +559,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B90-20261104-1200";   // B90：新增 Android 原生壳桥接（window.__ntChunk/__ntStatus，NATIVE 走前台服务直连 BLE），判决逻辑不动。B89：B88 的 perf 日志加上包间隔分布（最小/最大/均值 + ≤20ms 占比），用于区分「每包一个连接间隔」与「突发后停顿」；sw.js CACHE nexttennis-v30。B88：新增 [perf] 传输诊断日志（首片→末片/末片→交付/通知包数/单包字节/包间隔）。B87：麦克风判定规则修正
+const APP_BUILD = "APP-B91-20261104-1500";   // B91：原生壳接管语音打标（__ntVoice*，锁屏不再静音）。B90：Android 原生壳桥接（__ntChunk/__ntStatus，NATIVE 走前台服务直连 BLE）。B89：B88 的 perf 日志加上包间隔分布（最小/最大/均值 + ≤20ms 占比），用于区分「每包一个连接间隔」与「突发后停顿」；sw.js CACHE nexttennis-v30。B88：新增 [perf] 传输诊断日志（首片→末片/末片→交付/通知包数/单包字节/包间隔）。B87：麦克风判定规则修正
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -3113,6 +3113,55 @@ window.__ntStatus = function (json) {
 };
 window.__ntLog = function (msg) { log(msg, "log-info"); };
 
+// 原生录音：锁屏时页面麦克风会被系统挂起，改由前台服务在击球点起录 5s，解锁后把片段送回来入库
+window.__ntVoiceStart = function (seq, maxMs) {
+  try {
+    ttsMute(true);                       // 录音期间静音播报，避免把自己的话术录进去
+    clearTimeout(window.__ntVoiceTimer);
+    window.__ntVoiceTimer = setTimeout(() => {
+      try { ttsMute(voiceAuto); } catch (e) {}
+    }, (maxMs || 5000) + 1200);
+    $("voiceStat").textContent = `● 原生录音 ${(maxMs || 5000) / 1000}s → seq=${seq}`;
+    $("homeRecInd").classList.add("on");
+    $("homeRecIndTxt").textContent = "原生录音 5s";
+  } catch (e) {}
+};
+window.__ntVoice = async function (seq, b64, durMs, silent, at) {
+  try {
+    const buf = _ntB64ToBuf(b64);
+    const blob = new Blob([buf], { type: "audio/mp4" });
+    const wi = sessionWindows.findIndex(x => x.meta.seq === seq);
+    const w = wi >= 0 ? sessionWindows[wi] : null;
+    if (w) {                             // 与页面录音一致的 @v 标记
+      if (!w.meta.note) w.meta.note = "@v";
+      else if (!w.meta.note.split(/\s+/).includes("@v")) w.meta.note += " @v";
+      updateWinSelector(false);
+    }
+    const recv = (w && w.recv) ? w.recv.getTime() : (at || Date.now());
+    const rec = {
+      sessionTag: sessionTag(), windowIndex: wi, seq,
+      recordedAt: new Date(at || Date.now()).toISOString(),
+      deltaMs: Math.max(0, (at || Date.now()) - recv),
+      durMs: durMs || 5000, mime: "audio/mp4", note: w ? (w.meta.note || "") : "", blob,
+      silent: !!silent,
+      micLabel: "原生壳默认输入"
+    };
+    voiceLastId = await idbAdd(rec);
+    const dup = (await idbAll()).filter(r => r.id !== voiceLastId
+      && r.sessionTag === rec.sessionTag && r.seq === rec.seq);
+    for (const d of dup) await idbDel(d.id);
+    try { NATIVE.voiceAck(seq); } catch (e) {}
+    clearTimeout(window.__ntVoiceTimer);
+    ttsMute(voiceAuto);
+    $("homeRecInd").classList.remove("on");
+    log(`已录音 ${((durMs || 5000) / 1000).toFixed(1)}s → seq=${seq}（原生壳默认输入）${silent ? " ⚠️疑似无语音" : ""}`
+        + (dup.length ? `，替换旧录音 ${dup.length} 条` : ""), silent ? "log-warn" : "log-pass");
+    await voiceUpdateStat();
+  } catch (e) {
+    log(`原生录音入库失败：${e.message}`, "log-fail");
+  }
+};
+
 // ---------- Web Bluetooth 连接（冲击窗口协议） ----------
 // 通知处理抽成具名函数：首次连接与断连自动重连共用（2026-11-01 需求通知 R3）
 function onImpactNotify(e) {
@@ -3701,6 +3750,7 @@ async function voiceMarkFail(e) {
 
 // 窗口到达即触发（自动模式）；录制中再来窗口 → 排队一次补录，不打断当前这句
 function voiceAutoTrigger(meta) {
+  if (NATIVE) return;                        // 原生壳：前台服务在击球点直接录，不再开页面麦克风
   if (!voiceAuto) return;
   if (meta.seq === voiceLastSeq) return;     // 同一窗口重复到达才去重（不再用 1500ms 时间窗）
   if (voiceBusy) {
@@ -4009,8 +4059,16 @@ async function voiceExport() {
 }
 
 $("voiceRecBtn").addEventListener("click", () => {
-  if (voiceRec && voiceRec.state === "recording") voiceStopRec();
-  else voiceStartRec();
+  if (voiceRec && voiceRec.state === "recording") { voiceStopRec(); return; }
+  if (NATIVE) {
+    const seq = sessionWindows.length ? sessionWindows[sessionWindows.length - 1].meta.seq : -1;
+    try {
+      NATIVE.recordNow(seq);
+      log(`原生录音 5 秒 → seq=${seq >= 0 ? seq : "最近窗口"}`, "log-info");
+    } catch (e) { log("原生录音调用失败: " + e.message, "log-fail"); }
+    return;
+  }
+  voiceStartRec();
 });
 $("voiceUndoBtn").addEventListener("click", voiceUndo);
 $("voiceExportBtn").addEventListener("click", voiceExport);
@@ -4038,7 +4096,12 @@ async function voiceAutoToggle() {
   localStorage.setItem("nt_voice_auto", voiceAuto ? "1" : "0");
   paintVoiceAuto();
   ttsMute(voiceAuto);                     // 开=静音播报（防 TTS 录进音频）；关=恢复正常鼓励语音
-  if (voiceAuto) await voicePrimeMic();   // 紧接点击调用，保住用户手势（先 await 别的会丢手势导致授权失败）
+  if (NATIVE) {
+    // 原生壳：开关直接下发给前台服务；页面不开麦，避免和原生录音抢输入
+    try { NATIVE.setVoiceAuto(voiceAuto); } catch (e) {}
+  } else if (voiceAuto) {
+    await voicePrimeMic();   // 紧接点击调用，保住用户手势（先 await 别的会丢手势导致授权失败）
+  }
   await voiceWakeLock(voiceAuto);
   // 需求通知 R2：开启自动录音时申请本地存储持久化，避免浏览器在存储压力下清掉 IndexedDB 录音
   if (voiceAuto && navigator.storage && navigator.storage.persist) {
@@ -4047,11 +4110,16 @@ async function voiceAutoToggle() {
                       ok ? "log-info" : "log-warn"))
       .catch(() => {});
   }
-  log(voiceAuto ? "自动录音已开启：每球窗口到达即录 5 秒（保持页面在前台；语音播报自动静音）"
+  log(voiceAuto ? (NATIVE ? "自动录音已开启：每球由原生壳录 5 秒（锁屏不中断；语音播报自动静音）"
+                              : "自动录音已开启：每球窗口到达即录 5 秒（保持页面在前台；语音播报自动静音）")
                 : "录音打标已关闭：不录音，恢复正常语音播报", "log-info");
 }
 $("voiceAutoBtn").addEventListener("click", voiceAutoToggle);
 $("voiceDevSel").addEventListener("change", async e => {
+  if (NATIVE) {
+    log("原生壳录音走系统默认输入（手机麦/系统路由），页面里的麦克风选择不生效", "log-warn");
+    return;
+  }
   const v = e.target.value;
   if (v === "__auto_bt__" || v === "" || v === "default") {
     // 自动选蓝牙 / 默认 → 清掉手动选择，每次录音重新挑
@@ -4070,16 +4138,20 @@ $("voiceDevSel").addEventListener("change", async e => {
   // 立刻验证一下选对了、能否拿到权限
   await voicePrimeMic();
 });
-$("voiceMicRetry").addEventListener("click", () => voicePrimeMic());
+$("voiceMicRetry").addEventListener("click", () => {
+  if (NATIVE) { log("原生壳录音由前台服务直接采，无需页面授权麦克风", "log-info"); return; }
+  voicePrimeMic();
+});
 paintVoiceAuto();
 ttsMute(voiceAuto);
+if (NATIVE) { try { NATIVE.setVoiceAuto(voiceAuto); } catch (e) {} }   // 页面加载时同步录音开关
 voiceListDevices();
 voiceUpdateStat();
 micStatRefresh();
 // 2026-11-03：首次启动（无 localStorage 标记）自动开自动录音 —— 用户不用记这个开关
 // 需要用户手势才能拿麦克风权限，所以等用户首次点"开始录像 / 连接设备 / 任意按钮"时再 prime
 // 这里只在 voiceAuto=true 时把状态条刷成"待授权（点任意按钮开始录音）"
-if (voiceAuto && !localStorage.getItem("nt_voice_primed")) {
+if (voiceAuto && !NATIVE && !localStorage.getItem("nt_voice_primed")) {
   log("录音打标已默认开启：首次触碰任意按钮后自动激活麦克风授权", "log-info");
   // 用户首次手势触发时自动 prime + 标记
   const primeOnce = async () => {
