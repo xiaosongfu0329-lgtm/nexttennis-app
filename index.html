@@ -119,18 +119,12 @@
   /* ---------- 语音标注（录音版，不做 ASR；课后导出 ZIP 转写） ---------- */
   .voice-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
   .voice-row .chip { min-height: 40px; }
-  #voiceRecBtn.rec { background: var(--fail); color: #fff; border-color: var(--fail); animation: vpulse 1.1s infinite; }
   @keyframes vpulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
   #voiceStat { font-size: 11px; color: var(--muted); }
   #voiceStat.err { color: var(--fail); }
-  #voiceAutoBtn.on { background: var(--pass); color: #000; border-color: var(--pass); }
-  #voiceAutoBtnHome.on { background: var(--pass); color: #000; border-color: var(--pass); }
-  #homeRecInd { display: none; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--fail); }
   #homeRecInd.on { display: inline-flex; animation: vpulse 1.1s infinite; }
   #voiceDevSel { max-width: 190px; min-height: 40px; padding: 4px 8px; font-size: 12px;
                  background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; }
-  #voiceBarWrap { height: 6px; margin: 6px 0 2px; background: var(--border); border-radius: 3px; overflow: hidden; }
-  #voiceBar { height: 100%; width: 0; background: var(--fail); transition: width 80ms linear; }
   /* 家长回顾页：结论句 + 分享卡片预览 */
   .panel .tip { font-size: 13px; margin-top: 8px; line-height: 1.55; }
   .share-wrap { margin-top: 8px; }
@@ -292,13 +286,16 @@
         <span id="cBatt">电量 —</span>
       </div>
     </div>
-    <div class="actions" style="margin-top:6px;display:flex;gap:8px">
-      <button id="camRecBtn" class="primary" style="flex:1">开始录像</button>
-      <!-- 2026-11-02 用户要求：停止录像 + 导出采集包 合成一键 -->
-      <button id="camSaveBtn" class="pass" style="flex:1">一键结束（视频+包）</button>
+    <!-- 2026-11-05 用户要求：采集分「视频采集 / 纯录音采集」两个按键，两种都整场持续录音；
+         纯录音采集不打开摄像头（释放并隐藏画面）。结束键统一停止并要求导出采集包。 -->
+    <div class="actions" style="margin-top:6px">
+      <button id="capStartVideo" class="primary">▶ 视频采集</button>
+      <button id="capStartAudio" class="primary">▶ 纯录音采集</button>
+      <button id="capStopBtn" class="pass" disabled>■ 结束采集</button>
       <button id="camFsBtn" title="全屏运行：避开浏览器省电限制">⛶</button>
     </div>
-    <p class="c-hint" id="camStat">未开启</p>
+    <p class="c-hint" id="camStat">未开始采集</p>
+    <p class="c-hint" id="capStat" style="color:var(--text);font-weight:600">—</p>
   </div>
 
   <div class="panel">
@@ -320,23 +317,18 @@
 
   <div class="panel">
     <div class="c-row" style="font-size:13px">
-      <span>录音打标：<span id="cVoice">开</span></span>
+      <span>持续录音：<span id="cVoice">关</span></span>
       <span id="cState" style="margin-left:auto">训练中</span>
     </div>
     <!-- 2026-11-03 用户要求：采集页直接显示当前 mic_label 原文 -->
     <div class="c-hint" id="micNow" style="font-size:11px;color:var(--muted);margin-top:2px">麦克风：待授权</div>
-    <!-- 2026-11-03 用户要求：所有录音控件挪到采集页，一屏内可见 -->
+    <!-- 2026-11-05：录音由「开始采集」统一控制（整场连续录），手动录音/自动开关已移除；
+         这里只留麦克风选择与旧片段导出 -->
     <div class="c-row" style="margin-top:6px;gap:6px;flex-wrap:wrap">
-      <button id="voiceRecBtn" class="chip" style="flex:1;min-width:110px">● 手动录一句</button>
-      <button id="voiceAutoBtn" class="chip on" style="flex:1;min-width:110px">自动录音：开</button>
-      <button id="voiceUndoBtn" class="chip">撤销</button>
-    </div>
-    <div class="c-row" style="margin-top:4px;gap:6px;flex-wrap:wrap">
       <select id="voiceDevSel" style="flex:1;min-width:140px;font-size:12px;padding:5px"><option value="">自动选麦</option></select>
       <button id="voiceMicRetry" class="chip">检测麦</button>
-      <button id="voiceExportBtn" class="chip">导出语音</button>
+      <button id="voiceExportBtn" class="chip">导出旧语音</button>
     </div>
-    <div id="voiceBarWrap" style="margin-top:4px"><div id="voiceBar"></div></div>
     <div class="c-hint" id="voiceStat" style="font-size:11px">就绪</div>
     <!-- 2026-11-02 用户要求：捡球/暂停与导出采集包都放到采集页（现场只用一个页面） -->
     <div class="c-row" style="margin-top:6px;gap:6px;flex-wrap:nowrap">
@@ -559,7 +551,8 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B93-20261105-1630";   // B93：Late Contact 特征（击球点偏后识别前置）——复刻固件 B58 line 727-755：全窗 |gyro| 合成 + 5 点盒式平滑 + 找峰值 pk_idx + 10% 峰值前回溯 rise_start，输出 pk_vs_t0_ms 和 t_rise_ms 两个原始值（不判决）。改动点：①新增 computeLateContactFeatures() 30 行 ②onWindow 里调用并推入独立 windowLog[] 数组（容量 2000，防 connLog 500 上限被冲）③session_log.csv 新增 pk_vs_t0_ms / t_rise_ms 两列（event=window 行有值，其他事件留空），窗口日志带 [CALC] 标签与固件 [CLASS] 比对，容忍 ±5ms。所有窗口（含敲拍）都计算。sw.js CACHE nexttennis-v34
+const APP_BUILD = "APP-B95-20261105-1930";   // B95：B94 复核三项修复——①P0 音频真正起点 capAudioStartTs（rec.onstart/start 后记），marks.csv 末尾追加 audio_tms，meta.capture 增 audio_start_ts/audio_end_ts/audio_segments，meta.voice 增 sample_rate/chunks/mic_changes ②P0 同一 sessionTag 内 seq 由 App 重编号严格单调、重连不归零（固件 raw seq 只用于丢包检测），meta 增 seq_base/seq_last ③P2 采集中每 10s 检测麦克风 label 变化，写 session_log 的 mic_change 事件并计数。B94 已验证功能（持续录音/双采集键/统一文件名/非采集时播报/TTS 静音）不变。sw.js CACHE nexttennis-v36
+                                             // B93：Late Contact 特征（击球点偏后识别前置）——复刻固件 B58 line 727-755：全窗 |gyro| 合成 + 5 点盒式平滑 + 找峰值 pk_idx + 10% 峰值前回溯 rise_start，输出 pk_vs_t0_ms 和 t_rise_ms 两个原始值（不判决）。改动点：①新增 computeLateContactFeatures() 30 行 ②onWindow 里调用并推入独立 windowLog[] 数组（容量 2000，防 connLog 500 上限被冲）③session_log.csv 新增 pk_vs_t0_ms / t_rise_ms 两列（event=window 行有值，其他事件留空），窗口日志带 [CALC] 标签与固件 [CLASS] 比对，容忍 ±5ms。所有窗口（含敲拍）都计算。sw.js CACHE nexttennis-v34
                                              // B92：录像文件名改为「开始_结束」双时间戳（video_YYYYMMDD_HHMMSS-HHMMSS.webm）
                                              // B91：原生壳接管语音打标（__ntVoice*，锁屏不再静音）
                                              // B90：Android 原生壳桥接（__ntChunk/__ntStatus，NATIVE 走前台服务直连 BLE）
@@ -1112,14 +1105,27 @@ class AudioFeedbackEngine {
     const src = `audio/voice/${cat}_${i + 1}.mp3`;
     const rec = { cat, text, src, placeholder: !VOICE_PACK_READY };
     this.lastVoice = rec;
+    // 2026-11-05 用户要求：下一球到来时上一句没播完就停掉，直接转播这一球
+    this.stopVoice();
     if (VOICE_PACK_READY) this._playVoiceFile(src, text);
     else this.speak(text);
     return rec;
   }
 
+  // 打断当前语音（音频文件 + TTS），给下一球让路
+  stopVoice() {
+    const a = this._voiceAudio;
+    this._voiceAudio = null;
+    if (a) { try { a.pause(); a.currentTime = 0; } catch (e) { /* 忽略 */ } }
+    if ("speechSynthesis" in window) {
+      try { window.speechSynthesis.cancel(); } catch (e) { /* 忽略 */ }
+    }
+  }
+
   _playVoiceFile(src, fallbackText) {
     try {
       const a = new Audio(src);
+      this._voiceAudio = a;                  // 保留引用：下一球到达时才能打断
       // 播报强制走手机扬声器（录音仍用耳机麦）：蓝牙连上后媒体默认路由会被改到耳机
       if (phoneSinkId && a.setSinkId) {
         try { const p0 = a.setSinkId(phoneSinkId); if (p0 && p0.catch) p0.catch(() => {}); } catch (e) { /* 忽略 */ }
@@ -1127,6 +1133,7 @@ class AudioFeedbackEngine {
       let done = false;
       const fb = () => { if (!done) { done = true; this.speak(fallbackText); } };
       a.onerror = fb;
+      a.onended = () => { if (this._voiceAudio === a) this._voiceAudio = null; };
       const p = a.play();
       if (p && p.catch) p.catch(fb);
     } catch (e) { this.speak(fallbackText); }
@@ -1318,6 +1325,21 @@ let currentWindow = null; // {meta, data, qc}
 // 本次连接以来的全部窗口（含拍框/异物/丢包），断开后保留，下次点【连接设备】时重置
 let sessionWindows = [];
 let sessionStartTs = 0;
+// 2026-11-05（B95）：固件 seq 是 u8，重连/固件复位会归零；同一 sessionTag 内必须单调，
+// 否则 (会话, seq) 重复会让 windows.csv 串窗。这里由 App 统一重编号，raw seq 只用于丢包检测。
+let seqBase = 0, seqLast = -1, seqLastRaw = -1;
+function seqReset() { seqBase = 0; seqLast = -1; seqLastRaw = -1; }
+function seqNext(rawSeq) {
+  // 255→0 是协议正常回绕；其他"往回跳"视为固件重连/复位，留痕但不让 App 序号归零
+  if (rawSeq <= seqLastRaw && !(seqLastRaw === 255 && rawSeq === 0)) {
+    connLogAdd({ event: "seq_reset", sessionTag: sessionTag(),
+                 reason: `raw ${seqLastRaw}→${rawSeq}`, note: `app seq 续到 ${seqLast + 1}` });
+    log(`固件 seq 回退/重置（raw ${seqLastRaw} → ${rawSeq}）：App 会话序号继续 ${seqLast + 1}`, "log-warn");
+  }
+  seqLastRaw = rawSeq;
+  seqLast += 1;
+  return seqLast;
+}
 let labeledCount = 0;
 // 会话状态：VTI 三重门限第 1 重。训练中才做震动提醒；捡球/暂停时静默（操作态过滤捡球弹响）
 let sessionState = "train";    // train | pause
@@ -1408,7 +1430,9 @@ function computeLateContactFeatures(win) {
 function onWindow(meta, data) {
   let res;
   try {
-  meta.packetLoss = parser.consumeSeq(meta.seq);
+  meta.rawSeq = meta.seq;
+  meta.packetLoss = parser.consumeSeq(meta.rawSeq);   // 丢包检测必须用固件 raw seq
+  meta.seq = seqNext(meta.rawSeq);                    // B95：导出用的 seq 由 App 重编号，永不归零
   meta.receivedAt = new Date();   // 本地到达时刻（HH:MM:SS，供会话列表/导出）
   lastWinT = Date.now(); winTimes.push(lastWinT);   // 断连监控 R2：空档秒数与 60s 数据率
   res = qc.check(data, meta);
@@ -1455,7 +1479,7 @@ function onWindow(meta, data) {
 
   currentWindow = w;
   sessionWindows.push(w);        // 含 FAIL 窗口，全部留存到本次会话结束
-  voiceAutoTrigger(meta);        // 自动录音：击球窗口一到达即录 5 秒（无按键）
+  // 2026-11-05：录音已由「开始采集」整场常开，这里不再按球起停，只记打点（见下方 capMarkAdd）
   updateWinSelector(true);
   updateQcPanel(res);
   updateDiagnosis(w);
@@ -1474,13 +1498,18 @@ function onWindow(meta, data) {
     $("speedVal").textContent = spd.kmh.toFixed(0);
   }
   meta.milestone = updateStreak(res, meta);   // combo / achieve / null
+  if (capOn) capMarkAdd(meta);                // 采集中：只打点（音频常开，不在此起停）
   audio.init().then(() => {
     const lat = audio.playImpact();
     $("audioLat").textContent = lat != null ? lat.toFixed(1) + " ms" : "—";
+    if (capOn) return;          // 采集中不播鼓励音效（会被整场录音录进去），只留击球咔哒作时间参照
     if (meta.milestone === "combo") audio.playCombo();
     else if (meta.milestone === "achieve") audio.playAchieve();
   });
-  if (spd) {
+  // 2026-11-05 用户要求：采集中不播话术（会被录进音频）；未采集时才播球速/动作结果+鼓励
+  if (capOn) {
+    $("ttsStat").textContent = "采集中（不播报）";
+  } else if (spd) {
     const [cat, vars] = pickVoice(currentWindow, vtiRes, spd);
     const rec = audio.say(cat, vars);
     if (rec) {
@@ -3096,7 +3125,7 @@ document.addEventListener("visibilitychange", () => {
   connLogAdd({ event: "vis", note: document.hidden ? "hidden" : "visible" });
   // 屏锁会被系统强制释放（锁屏/切后台），回来后按需重新申请
   if (!document.hidden) {
-    try { if (voiceAuto && !wakeLock) voiceWakeLock(true); } catch (_) {}
+    try { if (capOn && !wakeLock) voiceWakeLock(true); } catch (_) {}
     try { if (camRec && camRec.state !== "inactive" && !camLock) camWake(true); } catch (_) {}
     try { if (!sessLock) sessWake(true); } catch (_) {}
   }
@@ -3136,7 +3165,7 @@ function sessionLogCsvRows() {
 }
 function sessionLogExport() {
   if (!connLog.length && !windowLog.length) { log("暂无会话日志可导出", "log-warn"); return; }
-  download(`session_log_${sessionTag()}.csv`, "\ufeff" + sessionLogCsvRows().join("\n") + "\n", "text/csv");
+  download(`session_log_${capTag || sessionTag()}.csv`, "\ufeff" + sessionLogCsvRows().join("\n") + "\n", "text/csv");
   log(`已导出会话日志：事件 ${connLog.length} 条 + 窗口 ${windowLog.length} 条`, "log-info");
 }
 
@@ -3214,7 +3243,7 @@ window.__ntVoiceStart = function (seq, maxMs) {
     ttsMute(true);                       // 录音期间静音播报，避免把自己的话术录进去
     clearTimeout(window.__ntVoiceTimer);
     window.__ntVoiceTimer = setTimeout(() => {
-      try { ttsMute(voiceAuto); } catch (e) {}
+      try { ttsMute(capOn != null); } catch (e) {}
     }, (maxMs || 5000) + 1200);
     $("voiceStat").textContent = `● 原生录音 ${(maxMs || 5000) / 1000}s → seq=${seq}`;
     $("homeRecInd").classList.add("on");
@@ -3247,7 +3276,7 @@ window.__ntVoice = async function (seq, b64, durMs, silent, at) {
     for (const d of dup) await idbDel(d.id);
     try { NATIVE.voiceAck(seq); } catch (e) {}
     clearTimeout(window.__ntVoiceTimer);
-    ttsMute(voiceAuto);
+    ttsMute(capOn != null);
     $("homeRecInd").classList.remove("on");
     log(`已录音 ${((durMs || 5000) / 1000).toFixed(1)}s → seq=${seq}（原生壳默认输入）${silent ? " ⚠️疑似无语音" : ""}`
         + (dup.length ? `，替换旧录音 ${dup.length} 条` : ""), silent ? "log-warn" : "log-pass");
@@ -3466,6 +3495,7 @@ $("connectBtn").addEventListener("click", async () => {
   FORM.k3 = { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } };
   vtiResetHist();                 // VTI 会话分位同样按连接冷启动
   sessionStartTs = Date.now();
+  seqReset();                     // B95：新会话 tag，seq 从 0 重新开始（单调递增由 seqNext 保证）
   currentWindow = null;
   goodStreak = 0;                 // 连击计数按连接重置
   setSessionState("train");       // 会话状态按连接重置（默认训练中）
@@ -3553,7 +3583,6 @@ $("labelNoteBtn").addEventListener("click", () => {
 // 教练每球说完一句即录一段；App 只存「音频 + 窗口锚点 + 时间」，
 // 课后导出 ZIP（clips/*.webm + voice_labels.csv），转写后按 (file, seq) 回填 note。
 const VOICE_DB = "nt_voice_v1", VOICE_STORE = "clips";
-const VOICE_MAX_MS = 5000;                 // 单段上限（说完不必再点）
 
 function sessionTag() {
   const p = n => String(n).padStart(2, "0");
@@ -3610,19 +3639,15 @@ async function idbClear() {
   });
 }
 
-let voiceRec = null, voiceChunks = [], voiceTimer = null;
-let voiceStart = 0, voiceTarget = null, voiceLastId = null, voiceBusy = false;
-// 2026-11-03 用户要求：默认开（首次启动/无 localStorage 时为 true）；用户主动关才记忆
-let voiceAuto = localStorage.getItem("nt_voice_auto") !== "0";
+// 2026-11-05：按球 5s 分段录音整条管线已废弃（见下方「采集模块」），这里只留原生壳入库用的 id
+let voiceLastId = null;
 // 2026-11-03：不再存 deviceId（重连/重启/换蓝牙模块会变），存 label，每次录音前重新解析成当前 deviceId
 let voiceDevLabel = localStorage.getItem("nt_voice_label") || "";
-let voiceMissed = 0, voiceLastStart = 0, wakeLock = null, voiceMicError = false;
-let voiceLastSeq = -1, voiceQueue = null;
+let wakeLock = null, voiceMicError = false;
 let voiceMicReason = "";
 let voiceLastFailKey = "";
 let voiceMicLabel = "";          // 实际在用麦克风的设备名（首页蓝牙状态用）
 let voiceMicFallback = false;    // 2026-11-03：true = 没选到蓝牙，回退了浏览器默认输入（本机麦）
-let voiceFallbackLogged = false; // 只在状态变化时打一次日志，避免每球刷屏
 let phoneSinkId = "";            // 手机扬声器 deviceId（播报强制走扬声器，录音仍用耳机麦）
 
 // 2026-11-03 修订（用户实测）：Android 的 "Headset earpiece" 其实是手机听筒，不是蓝牙，
@@ -3638,8 +3663,7 @@ async function voiceUpdateStat() {
     const st = $("voiceStat");
     st.classList.toggle("err", voiceMicError);
     st.textContent = base
-      + (voiceMicError ? `｜麦克风未就绪${voiceMicReason ? "：" + voiceMicReason : ""}` : "")
-      + (voiceMissed ? `｜排队溢出 ${voiceMissed}` : "");
+      + (voiceMicError ? `｜麦克风未就绪${voiceMicReason ? "：" + voiceMicReason : ""}` : "");
     // 首页「待导出语音 N 段」（2026-11-01 需求通知 R2）：>0 高亮，提醒刷新/关闭可能丢失
     const vp = $("voicePend");
     if (vp) {
@@ -3802,7 +3826,7 @@ async function voicePrimeMic() {
     log(`麦克风已就绪：${voiceMicLabel || "默认输入"}`
       + (pick.isBT ? "（蓝牙输入）" : "（本机麦克风，未选到蓝牙）"), pick.isBT ? "log-info" : "log-warn");
   } catch (e) {
-    paintVoiceAuto();
+    capPaint();
     await voiceMarkFail(e);
     log("点「检测麦克风」可重试", "log-warn");
   }
@@ -3843,21 +3867,6 @@ async function voiceMarkFail(e) {
       "log-fail");
 }
 
-// 窗口到达即触发（自动模式）；录制中再来窗口 → 排队一次补录，不打断当前这句
-function voiceAutoTrigger(meta) {
-  if (NATIVE) return;                        // 原生壳：前台服务在击球点直接录，不再开页面麦克风
-  if (!voiceAuto) return;
-  if (meta.seq === voiceLastSeq) return;     // 同一窗口重复到达才去重（不再用 1500ms 时间窗）
-  if (voiceBusy) {
-    if (voiceQueue) voiceMissed++;           // 队列深度 1：后来的顶掉先来的
-    voiceQueue = meta;
-    voiceUpdateStat();
-    log(`自动录音排队：seq=${meta.seq}（正在录 seq=${voiceTarget ? voiceTarget.seq : "?"}），本段结束后补录`, "log-warn");
-    return;
-  }
-  voiceStartRec(true, meta);
-}
-
 // 录音期间静音语音播报：否则 TTS 会被麦克风录进音频，干扰事后转写
 function ttsMute(on) {
   window.__ttsMuted = !!on;
@@ -3866,197 +3875,311 @@ function ttsMute(on) {
   }
 }
 
-// 2026-11-03：实时能量检测 —— 判断 clip 是否"疑似无语音"
-// 录音期间每 200ms 取一帧，记录 maxRms；onstop 后如果能量只在开头 0.2s 之后全静音 = silent
-let voiceAudioCtx = null, voiceAnalyser = null, voiceAnalyserData = null;
-let voiceSilentStart = 0, voiceSilentPeak = 0, voiceSilentAfterStart = 0, voiceSilentSustained = false;
-function voiceAnalyserAttach(stream) {
-  try {
-    if (!window.AudioContext && !window.webkitAudioContext) return;
-    voiceAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    voiceAnalyser = voiceAudioCtx.createAnalyser();
-    voiceAnalyser.fftSize = 512;
-    voiceAnalyser.smoothingTimeConstant = 0.3;
-    voiceAnalyserData = new Uint8Array(voiceAnalyser.frequencyBinCount);
-    const src = voiceAudioCtx.createMediaStreamSource(stream);
-    src.connect(voiceAnalyser);
-    voiceSilentStart = performance.now();
-    voiceSilentPeak = 0;
-    voiceSilentAfterStart = 0;
-    voiceSilentSustained = true;   // 默认静音，有能量就翻成 false
-    const tick = () => {
-      if (!voiceAnalyser) return;
-      voiceAnalyser.getByteTimeDomainData(voiceAnalyserData);
-      let sum = 0;
-      for (let i = 0; i < voiceAnalyserData.length; i++) {
-        const v = (voiceAnalyserData[i] - 128) / 128;
-        sum += v * v;
-      }
-      const rms = Math.sqrt(sum / voiceAnalyserData.length);
-      voiceSilentPeak = Math.max(voiceSilentPeak, rms);
-      // 前 200ms 内算预热，之后持续超过 rms>0.01 就判定有真实语音
-      const elapsed = performance.now() - voiceSilentStart;
-      if (elapsed > 200 && rms > 0.01) voiceSilentSustained = false;
-      requestAnimationFrame(tick);
-    };
-    tick();
-  } catch (e) { /* 忽略：浏览器不支持 AudioContext 没关系，只是不能判 silent */ }
-}
-function voiceAnalyserClose() {
-  if (voiceAudioCtx) { try { voiceAudioCtx.close(); } catch (e) {} voiceAudioCtx = null; voiceAnalyser = null; voiceAnalyserData = null; }
-}
-
 // 2026-11-03：根据实际在用麦克风生成"正在录音"提示文字
 function _micRecordingTxt() {
   const kind = micKindOf(voiceMicLabel);
   return kind === "蓝牙耳机" ? "蓝牙耳机正在录音 🔵" : "本机麦克风正在录音 📱";
 }
 
-async function voiceStartRec(auto = false, winMeta = null) {
-  if (voiceBusy) {
-    if (!auto) log("正在录音，等这一段结束再按（自动模式下每球已自动录）", "log-warn");
-    return;
-  }
-  if (!sessionWindows.length) {
-    if (!auto) log("暂无窗口，先连接并打出第一个球再录音", "log-warn");
-    return;
-  }
+// =====================================================================
+// 2026-11-05 采集模块（B94）—— 替换原「每球 5s 分段录音」管线
+//   · 「▶ 视频采集 / ▶ 纯录音采集」两键：一旦开始，整场持续录音，不再按球起停
+//     （快速连续击球时不会延迟累积，也不会丢中间球）
+//   · 每球只在内存里记一个打点（seq / 相对时刻 / 球速 / 动作类型），停止时随音频一起入库
+//   · CSV / 视频 / 音频统一前缀 tennis_session_<capTag>
+//       CSV   → tennis_session_<capTag>.csv
+//       视频  → tennis_session_<capTag>_video.webm
+//       音频  → tennis_session_<capTag>_audio.webm
+// =====================================================================
+let capOn = null;              // null=未采集；"video"=视频采集；"audio"=纯录音采集
+let capTag = "";               // 本轮统一文件名前缀（= 采集开始时刻）
+let capStartTs = 0;            // 采集开始时刻（ms）
+// 2026-11-05（B95）：P0-1 —— 音频真正起点单独记（采集准备 0.5~2s 不能算进音频时间轴）
+let capAudioStartTs = 0, capAudioEndTs = 0;
+let capAudioSegs = [];         // 分段记录（正常 1 段；中途重启每段一条，不再只有一个全局起点）
+let capAudioChunksN = 0;       // dataavailable 分片数
+let capAudioMicStart = "";     // 采集开始时的麦克风 label（中途切换不改写它）
+let capAudioSampleRate = "";   // 音轨采样率（浏览器给不出就留空）
+let capMicTimer = null, capMicChanges = 0;   // B95 P2：采集中每 10s 检查麦克风是否被切走
+let capAudioRec = null, capAudioStream = null, capAudioChunks = [], capAudioMic = "";
+let capMarks = [];             // 每球打点（内存，停止时随音频一起入库 IndexedDB）
+let capTickTimer = null;
+let capVideoName = "", capVideoSizeMb = 0;   // 本轮视频文件名/大小（导出 manifest 用）
+
+function capNowTag(t) {
+  const p = n => String(n).padStart(2, "0");
+  const d = new Date(t || Date.now());
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_` +
+         `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+function capFileName(kind, ext) {
+  const tag = capTag || capNowTag();
+  if (kind === "video") return `tennis_session_${tag}_video.${ext || "webm"}`;
+  if (kind === "audio") return `tennis_session_${tag}_audio.${ext || "webm"}`;
+  if (kind === "marks") return `tennis_session_${tag}_marks.csv`;
+  if (kind === "csv")   return `tennis_session_${tag}.csv`;
+  if (kind === "log")   return `session_log_${tag}.csv`;
+  if (kind === "pack")  return `pack_${tag}.zip`;
+  return `tennis_session_${tag}`;
+}
+
+// 采集状态行：模式 / 计时 / 统一文件名 / 麦克风 / 打点数
+function capPaint() {
+  if ($("capStartVideo")) $("capStartVideo").disabled = !!capOn;
+  if ($("capStartAudio")) $("capStartAudio").disabled = !!capOn;
+  if ($("capStopBtn")) $("capStopBtn").disabled = !capOn;
+  const st = $("capStat");
+  if (!st) return;
+  if (!capOn) { st.textContent = "—"; st.style.color = "var(--text)"; return; }
+  const s = Math.max(0, Math.round((Date.now() - capStartTs) / 1000));
+  const hms = `${String(Math.floor(s / 3600)).padStart(2, "0")}:` +
+              `${String(Math.floor(s / 60) % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  const mic = _micRecordingTxt().replace(/\s*🔵$/, "").replace(/\s*📱$/, "");
+  st.textContent = `● ${capOn === "video" ? "视频采集" : "纯录音采集"} ${hms}｜${capTag}｜`
+                 + `${mic}｜打点 ${capMarks.length}`;
+  st.style.color = "var(--pass)";
+}
+
+function capMarkAdd(meta) {
+  if (!capOn) return;
+  const qk = meta.quickClass;
+  const now = Date.now();
+  capMarks.push({
+    seq: meta.seq,
+    tMs: now - capStartTs,                 // 打点相对"开始采集"（保留旧含义，兼容旧数据）
+    audioTms: capAudioStartTs ? now - capAudioStartTs : "",   // B95：相对音频真正起点
+    at: new Date(now).toISOString(),
+    impactType: qk === 1 ? "FRAME_HIT" : qk === 2 ? "FOREIGN_IMPACT" : qk === 0 ? "NORMAL_HIT" : "",
+    speedKmh: Number.isFinite(meta.speedKmh) ? +meta.speedKmh.toFixed(1) : "",
+    side: (meta.strokeFhBh && meta.strokeFhBh.side) || "",
+    note: String(meta.note || "").replace(/"/g, '""'),
+  });
+  capPaint();
+}
+
+// 第 5 条：采集开启时耳机没连上 → 明确弹窗（取消则不开采）
+let capHeadsetOK = false;      // 本轮已确认"没有耳机也继续"，避免录音前再弹一次
+async function capCheckHeadset() {
+  const pick = await voiceResolvePreferredDevice();
+  if (pick.isBT) { capHeadsetOK = true; return true; }
+  capHeadsetOK = confirm("请连接耳机以保证录音效果\n\n"
+    + "未检测到蓝牙耳机麦克风，继续采集将用本机麦克风录音，现场噪声会影响打标语音的可用性。\n\n"
+    + "点「确定」仍然开始采集；点「取消」先去连接耳机。");
+  return capHeadsetOK;
+}
+
+async function capAudioStart() {
   if (!navigator.mediaDevices || !window.MediaRecorder) {
-    voiceMarkFail({ name: "SecurityError", message: "缺少 mediaDevices（非 https 或浏览器不支持）" });
-    return;
+    await voiceMarkFail({ name: "SecurityError", message: "缺少 mediaDevices（非 https 或浏览器不支持）" });
+    return false;
   }
-  voiceBusy = true;
-  ttsMute(true);
-  const idx = winMeta ? sessionWindows.findIndex(x => x.meta.seq === winMeta.seq) : sessionWindows.length - 1;
-  const ti = idx >= 0 ? idx : sessionWindows.length - 1;
-  const w = sessionWindows[ti];
-  voiceTarget = { index: ti, seq: w.meta.seq,
-                  recv: w.meta.receivedAt, note: w.meta.note || "" };
-  voiceLastSeq = w.meta.seq;
   const baseAudio = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
   const pick = await voiceResolvePreferredDevice();
-  let audio, stream, fallbackReason = "";
-  if (pick.resolved && pick.deviceId) {
-    audio = Object.assign({ deviceId: { exact: pick.deviceId } }, baseAudio);
-  } else {
-    audio = baseAudio;
-    fallbackReason = pick.reason || (voiceDevLabel ? `找不到「${voiceDevLabel}」` : "未发现蓝牙耳机");
-  }
+  let stream = null;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio });
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: pick.resolved && pick.deviceId
+        ? Object.assign({ deviceId: { exact: pick.deviceId } }, baseAudio) : baseAudio,
+    });
   } catch (e) {
-    // 2026-11-03：exact 失败 → 明确提示，并回退浏览器默认输入（不回退听筒）
+    // exact 失败 → 明确提示并回退浏览器默认输入（不回退听筒）
     if (pick.deviceId || voiceDevLabel) {
-      voiceMicLabel = ""; voiceMicError = true; voiceMicReason = (e && e.message) || e.name || "exact 拒绝";
-      log(`所选麦克风不可用（${fallbackReason || voiceMicReason}），已回退默认输入 —— 请检查蓝牙耳机是否已连接`, "log-warn");
+      log(`所选麦克风不可用（${pick.reason || (e && e.name) || "exact 拒绝"}），已回退默认输入 —— 请检查蓝牙耳机是否已连接`, "log-warn");
       voiceMicFallback = true;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: baseAudio });
-      } catch (e2) {
-        voiceBusy = false; ttsMute(voiceAuto); voiceMarkFail(e2); return;
-      }
-    } else {
-      voiceBusy = false; ttsMute(voiceAuto); voiceMarkFail(e); return;
-    }
+      try { stream = await navigator.mediaDevices.getUserMedia({ audio: baseAudio }); }
+      catch (e2) { await voiceMarkFail(e2); return false; }
+    } else { await voiceMarkFail(e); return false; }
   }
   voiceMicError = false; voiceMicReason = ""; voiceLastFailKey = "";
   voiceMicLabel = (stream.getAudioTracks()[0] && stream.getAudioTracks()[0].label) || voiceMicLabel;
-  // 2026-11-03：以实际拿到的 track.label 为准判定耳机/本机；状态变化时才打日志，避免每球刷屏
-  const nowFallback = micKindOf(voiceMicLabel) !== "蓝牙耳机";
-  voiceMicFallback = nowFallback;
-  if (nowFallback && !voiceFallbackLogged) {
-    log(`麦克风：${voiceMicLabel || "默认输入"}（本机麦克风，未选到蓝牙输入）`, "log-warn");
-    voiceFallbackLogged = true;
-  } else if (!nowFallback && voiceFallbackLogged) {
-    log(`麦克风已切到蓝牙输入：${voiceMicLabel}`, "log-pass");
-    voiceFallbackLogged = false;
+  voiceMicFallback = micKindOf(voiceMicLabel) !== "蓝牙耳机";
+  // 预检说"有蓝牙"、实际却拿到本机麦（exact 失效/被占用）→ 仍给一次提示，可取消
+  if (voiceMicFallback && !capHeadsetOK) {
+    capHeadsetOK = confirm("请连接耳机以保证录音效果\n\n"
+      + `实际拿到的输入是「${voiceMicLabel || "默认输入"}」，不是蓝牙耳机。\n\n`
+      + "点「确定」继续用本机麦克风采集；点「取消」先连接耳机。");
+    if (!capHeadsetOK) { stream.getTracks().forEach(t => t.stop()); return false; }
   }
   micStatRefresh();
   voiceListDevices();
-  voiceAnalyserAttach(stream);          // 实时能量检测 → 判 silent
+  capAudioStream = stream;
+  capAudioMic = voiceMicLabel;
+  capAudioMicStart = voiceMicLabel;
+  capAudioChunks = [];
+  // B95 P0-1：录音起点/分段/分片数全部重置；音频真正起点在 rec.onstart 里记
+  capAudioStartTs = 0; capAudioEndTs = 0;
+  capAudioSegs = []; capAudioChunksN = 0; capMicChanges = 0;
+  try {
+    const tr = stream.getAudioTracks()[0];
+    const st = tr && tr.getSettings ? tr.getSettings() : {};
+    capAudioSampleRate = st.sampleRate || "";
+  } catch (e) { capAudioSampleRate = ""; }
   const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
     .find(m => MediaRecorder.isTypeSupported(m)) || "";
-  voiceChunks = [];
-  voiceRec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
-  voiceRec.ondataavailable = e => { if (e.data && e.data.size) voiceChunks.push(e.data); };
-  voiceRec.onstop = async () => {
-    const silent = !voiceSilentSustained ? false : (voiceSilentPeak < 0.015 ||
-                   (voiceSilentPeak < 0.03 && (Date.now() - voiceStart) < 800));
-    voiceAnalyserClose();
-    clearInterval(voiceTimer); voiceTimer = null;
-    const dur = Date.now() - voiceStart;
-    const type = (voiceRec && voiceRec.mimeType) || (voiceChunks[0] && voiceChunks[0].type) || "audio/webm";
-    const blob = new Blob(voiceChunks, { type });
-    stream.getTracks().forEach(t => t.stop());
-    $("voiceRecBtn").classList.remove("rec");
-    $("voiceRecBtn").textContent = "● 录音打标";
-    $("homeRecInd").classList.remove("on");
-    $("voiceBar").style.width = "0";
-    const rec = {
-      sessionTag: sessionTag(), windowIndex: voiceTarget.index, seq: voiceTarget.seq,
-      recordedAt: new Date().toISOString(),
-      deltaMs: voiceStart - (voiceTarget.recv ? voiceTarget.recv.getTime() : voiceStart),
-      durMs: dur, mime: type, note: voiceTarget.note, blob,
-      silent: silent,        // 2026-11-03：疑似无语音标记
-      micLabel: voiceMicLabel // 2026-11-03：记录用的是什么麦克风（事后分析有用）
-    };
-    try {
-      voiceLastId = await idbAdd(rec);
-      const dup = (await idbAll()).filter(r => r.id !== voiceLastId
-        && r.sessionTag === rec.sessionTag && r.seq === rec.seq);
-      for (const d of dup) await idbDel(d.id);
-      log(`已录音 ${(dur / 1000).toFixed(1)}s → seq=${rec.seq}（${voiceMicLabel || "默认输入"}）${silent ? " ⚠️疑似无语音" : ""}`
-          + (dup.length ? `，替换旧录音 ${dup.length} 条` : ""), silent ? "log-warn" : "log-pass");
-      await voiceUpdateStat();
-    } catch (e) {
-      log(`录音保存失败：${e.message}`, "log-fail");
+  capAudioRec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
+  // 每段音频各自记 start_ts / end_ts（正常只有 1 段；中途重启/切段时每段一条，不共用一个全局起点）
+  const seg = { start_ts: "", end_ts: "", dur_ms: 0, chunks: 0, mic_label: capAudioMic, _startMs: 0 };
+  capAudioSegs.push(seg);
+  capAudioRec.ondataavailable = e => {
+    if (e.data && e.data.size) { capAudioChunks.push(e.data); capAudioChunksN++; seg.chunks++; }
+  };
+  capAudioRec.onstart = () => {
+    if (capAudioStartTs) return;     // 兜底值已定 → 保持同一个起点，避免打点时间轴前后不一致
+    capAudioStartTs = Date.now(); seg._startMs = capAudioStartTs;
+    seg.start_ts = new Date(capAudioStartTs).toISOString();
+  };
+  capAudioRec.start(5000);     // 5s 一片：边录边攒，长场不占内存峰值；拼接后是同一段连续音频
+  // 起点在 start() 之后立刻定（onstart 回调只会确认，不会改动已定的起点）
+  if (!capAudioStartTs) {
+    capAudioStartTs = Date.now(); seg._startMs = capAudioStartTs;
+    seg.start_ts = new Date(capAudioStartTs).toISOString();
+  }
+  return true;
+}
+
+// B95 P2：采集中每 10s 看一次当前音轨 label，被切走（耳机断开回退手机麦）就记一条事件
+function capMicPoll() {
+  if (!capOn || !capAudioStream) return;
+  let lbl = "";
+  try {
+    const tr = capAudioStream.getAudioTracks()[0];
+    lbl = (tr && tr.label) || "";
+  } catch (e) { return; }
+  if (!lbl || lbl === capAudioMic) return;
+  const oldLbl = capAudioMic;
+  capAudioMic = lbl;
+  capMicChanges += 1;
+  if (capAudioSegs.length) capAudioSegs[capAudioSegs.length - 1].mic_label = lbl;
+  connLogAdd({ event: "mic_change", device: lbl, sessionTag: capTag,
+               reason: oldLbl, note: `麦克风切换：${oldLbl || "未知"} → ${lbl}` });
+  log(`采集中麦克风切换：${oldLbl || "未知"} → ${lbl}（第 ${capMicChanges} 次）`, "log-warn");
+  capPaint();
+}
+
+// 停止并入库：返回 {name, dur, marks}
+function capAudioStop() {
+  return new Promise(resolve => {
+    const rec = capAudioRec;
+    const stream = capAudioStream;
+    if (!rec || rec.state === "inactive") {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      capAudioRec = null; capAudioStream = null;
+      resolve(null); return;
     }
-    voiceBusy = false;
-    ttsMute(voiceAuto);
-    const q = voiceQueue; voiceQueue = null;
-    if (q) voiceStartRec(true, q);
-  };
-  voiceStart = Date.now();
-  voiceLastStart = voiceStart;
-  voiceRec.start();
-  // @v 标记
-  const wMeta = sessionWindows[ti].meta;
-  if (!wMeta.note) wMeta.note = "@v";
-  else if (!wMeta.note.split(/\s+/).includes("@v")) wMeta.note += " @v";
-  voiceTarget.note = wMeta.note;
-  updateWinSelector(false);
-  $("voiceRecBtn").classList.add("rec");
-  $("voiceRecBtn").textContent = "● 录音中…";
-  // 2026-11-03：采集页 + 首页都提示"耳机/话筒正在录音"
-  const recTxt = _micRecordingTxt();
-  const tick = () => {
-    if (!voiceRec || voiceRec.state === "inactive") return;
-    const el = (Date.now() - voiceStart) / 1000;
-    const cap = VOICE_MAX_MS / 1000;
-    $("voiceStat").textContent = `● ${recTxt} ${el.toFixed(1)} / ${cap.toFixed(1)}s → seq=${voiceTarget.seq}`;
-    $("voiceBar").style.width = Math.min(100, el / cap * 100) + "%";
-    $("voiceRecBtn").textContent = `● ${el.toFixed(1)}s / ${cap.toFixed(0)}s`;
-    $("homeRecInd").classList.add("on");
-    $("homeRecIndTxt").textContent = `${recTxt} ${el.toFixed(1)}/${cap.toFixed(0)}s`;
-  };
-  tick();
-  voiceTimer = setInterval(tick, 100);
-  setTimeout(() => { if (voiceRec && voiceRec.state === "recording") voiceRec.stop(); }, VOICE_MAX_MS);
+    clearInterval(capMicTimer); capMicTimer = null;
+    const started = capAudioStartTs || capStartTs;   // B95：优先用音频真正起点
+    rec.onstop = async () => {
+      const mime = rec.mimeType || (capAudioChunks[0] && capAudioChunks[0].type) || "audio/webm";
+      const blob = new Blob(capAudioChunks, { type: mime });
+      const endNow = Date.now();
+      capAudioEndTs = endNow;
+      const last = capAudioSegs[capAudioSegs.length - 1];
+      if (last) {
+        last.end_ts = new Date(endNow).toISOString();
+        last.dur_ms = Math.max(0, endNow - (last._startMs || started));
+        last.chunks = last.chunks || 0;
+      }
+      const dur = endNow - started;
+      const marks = capMarks.slice();
+      const name = capFileName("audio", mime.includes("mp4") ? "m4a" : "webm");
+      try {
+        await idbAdd({
+          sessionTag: capTag, windowIndex: -1, seq: -1,
+          recordedAt: new Date(started).toISOString(),
+          deltaMs: 0, durMs: dur, mime, note: "整场连续录音", blob,
+          silent: false, micLabel: capAudioMicStart || capAudioMic, scope: "run", marks,
+          audioStartTs: started, audioEndTs: endNow,
+          segments: capAudioSegs.slice(), chunks: capAudioChunksN,
+          sampleRate: capAudioSampleRate, micChanges: capMicChanges,
+        });
+        log(`整场录音已入库 ${name}（${(dur / 1000).toFixed(0)}s，${marks.length} 个打点，`
+            + `${(blob.size / 1048576).toFixed(1)}MB，分片 ${capAudioChunksN}）`, "log-pass");
+      } catch (e) { log(`整场录音保存失败：${e.message}`, "log-fail"); }
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      capAudioRec = null; capAudioStream = null; capAudioChunks = [];
+      await voiceUpdateStat();
+      resolve({ name, dur, marks: marks.length });
+    };
+    try { rec.stop(); } catch (e) { resolve(null); }
+  });
 }
 
-function voiceStopRec() {
-  voiceQueue = null;                 // 手动停止 = 用户主动结束，取消待补录
-  if (voiceRec && voiceRec.state !== "inactive") voiceRec.stop();
-  else { voiceBusy = false; ttsMute(voiceAuto); }
+async function capStart(mode) {
+  if (capOn) { log("已在采集中，先点「■ 结束采集」", "log-warn"); return; }
+  camLog("正在准备采集…", false);
+  await voicePrimeMic().catch(() => {});          // 先拿权限、刷新设备 label，才能判断耳机
+  capHeadsetOK = false;
+  if (!(await capCheckHeadset())) {
+    log("已取消采集：请先连接蓝牙耳机再开始", "log-warn");
+    camLog("未开始采集", false);
+    return;
+  }
+  capOn = mode;
+  capTag = capNowTag();        // 每次采集各自一个 tag（同一 App 会话里连采两场也不会撞名）
+  capStartTs = Date.now();
+  capMarks = [];
+  capVideoName = ""; capVideoSizeMb = 0;
+  if (mode === "video") {
+    $("camWrap").style.display = "block";
+    if (!(await camOpen())) {
+      capOn = null; capTag = ""; capPaint();
+      camLog("摄像头不可用，未开始采集", true);
+      return;
+    }
+  } else {
+    camRelease();                                  // 纯录音采集：不碰摄像头（已开则释放）
+  }
+  if (!(await capAudioStart())) {
+    capOn = null; capTag = "";
+    if (mode === "video") await camStopRec();      // 音频失败时别留下空录像
+    capPaint(); camLog("麦克风不可用，未开始采集", true);
+    return;
+  }
+  ttsMute(true);                                   // 采集期间不播话术（避免录进音频）
+  try { if (NATIVE && NATIVE.setVoiceAuto) NATIVE.setVoiceAuto(true); } catch (e) {}
+  clearInterval(capMicTimer);
+  capMicTimer = setInterval(capMicPoll, 10000);    // B95 P2：采集中监测麦克风是否被切走
+  if (mode === "video") {
+    if (!(await camStartRec())) {
+      ttsMute(false);
+      clearInterval(capMicTimer); capMicTimer = null;
+      await capAudioStop(); capOn = null; capTag = "";
+      capPaint(); camLog("录像启动失败，未开始采集", true);
+      return;
+    }
+  } else {
+    camLog("纯录音采集：摄像头已关闭", false);
+  }
+  clearInterval(capTickTimer);
+  capTickTimer = setInterval(() => {
+    capPaint();
+    if (capOn === "video" && camRec && camRec.state !== "inactive") {
+      const s = Math.round((Date.now() - capStartTs) / 1000);
+      camLog(`视频采集中 ${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`, false);
+    }
+  }, 1000);
+  capPaint(); colRefresh();
+  log(`采集开始：${mode === "video" ? "视频采集（含整场录音）" : "纯录音采集（摄像头关闭）"}｜`
+      + `统一文件名 ${capTag}｜麦克风=${capAudioMic || "默认输入"}`, "log-pass");
 }
 
-async function voiceUndo() {
-  if (voiceLastId == null) { log("没有可撤销的语音标注", "log-warn"); return; }
-  await idbDel(voiceLastId);
-  voiceLastId = null;
-  log("已撤销上一条语音标注", "log-info");
-  await voiceUpdateStat();
+async function capStop(doPack = true) {
+  if (!capOn) { log("当前未在采集", "log-warn"); if (doPack) await packExport(); return; }
+  const mode = capOn;
+  capOn = null;                    // 先关：后续窗口不再打点
+  clearInterval(capTickTimer); capTickTimer = null;
+  clearInterval(capMicTimer); capMicTimer = null;
+  if (mode === "video") { camLog("正在保存视频…", false); await camStopRec(); }
+  const a = await capAudioStop();
+  ttsMute(false);
+  try { if (NATIVE && NATIVE.setVoiceAuto) NATIVE.setVoiceAuto(false); } catch (e) {}
+  capPaint(); colRefresh();
+  const sum = `视频=${capVideoName || "无"}｜音频=${a ? a.name : "无"}｜打点=${a ? a.marks : 0}`;
+  camLog(`采集结束 ${capTag}｜${sum}`, false);
+  log(`采集结束 ${capTag}｜${sum}`, "log-pass");
+  if (doPack) await packExport();
 }
+
 
 // ---- 最小 ZIP 打包（store 模式；音频本身已压缩，无需再 deflate） ----
 const CRC_TABLE = (() => {
@@ -4118,7 +4241,12 @@ function zipBuild(files) {
 async function voiceExport() {
   let all;
   try { all = await idbAll(); } catch (e) { log(`读取语音存储失败：${e.message}`, "log-fail"); return; }
-  if (!all.length) { log("还没有语音标注可导出", "log-warn"); return; }
+  // 2026-11-05：整场连续录音走「采集包」导出，这里只导出旧版每球 5s 片段
+  all = all.filter(r => r.scope !== "run");
+  if (!all.length) {
+    log("没有旧版每球片段可导出（整场录音请用「■ 结束采集（导出包）」）", "log-warn");
+    return;
+  }
   // 2026-11-03：新增 silent / mic_label 字段，导出时一眼看出有没有白采
   const rows = ["file,seq,window_index,recorded_at,delta_ms,dur_ms,clip,note,source,silent,mic_label"];
   const files = [];
@@ -4145,7 +4273,7 @@ async function voiceExport() {
   summary.push(`蓝牙麦 ${btN} 段 / 手机麦 ${phoneN} 段 / 未记录 ${all.length - btN - phoneN - silentN + silentN - 0} 段`.replace(/ 0 段/g, ""));
   log(`已导出语音包：${all.length} 段音频 + voice_labels.csv｜${summary.join("｜")}`, silentN ? "log-warn" : "log-info");
   if (silentN && confirm(`导出完成，其中 ${silentN}/${all.length} 段疑似无语音（可能没在说话、蓝牙麦没连上或播放器静音）。要立即全部重录吗？`)) {
-    log("好的，你手动打「录音打标」按钮重录那几段；自动录音模式下下一球会自动覆盖同一 seq", "log-info");
+    log("旧片段无法事后补录：需要重采请用「▶ 纯录音采集」整场录（连续录音不会丢球）", "log-info");
   }
   if (confirm(`语音包已导出（${all.length} 段）。是否清空本地录音？`)) {
     await idbClear(); log("本地录音已清空", "log-info");
@@ -4153,19 +4281,6 @@ async function voiceExport() {
   await voiceUpdateStat();
 }
 
-$("voiceRecBtn").addEventListener("click", () => {
-  if (voiceRec && voiceRec.state === "recording") { voiceStopRec(); return; }
-  if (NATIVE) {
-    const seq = sessionWindows.length ? sessionWindows[sessionWindows.length - 1].meta.seq : -1;
-    try {
-      NATIVE.recordNow(seq);
-      log(`原生录音 5 秒 → seq=${seq >= 0 ? seq : "最近窗口"}`, "log-info");
-    } catch (e) { log("原生录音调用失败: " + e.message, "log-fail"); }
-    return;
-  }
-  voiceStartRec();
-});
-$("voiceUndoBtn").addEventListener("click", voiceUndo);
 $("voiceExportBtn").addEventListener("click", voiceExport);
 // 2026-11-03：首页/我的页录音按钮已删除（全挪到采集页），此处只绑采集页的控件
 $("voiceClearBtn").addEventListener("click", async () => {
@@ -4177,40 +4292,12 @@ $("voiceClearBtn").addEventListener("click", async () => {
   }
 });
 
-function paintVoiceAuto() {
-  const b = $("voiceAutoBtn");
-  if (b) {
-    b.textContent = `自动录音：${voiceAuto ? "开" : "关"}`;
-    b.classList.toggle("on", voiceAuto);
-  }
-  voiceUpdateStat();
-  colRefresh();                     // 采集页录音开关同步
-}
-async function voiceAutoToggle() {
-  voiceAuto = !voiceAuto;
-  localStorage.setItem("nt_voice_auto", voiceAuto ? "1" : "0");
-  paintVoiceAuto();
-  ttsMute(voiceAuto);                     // 开=静音播报（防 TTS 录进音频）；关=恢复正常鼓励语音
-  if (NATIVE) {
-    // 原生壳：开关直接下发给前台服务；页面不开麦，避免和原生录音抢输入
-    try { NATIVE.setVoiceAuto(voiceAuto); } catch (e) {}
-  } else if (voiceAuto) {
-    await voicePrimeMic();   // 紧接点击调用，保住用户手势（先 await 别的会丢手势导致授权失败）
-  }
-  await voiceWakeLock(voiceAuto);
-  // 需求通知 R2：开启自动录音时申请本地存储持久化，避免浏览器在存储压力下清掉 IndexedDB 录音
-  if (voiceAuto && navigator.storage && navigator.storage.persist) {
-    navigator.storage.persist()
-      .then(ok => log(`本地存储持久化：${ok ? "已授权（录音防清理）" : "未授权（浏览器可能在压力下清理）"}`,
-                      ok ? "log-info" : "log-warn"))
-      .catch(() => {});
-  }
-  log(voiceAuto ? (NATIVE ? "自动录音已开启：每球由原生壳录 5 秒（锁屏不中断；语音播报自动静音）"
-                              : "自动录音已开启：每球窗口到达即录 5 秒（保持页面在前台；语音播报自动静音）")
-                : "录音打标已关闭：不录音，恢复正常语音播报", "log-info");
-}
-$("voiceAutoBtn").addEventListener("click", voiceAutoToggle);
 $("voiceDevSel").addEventListener("change", async e => {
+  if (capOn) {
+    e.target.value = "";
+    log("采集中不能切换麦克风：请先「■ 结束采集」再改（否则会打断正在写的整场录音）", "log-warn");
+    return;
+  }
   if (NATIVE) {
     log("原生壳录音走系统默认输入（手机麦/系统路由），页面里的麦克风选择不生效", "log-warn");
     return;
@@ -4234,21 +4321,18 @@ $("voiceDevSel").addEventListener("change", async e => {
   await voicePrimeMic();
 });
 $("voiceMicRetry").addEventListener("click", () => {
+  if (capOn) { log("采集中不能重新检测麦克风：请先「■ 结束采集」", "log-warn"); return; }
   if (NATIVE) { log("原生壳录音由前台服务直接采，无需页面授权麦克风", "log-info"); return; }
   voicePrimeMic();
 });
-paintVoiceAuto();
-ttsMute(voiceAuto);
-if (NATIVE) { try { NATIVE.setVoiceAuto(voiceAuto); } catch (e) {} }   // 页面加载时同步录音开关
+ttsMute(false);
+if (NATIVE) { try { NATIVE.setVoiceAuto(false); } catch (e) {} }   // 采集才录音：加载时保持关闭
 voiceListDevices();
 voiceUpdateStat();
 micStatRefresh();
-// 2026-11-03：首次启动（无 localStorage 标记）自动开自动录音 —— 用户不用记这个开关
-// 需要用户手势才能拿麦克风权限，所以等用户首次点"开始录像 / 连接设备 / 任意按钮"时再 prime
-// 这里只在 voiceAuto=true 时把状态条刷成"待授权（点任意按钮开始录音）"
-if (voiceAuto && !NATIVE && !localStorage.getItem("nt_voice_primed")) {
-  log("录音打标已默认开启：首次触碰任意按钮后自动激活麦克风授权", "log-info");
-  // 用户首次手势触发时自动 prime + 标记
+// 2026-11-05：录音改为「开始采集」统一控制；这里只做一次性的麦克风授权预热
+if (!NATIVE && !localStorage.getItem("nt_voice_primed")) {
+  log("首次触碰任意按钮后自动激活麦克风授权（点「开始采集」即可录音）", "log-info");
   const primeOnce = async () => {
     if (localStorage.getItem("nt_voice_primed")) return;
     localStorage.setItem("nt_voice_primed", "1");
@@ -4329,7 +4413,7 @@ $("exportSessionCsvBtn").addEventListener("click", () => {
   // 按接收顺序拼接全部窗口（含 FAIL/异物/丢包），Python 端按 seq 列分组即可逐窗口对比
   let body = "";
   for (const w of sessionWindows) body += buildCsvRows(w);
-  const tag = sessionTag();
+  const tag = capTag || sessionTag();       // 2026-11-05：与视频/音频同名
   download(`tennis_session_${tag}.csv`, CSV_HEADER + body, "text/csv");
   log(`已导出本次连接全部 ${sessionWindows.length} 个窗口 ` +
       `(${sessionWindows.length * PROTO.WINDOW.samples} 行)`, "log-info");
@@ -4362,7 +4446,7 @@ let videoManifest = [];         // {name, sizeMb, lastModified} 只记元数据
 function paintPackStat() {
   const el = $("packStat");
   if (el) el.textContent = packExported
-    ? `已导出（${packExported.clips} 段语音 / ${packExported.sessions} 个会话）` : "";
+    ? `已导出（${packExported.clips} 条录音 / ${packExported.sessions} 个会话）` : "";
 }
 
 $("videoPick").addEventListener("change", (e) => {
@@ -4379,11 +4463,14 @@ $("videoPick").addEventListener("change", (e) => {
 async function packExport() {
   try {
     const all = await idbAll().catch(() => []);
+    const runRecs = all.filter(r => r.scope === "run");     // 2026-11-05：整场连续录音
+    const clips = all.filter(r => r.scope !== "run");       // 旧版每球 5s 片段（保留导出，便于历史数据）
     if (!sessionWindows.length && !all.length && !pastSessions.length) {
       log("导出失败：本次没有窗口也没有录音，先采集再导出", "log-fail");
       return;
     }
-    const tag = sessionTag();
+    // 2026-11-05：CSV / 视频 / 音频统一用本轮采集 tag，文件名一一对得上
+    const tag = capTag || sessionTag();
     const root = `pack_${tag}/`;
     const enc = new TextEncoder();
     const files = [];
@@ -4407,13 +4494,33 @@ async function packExport() {
     for (const ps of pastSessions) {
       pushSession(`tennis_session_${ps.tag}.csv`, ps.csv, ps.windows, ps.start, ps.end);
     }
-    // voice/：clips + voice_labels.csv（11 列，与单独导出语音包完全一致）
+    // voice/：整场连续录音（tennis_session_<tag>_audio.webm）+ 打点表（..._marks.csv）
+    //         旧版每球 5s 片段仍按旧结构导出（clips + voice_labels.csv），历史数据不丢
     const vrows = ["file,seq,window_index,recorded_at,delta_ms,dur_ms,clip,note,source,silent,mic_label"];
     const sessSeqs = new Set(sessionWindows.map(w => w.meta.seq));
     const missingSeq = [];
-    let silentN = 0, btN = 0, phoneN = 0;
-    for (let i = 0; i < all.length; i++) {
-      const r = all[i];
+    let silentN = 0, btN = 0, phoneN = 0, runN = 0, markN = 0;
+    for (const r of runRecs) {
+      const ext = (r.mime || "").includes("mp4") ? "m4a" : "webm";
+      const nm = `tennis_session_${r.sessionTag}_audio.${ext}`;
+      files.push({ name: root + "voice/" + nm, data: new Uint8Array(await r.blob.arrayBuffer()) });
+      const marks = r.marks || [];
+      markN += marks.length;
+      // B95 P0-1：末尾追加 audioTMs（相对音频真正起点）；原有列顺序/含义不动
+      const mrows = ["seq,t_ms,recorded_at,impact_type,speed_kmh,side,note,audioTMs"];
+      for (const m of marks) {
+        mrows.push([m.seq, m.tMs, m.at, m.impactType, m.speedKmh, m.side,
+                    `"${String(m.note || "").replace(/"/g, '""')}"`,
+                    m.audioTms === undefined ? "" : m.audioTms].join(","));
+      }
+      files.push({ name: root + `voice/tennis_session_${r.sessionTag}_marks.csv`,
+                   data: enc.encode("\ufeff" + mrows.join("\n") + "\n") });
+      const mk = micKindOf(r.micLabel);
+      if (mk === "蓝牙耳机") btN++; else if (r.micLabel) phoneN++;
+      runN++;
+    }
+    for (let i = 0; i < clips.length; i++) {
+      const r = clips[i];
       if (r.silent) silentN++;
       const mk = micKindOf(r.micLabel);
       if (mk === "蓝牙耳机") btN++; else if (r.micLabel) phoneN++;
@@ -4427,7 +4534,7 @@ async function packExport() {
                   `"${String(r.micLabel || "").replace(/"/g, '""')}"`].join(","));
       if (!sessSeqs.has(r.seq)) missingSeq.push(r.seq);
     }
-    if (all.length) {
+    if (clips.length) {
       files.push({ name: root + "voice/voice_labels.csv",
                    data: enc.encode("\ufeff" + vrows.join("\n") + "\n") });
     }
@@ -4437,16 +4544,27 @@ async function packExport() {
                    data: enc.encode("\ufeff" + sessionLogCsvRows().join("\n") + "\n") });
     }
     // videos/manifest.csv：只记文件名/大小/修改时刻，不复制视频本体
-    if (videoManifest.length) {
+    // 2026-11-05：本轮 App 自己录的视频 = tennis_session_<capTag>_video.webm，与 CSV/音频同名
+    if (videoManifest.length || capVideoName) {
       const mrows = ["file,size_mb,last_modified,note"];
+      if (capVideoName) {
+        mrows.push([capVideoName, capVideoSizeMb, new Date(capStartTs).toISOString(), "app-capture"].join(","));
+      }
       for (const v of videoManifest) mrows.push([v.name, v.sizeMb, v.lastModified, ""].join(","));
       files.push({ name: root + "videos/manifest.csv",
                    data: enc.encode("\ufeff" + mrows.join("\n") + "\n") });
     }
     // meta.json
+    const runRec = runRecs.find(r => r.sessionTag === tag) || runRecs[0] || null;
+    const aStart = (runRec && runRec.audioStartTs) || capAudioStartTs || 0;
+    const aEnd = (runRec && runRec.audioEndTs) || capAudioEndTs || 0;
+    const aSegs = runRec ? (runRec.segments || []) : (capTag ? capAudioSegs : []);
     const meta = {
       app_version: APP_BUILD,
       sessionTag: tag,
+      // B95 P0-2：本会话 App 重编号后的 seq 起点/末值（固件 raw seq 可能重连归零，导出以这里为准）
+      seq_base: seqBase,
+      seq_last: sessionWindows.length ? seqLast : null,
       exported_at: new Date().toISOString(),
       device_name: $("devName").textContent || "",
       window_contract: { samples: PROTO.WINDOW.samples, channels: PROTO.WINDOW.channels,
@@ -4454,18 +4572,39 @@ async function packExport() {
       sessions: sessFiles,
       // 2026-11-03：voice 字段扩 silent / mic 统计，事后一眼看出耳机是否连上
       voice: {
-        clips: all.length, missing_seq: missingSeq,
+        run_audio: runN, marks: markN,          // 2026-11-05：整场连续录音段数 / 打点数
+        clips: clips.length, missing_seq: missingSeq,
         silent_count: silentN,
         mic_bt_count: btN, mic_phone_count: phoneN,
-        mic_auto_label: localStorage.getItem("nt_voice_label") || null
+        mic_auto_label: localStorage.getItem("nt_voice_label") || null,
+        // B95：采样率（浏览器给不出则为空）、录音分片数、采集中麦克风切换次数
+        sample_rate: (runRec && runRec.sampleRate) || capAudioSampleRate || null,
+        chunks: (runRec && runRec.chunks) || capAudioChunksN || 0,
+        mic_changes: (runRec && runRec.micChanges) || capMicChanges || 0
       },
-      video_hint: "视频不在此包内，请与 MP4 放同一目录"
+      capture: { mode: capTag ? (capOn || "stopped") : null, tag: capTag || null,
+                 started_at: capStartTs ? new Date(capStartTs).toISOString() : null,
+                 // B95 P0-1：音频真正起止（打点换算成音频内位置必须用这两个时刻）
+                 audio_start_ts: aStart ? new Date(aStart).toISOString() : null,
+                 audio_end_ts: aEnd ? new Date(aEnd).toISOString() : null,
+                 audio_segments: aSegs.map(s => ({ start_ts: s.start_ts || null,
+                                                   end_ts: s.end_ts || null,
+                                                   dur_ms: s.dur_ms || 0,
+                                                   chunks: s.chunks || 0,
+                                                   mic_label: s.mic_label || null })),
+                 files: { csv: `tennis_session_${tag}.csv`,
+                          video: capVideoName || null,
+                          audio: runRec ? `tennis_session_${tag}_audio.` +
+                                 ((runRec.mime || "").includes("mp4") ? "m4a" : "webm") : null,
+                          marks: runRec ? `tennis_session_${tag}_marks.csv` : null } },
+      video_hint: "视频未复制进包（避免大文件内存崩溃），同目录下按 manifest 的文件名自行配对"
     };
     files.push({ name: root + "meta.json", data: enc.encode(JSON.stringify(meta, null, 2)) });
-    download(`pack_${tag}.zip`, zipBuild(files), "application/zip");
+    download(capFileName("pack"), zipBuild(files), "application/zip");
     packExported = { clips: all.length, sessions: sessFiles.length, at: new Date() };
     paintPackStat();
-    log(`已导出采集包 pack_${tag}.zip（会话 ${sessFiles.length} 个 / 窗口 ${sessionWindows.length} + 语音 ${all.length} 段 + 日志 ${connLog.length} 条）`, "log-pass");
+    log(`已导出采集包 ${capFileName("pack")}（会话 ${sessFiles.length} 个 / 窗口 ${sessionWindows.length}`
+        + ` + 整场录音 ${runN} 段（打点 ${markN}） + 旧片段 ${clips.length} + 日志 ${connLog.length} 条）`, "log-pass");
     // R3：导出成功后提示可清空本地录音（用户决定，不自动清）
     if (all.length && confirm(`采集包已导出（含 ${all.length} 段录音）。是否清空本地录音？`)) {
       await idbClear(); await voiceUpdateStat();
@@ -4475,7 +4614,11 @@ async function packExport() {
     log(`导出采集包失败：${e.message}（未生成文件，请重试）`, "log-fail");
   }
 }
-$("exportPackBtn").addEventListener("click", packExport);
+$("exportPackBtn").addEventListener("click", () => {
+  // 2026-11-05：采集中导出会漏掉还在写的整场音频，先结束采集（结束后会自动导出）
+  if (capOn) { log("采集中：请先点「■ 结束采集」，结束会自动导出采集包", "log-warn"); return; }
+  packExport();
+});
 
 // ---------- 页4：家长回顾（只和自己比；零术语、不给排名）----------
 const REVIEW_KEY = "nt_review_v1";
@@ -4781,8 +4924,10 @@ async function camOpen() {
     camLog("当前浏览器不支持摄像头（需 https 或 localhost）", true); return false;
   }
   try {
+    // 2026-11-05：视频流只要画面（audio:false）—— 音频统一由 capAudioStart 常开录制，
+    // 两路 getUserMedia 抢同一麦克风会互相挤掉（尤其蓝牙耳机）
     camStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
+      audio: false,
       video: { facingMode: { ideal: "environment" },
                width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
     });
@@ -4793,27 +4938,40 @@ async function camOpen() {
   v.srcObject = camStream;
   try { await v.play(); } catch (_) {}
   $("camOff").style.display = "none";
-  camLog("摄像头已开启（后置优先，含麦克风）", false);
+  camLog("摄像头已开启（后置优先）", false);
   log("采集页：摄像头已开启", "log-info");
   return true;
 }
-// 2026-11-02 用户要求：停止录像后立即自动导出采集包，一键完成
-let autoPackAfterRec = false;
-async function camStopRec(autoPack = false) {
-  if (!camRec || camRec.state === "inactive") {
-    camLog("当前没有在录像", false);
-    if (autoPack) await packExport();     // 没录像但用户点了"一键结束"——只出 zip
-    return;
+
+// 纯录音采集：释放摄像头、隐藏画面（不动已经在录的音频）
+function camRelease() {
+  if (camRec && camRec.state !== "inactive") {
+    camRec.onstop = null;            // 不当作一次正常录像：不下载、不写 manifest
+    try { camRec.stop(); } catch (e) {}
+    camRec = null; camChunks = [];
   }
-  autoPackAfterRec = autoPack;
-  camRec.stop();
+  if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+  const v = $("camVideo"); if (v) v.srcObject = null;
+  if ($("camWrap")) $("camWrap").style.display = "none";
+  clearInterval(camTimer); camTimer = null;
+  $("camRecTag").classList.remove("on");
   camWake(false);
 }
+
+// 停止录像：等 onstop 完成（视频已下载、文件名已回填）再返回，保证随后导出采集包时清单正确
+let camStopResolve = null;
+async function camStopRec() {
+  if (!camRec || camRec.state === "inactive") { camLog("当前没有在录像", false); return null; }
+  return new Promise(resolve => {
+    camStopResolve = resolve;
+    try { camRec.stop(); } catch (e) { camStopResolve = null; resolve(null); }
+  });
+}
 async function camStartRec() {
-  if (camRec && camRec.state !== "inactive") { camLog("已在录像中", false); return; }
-  if (!(await camOpen())) return;
+  if (camRec && camRec.state !== "inactive") { camLog("已在录像中", false); return true; }
+  if (!(await camOpen())) return false;
   const mime = camPickMime();
-  if (!mime) { camLog("本浏览器不支持 MediaRecorder", true); return; }
+  if (!mime) { camLog("本浏览器不支持 MediaRecorder", true); return false; }
   camChunks = [];
   camAutoPaused = false;     // 新一段录像：清掉捡球暂停标记
   camRec = new MediaRecorder(camStream, { mimeType: mime, videoBitsPerSecond: 4000000 });
@@ -4823,47 +4981,40 @@ async function camStartRec() {
     clearInterval(camTimer); camTimer = null;
     $("camRecTag").classList.remove("on");
     camAutoPaused = false;
-    const t0 = camRecStart || Date.now();   // 先取开始时刻，再清状态
     camRecStart = 0;
-    $("camRecBtn").textContent = "开始录像";
-    if (!camChunks.length) { camLog("已停止，但没有录到数据", true); return; }
+    if (!camChunks.length) {
+      camLog("已停止，但没有录到数据", true);
+      if (camStopResolve) { const r = camStopResolve; camStopResolve = null; r(null); }
+      return;
+    }
     const blob = new Blob(camChunks, { type: mime.split(";")[0] });
     camChunks = [];
-    // 2026-11-05：文件名改为「开始_结束」双时间戳，避免把结束时刻当起点（跨天各自带日期）
-    const p = n => String(n).padStart(2, "0");
-    const stamp = t => { const d = new Date(t);
-      return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_` +
-             `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
-    const s0 = stamp(t0), s1 = stamp(Date.now());
-    const name = s0.slice(0, 8) === s1.slice(0, 8)
-      ? `video_${s0}-${s1.slice(9)}.webm`      // 同日：video_20261105_140000-140300.webm
-      : `video_${s0}-${s1}.webm`;              // 跨日：两端都带日期
+    // 2026-11-05：与 CSV/音频同名 —— tennis_session_<capTag>_video.webm
+    const ext = mime.includes("mp4") ? "mp4" : "webm";
+    const name = capFileName("video", ext);
+    capVideoName = name;
+    capVideoSizeMb = +(blob.size / 1048576).toFixed(1);
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-    camLog(`已保存 ${name}（${(blob.size / 1048576).toFixed(1)} MB）`, false);
+    camLog(`视频已保存 ${name}（${capVideoSizeMb} MB）`, false);
     log(`采集页：视频已保存 ${name}`, "log-info");
-    // 2026-11-02：视频下载完自动导出采集包（一键结束）
-    if (autoPackAfterRec) {
-      autoPackAfterRec = false;
-      camLog("视频已保存，正在导出采集包…", false);
-      setTimeout(() => packExport(), 500);
-    }
+    if (camStopResolve) { const r = camStopResolve; camStopResolve = null; r({ name, sizeMb: capVideoSizeMb }); }
   };
   camRec.start(3000);        // 3s 分片
   camRecStart = Date.now();
   $("camRecTag").classList.add("on");
   $("camRecTag").textContent = "● 录像中";
-  $("camRecBtn").textContent = "录像中…";
   camWake(true);
   camTimer = setInterval(() => {
     if (camAutoPaused) { camLog("录像已暂停（捡球中）", false); return; }
     const s = Math.round((Date.now() - camRecStart) / 1000);
-    camLog(`录像中 ${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}　点「停止并下载」结束`, false);
+    camLog(`视频采集中 ${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`, false);
   }, 1000);
-  log("采集页：已开始录像", "log-info");
+  log(`采集页：视频已开始（${capFileName("video", mime.includes("mp4") ? "mp4" : "webm")}）`, "log-info");
+  return true;
 }
 
 // ---------- 采集页：当前采集块（大字显示「这一块要做什么」，不是判决话术） ----------
@@ -4927,7 +5078,8 @@ function colRefresh() {
     if ($("cConn") && cs) { $("cConn").textContent = cs.textContent; $("cConn").className = cs.className; }
     if ($("cDev")) $("cDev").textContent = $("devName").textContent;
     if ($("cBatt")) $("cBatt").textContent = "电量 " + $("devBatt").textContent;
-    if ($("cVoice")) $("cVoice").textContent = voiceAuto ? "开（每球 5 秒）" : "关";
+    if ($("cVoice")) $("cVoice").textContent = capOn
+      ? (capOn === "video" ? "开（视频采集）" : "开（纯录音采集）") : "关";
     if ($("cState")) $("cState").textContent = sessionState === "train" ? "训练中" : "捡球/暂停";
     // 大字提示 = 当前采集块的动作要求（不是判决话术）
     const b = COL_BLOCKS[colBlk] || COL_BLOCKS[0];
@@ -4950,10 +5102,11 @@ if ($("cBlkSel")) {
 if ($("cPrevBlk")) $("cPrevBlk").addEventListener("click", () => colBlkSet(colBlk - 1));
 if ($("cNextBlk")) $("cNextBlk").addEventListener("click", () => colBlkSet(colBlk + 1));
 
-// 摄像头进入采集页自动开启（2026-11-02 用户要求：取消「开摄像头」按钮）
-if ($("camOff")) $("camOff").addEventListener("click", () => camOpen());   // 失败时点画面重试
-if ($("camRecBtn")) $("camRecBtn").addEventListener("click", () => camStartRec());
-if ($("camSaveBtn")) $("camSaveBtn").addEventListener("click", () => camStopRec(true));
+// 摄像头：只在「▶ 视频采集」时打开；纯录音采集不碰摄像头
+if ($("camOff")) $("camOff").addEventListener("click", () => { if (capOn === "video") camOpen(); });
+if ($("capStartVideo")) $("capStartVideo").addEventListener("click", () => capStart("video"));
+if ($("capStartAudio")) $("capStartAudio").addEventListener("click", () => capStart("audio"));
+if ($("capStopBtn")) $("capStopBtn").addEventListener("click", () => capStop(true));
 // 全屏按钮：避开浏览器省电策略（Android Chrome 全屏下 wakeLock 更宽容；iOS Safari 全屏也是 PWA 前置）
 if ($("camFsBtn")) $("camFsBtn").addEventListener("click", async () => {
   try {
@@ -4981,7 +5134,8 @@ function switchPage(id) {
     reviewRender();           // 进页时把本次训练入账（幂等）并刷新回顾数据
   } else if (id === "page6") {
     colRefresh();             // 采集页：大字计数/连接/录音状态
-    camOpen();                // 进页自动开摄像头（已开则内部直接返回）
+    capPaint();               // 2026-11-05：不再进页自动开摄像头（纯录音采集必须关摄像头）
+    if (capOn !== "video" && $("camWrap")) $("camWrap").style.display = "none";
   }
 }
 tabBtns.forEach(b => b.addEventListener("click", () => switchPage(b.dataset.page)));
