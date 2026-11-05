@@ -559,7 +559,13 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B92-20261105-1030";   // B92：录像文件名改为「开始_结束」双时间戳（video_YYYYMMDD_HHMMSS-HHMMSS.webm），修正过去按结束时刻当起点的问题；sw.js 缓存 v33。B91：原生壳接管语音打标（__ntVoice*，锁屏不再静音）。B90：Android 原生壳桥接（__ntChunk/__ntStatus，NATIVE 走前台服务直连 BLE）。B89：B88 的 perf 日志加上包间隔分布（最小/最大/均值 + ≤20ms 占比），用于区分「每包一个连接间隔」与「突发后停顿」；sw.js CACHE nexttennis-v30。B88：新增 [perf] 传输诊断日志（首片→末片/末片→交付/通知包数/单包字节/包间隔）。B87：麦克风判定规则修正
+const APP_BUILD = "APP-B93-20261105-1630";   // B93：Late Contact 特征（击球点偏后识别前置）——复刻固件 B58 line 727-755：全窗 |gyro| 合成 + 5 点盒式平滑 + 找峰值 pk_idx + 10% 峰值前回溯 rise_start，输出 pk_vs_t0_ms 和 t_rise_ms 两个原始值（不判决）。改动点：①新增 computeLateContactFeatures() 30 行 ②onWindow 里调用并推入独立 windowLog[] 数组（容量 2000，防 connLog 500 上限被冲）③session_log.csv 新增 pk_vs_t0_ms / t_rise_ms 两列（event=window 行有值，其他事件留空），窗口日志带 [CALC] 标签与固件 [CLASS] 比对，容忍 ±5ms。所有窗口（含敲拍）都计算。sw.js CACHE nexttennis-v34
+                                             // B92：录像文件名改为「开始_结束」双时间戳（video_YYYYMMDD_HHMMSS-HHMMSS.webm）
+                                             // B91：原生壳接管语音打标（__ntVoice*，锁屏不再静音）
+                                             // B90：Android 原生壳桥接（__ntChunk/__ntStatus，NATIVE 走前台服务直连 BLE）
+                                             // B89：B88 的 perf 日志加上包间隔分布（最小/最大/均值 + ≤20ms 占比）
+                                             // B88：新增 [perf] 传输诊断日志（首片→末片/末片→交付/通知包数/单包字节/包间隔）
+                                             // B87：麦克风判定规则修正（BT_MIC_LABEL_RE 删 headset，新增 PHONE_MIC_RE 排除 earpiece/speaker）
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -1353,6 +1359,51 @@ function setConn(text, cls) {
   colRefresh();                     // 采集页连接状态同步（函数声明提升，连接时才调用）
 }
 
+// =====================================================
+// computeLateContactFeatures — 复刻固件 B58 line 727-755（击球点偏后识别）
+// 输入：win[396][12] int16 原始窗口（BLE payload 拼好后）
+// 输出：{ pk_idx, pk_vs_t0_ms, t_rise_ms }
+// =====================================================
+function computeLateContactFeatures(win) {
+  const WIN_SAMPLES = 396;
+  const GYRO_LSB = 0.140;       // dps/LSB（±4000dps 档）
+  const T0_IDX = 186;           // 固件 buildWindow：idx 186 = T0
+  const DT_MS = 5;              // 混合速率近似 5ms/idx（Python 端 detect_t0 用精确映射；±5ms 容忍）
+
+  // 1) 全窗口 |gyro| 合成（固件 line 727-732）
+  const g_raw = new Float32Array(WIN_SAMPLES);
+  for (let i = 0; i < WIN_SAMPLES; i++) {
+    const gx = win[i][3], gy = win[i][4], gz = win[i][5];
+    g_raw[i] = Math.sqrt(gx * gx + gy * gy + gz * gz) * GYRO_LSB;
+  }
+
+  // 2) 5 点盒式平滑（固件 line 735-742）
+  const g_smooth = new Float32Array(WIN_SAMPLES);
+  for (let i = 0; i < WIN_SAMPLES; i++) {
+    const lo = Math.max(0, i - 2), hi = Math.min(WIN_SAMPLES, i + 3);
+    let sum = 0;
+    for (let j = lo; j < hi; j++) sum += g_raw[j];
+    g_smooth[i] = sum / (hi - lo);
+  }
+
+  // 3) 找峰值（固件 line 744-748）
+  let pk_idx = 0, pk_val = g_smooth[0];
+  for (let i = 1; i < WIN_SAMPLES; i++) {
+    if (g_smooth[i] > pk_val) { pk_val = g_smooth[i]; pk_idx = i; }
+  }
+
+  // 4) pk_vs_t0（固件 line 750）
+  const pk_vs_t0_ms = (pk_idx - T0_IDX) * DT_MS;
+
+  // 5) t_rise：10% 峰值向前回溯（固件 line 752-755）
+  const ten_pct = 0.1 * pk_val;
+  let rise_start = pk_idx;
+  while (rise_start > 0 && g_smooth[rise_start] > ten_pct) rise_start--;
+  const t_rise_ms = (pk_idx - rise_start) * DT_MS;
+
+  return { pk_idx, pk_vs_t0_ms, t_rise_ms };
+}
+
 // ---------- 窗口到达（冲击协议 / mock 共用） ----------
 function onWindow(meta, data) {
   let res;
@@ -1384,6 +1435,24 @@ function onWindow(meta, data) {
     meta.volTier = { pre_tier: "skip", post_tier: "skip", confidence: "low", base_src: null };
   }
   log(`[vol] ${isAnchor ? '锚点窗跳过' : ('pre=' + (meta.vol.pre_deg ? meta.vol.pre_deg.toFixed(1)+'°' : '—') + ' post=' + (meta.vol.post_deg ? meta.vol.post_deg.toFixed(1)+'°' : '—') + ' ratio=' + (meta.vol.ratio ? meta.vol.ratio.toFixed(2) : '—') + ' rev=' + meta.vol.revIdx + ' conf=' + meta.vol.confidence + ' baseN=' + ((volLoadBase()[side] || []).length) + ' src=' + meta.volTier.base_src)}`, "log-info");
+
+  // ---- Late Contact 特征（固件 B58 复刻，击球点偏后识别用，仅记录不判决）----
+  try {
+    meta.late = computeLateContactFeatures(data);
+    windowLog.push({
+      t: Date.now(),
+      seq: meta.seq,
+      impactType: meta.impactType || "",
+      pkIdx: meta.late.pk_idx,
+      pkVsT0Ms: meta.late.pk_vs_t0_ms,
+      tRiseMs: meta.late.t_rise_ms,
+    });
+    if (windowLog.length > WINDOWLOG_MAX) windowLog.splice(0, windowLog.length - WINDOWLOG_MAX);
+    log(`[CALC] seq=${meta.seq} pk_idx=${meta.late.pk_idx} pk_vs_t0_ms=${meta.late.pk_vs_t0_ms >= 0 ? "+" : ""}${meta.late.pk_vs_t0_ms} t_rise_ms=${meta.late.t_rise_ms}`, "log-info");
+  } catch (e) {
+    log(`[CALC] Late Contact 计算异常: ${e.message}`, "log-warn");
+  }
+
   currentWindow = w;
   sessionWindows.push(w);        // 含 FAIL 窗口，全部留存到本次会话结束
   voiceAutoTrigger(meta);        // 自动录音：击球窗口一到达即录 5 秒（无按键）
@@ -2940,6 +3009,10 @@ function updateQcPanel(res) {
 // =====================================================================
 const CONNLOG_MAX = 500;
 let connLog = [];            // {t,event,device,sessionTag,reason,lastSeq,gapS,windows60s,rssi,note}
+// 2026-11-05 Late Contact 特征：窗口级数据独立数组，防 connLog 500 上限被冲掉
+// 导出时合并进 session_log.csv 作为 event=window 行，新增 pk_vs_t0_ms / t_rise_ms 两列
+const WINDOWLOG_MAX = 2000;
+let windowLog = [];          // {t, seq, impactType, pkIdx, pkVsT0Ms, tRiseMs}
 // 页面生命周期内的历史会话快照（2026-11-01 需求通知 R2「每个会话一个文件」）：
 // 现场一次页面里会连 4~5 次（每次重连都会清空 sessionWindows），不归档就会只剩最后一段
 let pastSessions = [];       // {tag, csv, windows, start, end}
@@ -3030,19 +3103,41 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // R4 会话日志导出：固定列结构，缺项留空；与窗口 CSV 完全分离
+// 2026-11-05 Late Contact：合并 connLog（事件）+ windowLog（窗口级特征），按时间排序
+// 新增 2 列：pk_vs_t0_ms / t_rise_ms（仅 event=window 行有值，其他事件留空）
 function sessionLogCsvRows() {
-  const rows = ["t_iso,event,device,sessionTag,reason,lastSeq,gapS,windows60s,rssi,note"];
+  const rows = ["t_iso,event,device,sessionTag,reason,lastSeq,gapS,windows60s,rssi,note,pk_vs_t0_ms,t_rise_ms"];
+  const all = [];
   for (const e of connLog) {
-    rows.push([new Date(e.t).toISOString(), e.event || "", e.device || "", e.sessionTag || "",
-               e.reason || "", e.lastSeq ?? "", e.gapS ?? "", e.windows60s ?? "", e.rssi ?? "",
-               `"${String(e.note || e.err || "").replace(/"/g, '""')}"`].join(","));
+    all.push({
+      t: e.t, event: e.event || "", device: e.device || "", sessionTag: e.sessionTag || "",
+      reason: e.reason || "", lastSeq: e.lastSeq ?? "", gapS: e.gapS ?? "",
+      windows60s: e.windows60s ?? "", rssi: e.rssi ?? "",
+      note: String(e.note || e.err || "").replace(/"/g, '""'),
+      pkVsT0Ms: "", tRiseMs: "",
+    });
+  }
+  for (const w of windowLog) {
+    all.push({
+      t: w.t, event: "window", device: "", sessionTag: sessionTag(),
+      reason: w.impactType || "", lastSeq: w.seq ?? "", gapS: "",
+      windows60s: "", rssi: "",
+      note: `pk_idx=${w.pkIdx}`,
+      pkVsT0Ms: w.pkVsT0Ms ?? "", tRiseMs: w.tRiseMs ?? "",
+    });
+  }
+  all.sort((a, b) => a.t - b.t);
+  for (const e of all) {
+    rows.push([new Date(e.t).toISOString(), e.event, e.device, e.sessionTag,
+               e.reason, e.lastSeq, e.gapS, e.windows60s, e.rssi,
+               `"${e.note}"`, e.pkVsT0Ms, e.tRiseMs].join(","));
   }
   return rows;
 }
 function sessionLogExport() {
-  if (!connLog.length) { log("暂无会话日志可导出", "log-warn"); return; }
+  if (!connLog.length && !windowLog.length) { log("暂无会话日志可导出", "log-warn"); return; }
   download(`session_log_${sessionTag()}.csv`, "\ufeff" + sessionLogCsvRows().join("\n") + "\n", "text/csv");
-  log(`已导出会话日志：${connLog.length} 条`, "log-info");
+  log(`已导出会话日志：事件 ${connLog.length} 条 + 窗口 ${windowLog.length} 条`, "log-info");
 }
 
 // R3 断连后自动重连 3 次（间隔 2s/4s/8s 累计 = 2/6/14s）；仅冲击协议、非用户主动断开时
