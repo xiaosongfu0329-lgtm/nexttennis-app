@@ -559,7 +559,7 @@
 "use strict";
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
-const APP_BUILD = "APP-B91-20261104-1500";   // B91：原生壳接管语音打标（__ntVoice*，锁屏不再静音）。B90：Android 原生壳桥接（__ntChunk/__ntStatus，NATIVE 走前台服务直连 BLE）。B89：B88 的 perf 日志加上包间隔分布（最小/最大/均值 + ≤20ms 占比），用于区分「每包一个连接间隔」与「突发后停顿」；sw.js CACHE nexttennis-v30。B88：新增 [perf] 传输诊断日志（首片→末片/末片→交付/通知包数/单包字节/包间隔）。B87：麦克风判定规则修正
+const APP_BUILD = "APP-B92-20261105-1030";   // B92：录像文件名改为「开始_结束」双时间戳（video_YYYYMMDD_HHMMSS-HHMMSS.webm），修正过去按结束时刻当起点的问题；sw.js 缓存 v33。B91：原生壳接管语音打标（__ntVoice*，锁屏不再静音）。B90：Android 原生壳桥接（__ntChunk/__ntStatus，NATIVE 走前台服务直连 BLE）。B89：B88 的 perf 日志加上包间隔分布（最小/最大/均值 + ≤20ms 占比），用于区分「每包一个连接间隔」与「突发后停顿」；sw.js CACHE nexttennis-v30。B88：新增 [perf] 传输诊断日志（首片→末片/末片→交付/通知包数/单包字节/包间隔）。B87：麦克风判定规则修正
                                              // 1543：新增识别项改为与引拍/随挥同格式的行，统一列进首页诊断卡
                                              // 1546：打框/拍面/流畅度/刷球压成一行「其它」，首页严格一屏
 
@@ -4728,14 +4728,21 @@ async function camStartRec() {
     clearInterval(camTimer); camTimer = null;
     $("camRecTag").classList.remove("on");
     camAutoPaused = false;
+    const t0 = camRecStart || Date.now();   // 先取开始时刻，再清状态
     camRecStart = 0;
     $("camRecBtn").textContent = "开始录像";
     if (!camChunks.length) { camLog("已停止，但没有录到数据", true); return; }
     const blob = new Blob(camChunks, { type: mime.split(";")[0] });
     camChunks = [];
-    const d = new Date(), p = n => String(n).padStart(2, "0");
-    const name = `video_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_` +
-                 `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.webm`;
+    // 2026-11-05：文件名改为「开始_结束」双时间戳，避免把结束时刻当起点（跨天各自带日期）
+    const p = n => String(n).padStart(2, "0");
+    const stamp = t => { const d = new Date(t);
+      return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_` +
+             `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
+    const s0 = stamp(t0), s1 = stamp(Date.now());
+    const name = s0.slice(0, 8) === s1.slice(0, 8)
+      ? `video_${s0}-${s1.slice(9)}.webm`      // 同日：video_20261105_140000-140300.webm
+      : `video_${s0}-${s1}.webm`;              // 跨日：两端都带日期
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = name;
