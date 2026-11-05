@@ -504,7 +504,7 @@
 <!-- 形态门限初值（与 app/data/form_thresholds_v1.json 同内容；file:// 直开时 fetch 不可用，用此内嵌块） -->
 <script type="application/json" id="formThresholdsJson">
 {
-  "version": "v1-20261028",
+  "version": "v1-20261105",
   "source": "20261027 四段 120fps 视频 pose 缓存 + 传感器宏观段；儿童 1 人初值；D7a 到位后升 v2",
   "backswing_duration_s": {
     "p10": 0.149,
@@ -552,7 +552,7 @@
 
 // App 构建标识（用来确认手机里跑的是哪一版 HTML；App 每次改动同步递增）
 // B96：球速雷达标定——estimateSpeed 原线性模型系统性高估 1.61 倍（1105 对拉 1.35 / 1104 发球 1.80），改为幂律输出校准 v=2.94×rawKmh^0.70（54 球，中位偏差 4.7%，44/54 在 ±10% 内）；sw.js CACHE nexttennis-v37
-const APP_BUILD = "APP-B96-20261105-2106";   // B95：B94 复核三项修复——①P0 音频真正起点 capAudioStartTs（rec.onstart/start 后记），marks.csv 末尾追加 audio_tms，meta.capture 增 audio_start_ts/audio_end_ts/audio_segments，meta.voice 增 sample_rate/chunks/mic_changes ②P0 同一 sessionTag 内 seq 由 App 重编号严格单调、重连不归零（固件 raw seq 只用于丢包检测），meta 增 seq_base/seq_last ③P2 采集中每 10s 检测麦克风 label 变化，写 session_log 的 mic_change 事件并计数。B94 已验证功能（持续录音/双采集键/统一文件名/非采集时播报/TTS 静音）不变。sw.js CACHE nexttennis-v36
+const APP_BUILD = "APP-B98-20261105-2245";   // B98：①P1 录音中断处理——capAudioInterrupt(reason) 由 rec.onerror / 音轨 ended / 异常 onstop 触发：先停本段并入库（前段不丢），写 session_log 的 audio_interrupt，再用默认输入重开一段（_p2/_p3、打点基准切新段起点、打点不清零），重开失败或本场超过 3 次 → 自动 capStop 并弹「录音中断，已停止采集」；meta.voice 增 audio_segments(含 interrupted)/mic_label_end/audio_interrupts，中断也计入 mic_changes；onstart 改为 500ms 未到才兜底；中断处理期间暂停 10s 轮询 ②球速档位 rel→abs：data/form_thresholds_v1.json 的 ball_speed 升 abs、删 upgrade、写 B96 标定门限与样本，JSON 版本与内嵌 formThresholdsJson 同步改 v1-20261105（纯元数据，不改 estimateSpeed/播报阈值/UI 文案）。sw.js CACHE nexttennis-v39
                                              // B93：Late Contact 特征（击球点偏后识别前置）——复刻固件 B58 line 727-755：全窗 |gyro| 合成 + 5 点盒式平滑 + 找峰值 pk_idx + 10% 峰值前回溯 rise_start，输出 pk_vs_t0_ms 和 t_rise_ms 两个原始值（不判决）。改动点：①新增 computeLateContactFeatures() 30 行 ②onWindow 里调用并推入独立 windowLog[] 数组（容量 2000，防 connLog 500 上限被冲）③session_log.csv 新增 pk_vs_t0_ms / t_rise_ms 两列（event=window 行有值，其他事件留空），窗口日志带 [CALC] 标签与固件 [CLASS] 比对，容忍 ±5ms。所有窗口（含敲拍）都计算。sw.js CACHE nexttennis-v34
                                              // B92：录像文件名改为「开始_结束」双时间戳（video_YYYYMMDD_HHMMSS-HHMMSS.webm）
                                              // B91：原生壳接管语音打标（__ntVoice*，锁屏不再静音）
@@ -1341,6 +1341,21 @@ function seqNext(rawSeq) {
   seqLast += 1;
   return seqLast;
 }
+// 2026-11-05（B96）：一次连接内按「场次」切分 CSV。
+// sessionWindows 仍保留本连接全部窗口（回顾页/窗口选择器/锚点判定不受影响），
+// 导出时按 csvSegs 逐段成文件，保证 CSV 与同 tag 的 _audio/_video/_marks 同名同范围。
+let csvSegs = [];              // [{tag, mode:"video"|"audio"|null, wins:[...]}]
+let csvOpenSeg = null;         // 当前正在累积的段
+function csvSegNew(tag, mode) {
+  const seg = { tag, mode, wins: [] };
+  csvSegs.push(seg); csvOpenSeg = seg;
+  return seg;
+}
+// 新开一个「未采集」段：本连接第一个用 <sessionTag>，后续 _s2/_s3 防重名
+function csvOpenUncap() {
+  const n = csvSegs.filter(s => s.mode === null && s.wins.length).length;
+  csvSegNew(n ? `${sessionTag()}_s${n + 1}` : sessionTag(), null);
+}
 let labeledCount = 0;
 // 会话状态：VTI 三重门限第 1 重。训练中才做震动提醒；捡球/暂停时静默（操作态过滤捡球弹响）
 let sessionState = "train";    // train | pause
@@ -1480,6 +1495,8 @@ function onWindow(meta, data) {
 
   currentWindow = w;
   sessionWindows.push(w);        // 含 FAIL 窗口，全部留存到本次会话结束
+  if (!csvOpenSeg) csvOpenUncap();     // B96：段记录（导出按段切 CSV，不混场）
+  csvOpenSeg.wins.push(w);
   // 2026-11-05：录音已由「开始采集」整场常开，这里不再按球起停，只记打点（见下方 capMarkAdd）
   updateWinSelector(true);
   updateQcPanel(res);
@@ -1662,8 +1679,11 @@ const VTI = {
   HALF_MS: 20,          // T0±20ms 观察窗
   F1_HALF_MS: 10,       // F1 门限的取峰窗（与 injury_analyzer.f1 同口径）
   GATE_F1_G: 10,        // 三重门限第 3 重：F1>10g 才给反馈（保留打框等高力度事件）
-  TH_FH: [100, 130],    // 正手 (预警, 干预)：20261027 148 窗 P75/P90 —— 冷启动兜底
-  TH_BH: [50, 60],      // 反手：暂用旧值，等反手 20+ 数据后重定 —— 冷启动兜底
+  // 20261105 重定（11-02~11-05 共 10 会话 410 唯一窗，去重后无负样本，仅按分布一致性定档）：
+  //   FH n=274 P75/P90=208/294；BH n=131 P75/P90=127/204
+  //   旧值 (100,130)/(50,60) 会让 FH/BH 各约 76% 正常球落入预警 → 明显过报
+  TH_FH: [208, 294],    // 正手 (预警, 干预)：P75/P90 —— 冷启动兜底
+  TH_BH: [127, 204],    // 反手 (预警, 干预)：P75/P90 —— 冷启动兜底
   // 自适应门限（20261029 实测：VTI 绝对值跨会话漂 5.3× / 0.6×，固定值不可跨硬件硬套）
   // 本次会话累积 ≥ADAPT_N 球后改用会话内 P75/P90；下限=固定值的 FLOOR_RATIO 倍，防"全员正常却报警"
   ADAPT_N: 12,
@@ -3491,9 +3511,10 @@ $("connectBtn").addEventListener("click", async () => {
   await cleanupBt();
   reviewCommit();          // 上一次会话先入账（用户没进回顾页也不会丢记录）
   parser.reset();
-  // 新连接：清空上一次连接的全部窗口，重新累积本次会话
-  archiveSession();        // 先归档上一段会话的 CSV（采集包 windows/ 每个会话一个文件）
+  // 新连接：先按段归档上一次连接的全部 CSV（采集场次各自成文件，不再混场），再清空
+  for (const seg of csvSegs) archiveSession(seg.tag, seg.wins, seg.mode);
   sessionWindows = [];
+  csvSegs = []; csvOpenSeg = null;
   colBlkBase = 0;                  // 采集页「本块球数」按新会话重新计（块选择保留）
   try { localStorage.setItem("nt_collect_base", "0"); } catch (_) {}
   shareCanvas = null;      // 上一次的分享卡片不再复用
@@ -3504,6 +3525,8 @@ $("connectBtn").addEventListener("click", async () => {
   vtiResetHist();                 // VTI 会话分位同样按连接冷启动
   sessionStartTs = Date.now();
   seqReset();                     // B95：新会话 tag，seq 从 0 重新开始（单调递增由 seqNext 保证）
+  csvOpenUncap();                 // B96：新连接的第一段（未采集，tag=<sessionTag>）
+  capTag = ""; capStartTs = 0; capVideoName = ""; capVideoSizeMb = 0; capVideos = [];   // 新连接不带上一场的采集身份
   currentWindow = null;
   goodStreak = 0;                 // 连击计数按连接重置
   setSessionState("train");       // 会话状态按连接重置（默认训练中）
@@ -3909,10 +3932,23 @@ let capAudioChunksN = 0;       // dataavailable 分片数
 let capAudioMicStart = "";     // 采集开始时的麦克风 label（中途切换不改写它）
 let capAudioSampleRate = "";   // 音轨采样率（浏览器给不出就留空）
 let capMicTimer = null, capMicChanges = 0;   // B95 P2：采集中每 10s 检查麦克风是否被切走
+// B96 P1：蓝牙耳机断开时 Android 上音轨多为直接 ended（label 不变），单靠轮询会漏；
+//          这里同时监听 track ended / devicechange，10s 轮询只作兜底
+let capMicEvtTs = 0;           // 去抖：同一次拔插被多个信号触发时只记一条
+let capMicEvtSrc = "";         // 上一条事件的来源（track_ended 后抑制设备列表回响）
+let capAudioDeviceId = "";     // 启动时实际使用的音轨 deviceId
+let capAudioDefaultId = "";    // 启动时的默认输入 deviceId（用于 devicechange 判定）
 let capAudioRec = null, capAudioStream = null, capAudioChunks = [], capAudioMic = "";
+// 2026-11-05（B98 P1）：耳机断开常导致音轨 ended / 录音器停摆，只记日志会产出「时长正常但静音」的音频。
+// 这里按「段」重开录音：前段照常入库，后段独立成 _p2/_p3，打点基准切到新段起点。
+let capAudioPartIdx = 0;       // 当前段号（1 起；中断重开后 +1）
+let capAudioRestarts = 0;      // 本场中断重开次数（最多 3 次）
+let capAudioStopping = false;  // 正在收尾/重开，避免 stop/error/ended 互相递归
+let capAudioMicEnd = "";       // 采集结束时实际使用的输入 label
 let capMarks = [];             // 每球打点（内存，停止时随音频一起入库 IndexedDB）
 let capTickTimer = null;
 let capVideoName = "", capVideoSizeMb = 0;   // 本轮视频文件名/大小（导出 manifest 用）
+let capVideos = [];                          // B97：一次连接里每场采集的视频各记一条（manifest 不再只留最后一场）
 
 function capNowTag(t) {
   const p = n => String(n).padStart(2, "0");
@@ -3954,6 +3990,7 @@ function capMarkAdd(meta) {
   const now = Date.now();
   capMarks.push({
     seq: meta.seq,
+    part: capAudioPartIdx || 1,             // B98：本打点属于第几段录音（中断重开后自动切换）
     tMs: now - capStartTs,                 // 打点相对"开始采集"（保留旧含义，兼容旧数据）
     audioTms: capAudioStartTs ? now - capAudioStartTs : "",   // B95：相对音频真正起点
     at: new Date(now).toISOString(),
@@ -4010,42 +4047,242 @@ async function capAudioStart() {
   }
   micStatRefresh();
   voiceListDevices();
-  capAudioStream = stream;
-  capAudioMic = voiceMicLabel;
   capAudioMicStart = voiceMicLabel;
+  capAudioMicEnd = voiceMicLabel;
   capAudioChunks = [];
-  // B95 P0-1：录音起点/分段/分片数全部重置；音频真正起点在 rec.onstart 里记
+  // B95 P0-1 / B98：录音起点、分段、分片、重开计数全部重置
   capAudioStartTs = 0; capAudioEndTs = 0;
   capAudioSegs = []; capAudioChunksN = 0; capMicChanges = 0;
+  capAudioPartIdx = 0; capAudioRestarts = 0; capAudioStopping = false;
+  capAudioBindDevices(stream);
+  return capAudioRecorderStart(stream, voiceMicLabel);
+}
+
+// 绑定当前 stream 的设备信息与音轨事件（首段与中断重开段共用）
+function capAudioBindDevices(stream) {
   try {
     const tr = stream.getAudioTracks()[0];
     const st = tr && tr.getSettings ? tr.getSettings() : {};
-    capAudioSampleRate = st.sampleRate || "";
-  } catch (e) { capAudioSampleRate = ""; }
+    capAudioSampleRate = st.sampleRate || capAudioSampleRate || "";
+    capAudioDeviceId = st.deviceId || "";
+  } catch (e) { /* 忽略 */ }
+  capMicEvtTs = 0; capMicEvtSrc = "";
+  capAudioDefaultId = "";        // 重开时重新取默认输入（耳机已断开，默认设备已变）
+  // B96 P1：记下启动时的默认输入（耳机拔出后默认输入会换，devicechange 用它判定）
+  try {
+    navigator.mediaDevices.ondevicechange = capMicOnDeviceChange;
+    navigator.mediaDevices.enumerateDevices().then(list => {
+      const inp = list.filter(d => d.kind === "audioinput");
+      const def = inp.find(d => d.deviceId === "default") || inp[0] || null;
+      capAudioDefaultId = (def && def.deviceId) || "";
+    }).catch(() => {});
+  } catch (e) { /* 忽略 */ }
+  capMicBindTrack();             // 音轨 ended = 耳机断开（label 不变也要记）
+}
+
+// 开一段录音（首段与中断重开后同一入口）；打点基准切到本段真正起点
+function capAudioRecorderStart(stream, label) {
+  capAudioStream = stream;
+  capAudioMic = label || capAudioMic || "";
+  if (!capAudioPartIdx) capAudioPartIdx = 1;   // 段号由上一段收尾时 +1（重开前的空档打点归新段）
+  const part = capAudioPartIdx;
+  capAudioChunks = [];
+  capAudioStartTs = 0;
   const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
     .find(m => MediaRecorder.isTypeSupported(m)) || "";
-  capAudioRec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
-  // 每段音频各自记 start_ts / end_ts（正常只有 1 段；中途重启/切段时每段一条，不共用一个全局起点）
-  const seg = { start_ts: "", end_ts: "", dur_ms: 0, chunks: 0, mic_label: capAudioMic, _startMs: 0 };
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
+  capAudioRec = rec;
+  const seg = { part, start_ts: "", end_ts: "", dur_ms: 0, chunks: 0,
+                mic_label: capAudioMic, interrupted: false, _startMs: 0 };
   capAudioSegs.push(seg);
-  capAudioRec.ondataavailable = e => {
+  rec.ondataavailable = e => {
     if (e.data && e.data.size) { capAudioChunks.push(e.data); capAudioChunksN++; seg.chunks++; }
   };
-  capAudioRec.onstart = () => {
-    if (capAudioStartTs) return;     // 兜底值已定 → 保持同一个起点，避免打点时间轴前后不一致
-    capAudioStartTs = Date.now(); seg._startMs = capAudioStartTs;
-    seg.start_ts = new Date(capAudioStartTs).toISOString();
+  rec.onstart = () => {
+    // B98：个别机型真正开录会晚 100~300ms。start() 后先给临时起点（保证紧跟着的打点不空），
+    // onstart 到达后用真实时刻校正，并把这期间已记的 audioTMs 按 at 时间戳重算
+    const t = Date.now();
+    if (seg._startMs && Math.abs(t - seg._startMs) > 1) {
+      capAudioStartTs = t; seg._startMs = t;
+      seg.start_ts = new Date(t).toISOString();
+      for (const m of capMarks) {
+        if ((m.part || 1) === part && m.at) m.audioTms = new Date(m.at).getTime() - t;
+      }
+    }
   };
-  capAudioRec.start(5000);     // 5s 一片：边录边攒，长场不占内存峰值；拼接后是同一段连续音频
-  // 起点在 start() 之后立刻定（onstart 回调只会确认，不会改动已定的起点）
-  if (!capAudioStartTs) {
-    capAudioStartTs = Date.now(); seg._startMs = capAudioStartTs;
-    seg.start_ts = new Date(capAudioStartTs).toISOString();
-  }
+  rec.onerror = () => capAudioInterrupt("recorder_error");
+  // 异常 onstop（不是 capAudioStop 主动触发）也按中断处理
+  rec.onstop = () => { if (!capOn || capAudioStopping) return; capAudioInterrupt("recorder_onstop"); };
+  rec.start(5000);     // 5s 一片：边录边攒，长场不占内存峰值；拼接后是同一段连续音频
+  // 临时起点（在 start() 之后取，不含摄像头/授权准备时间）；onstart 到来后会校正
+  capAudioStartTs = Date.now(); seg._startMs = capAudioStartTs;
+  seg.start_ts = new Date(capAudioStartTs).toISOString();
   return true;
 }
 
-// B95 P2：采集中每 10s 看一次当前音轨 label，被切走（耳机断开回退手机麦）就记一条事件
+function capSegPublic(seg) {
+  return { part: seg.part || 1, start_ts: seg.start_ts || null, end_ts: seg.end_ts || null,
+           dur_ms: seg.dur_ms || 0, chunks: seg.chunks || 0,
+           mic_label: seg.mic_label || null, interrupted: !!seg.interrupted };
+}
+
+// 收一段录音并入库（保留已录部分）；不做重开，由调用方决定
+function capAudioFinalizePart(interrupted, reason) {
+  return new Promise(resolve => {
+    const rec = capAudioRec, stream = capAudioStream;
+    if (!rec) { resolve(null); return; }
+    const finish = async () => {
+      const mime = rec.mimeType || (capAudioChunks[0] && capAudioChunks[0].type) || "audio/webm";
+      const blob = new Blob(capAudioChunks, { type: mime });
+      const endNow = Date.now();
+      const seg = capAudioSegs[capAudioSegs.length - 1];
+      if (seg) {
+        seg.end_ts = new Date(endNow).toISOString();
+        seg.dur_ms = Math.max(0, endNow - (seg._startMs || capAudioStartTs || capStartTs));
+        seg.interrupted = !!interrupted;
+      }
+      const part = seg ? seg.part : (capAudioPartIdx || 1);
+      const startMs = (seg && seg._startMs) || capAudioStartTs || capStartTs;
+      const partMarks = capMarks.filter(m => (m.part || 1) === part);
+      const suffix = part > 1 ? `_p${part}` : "";
+      const name = `tennis_session_${capTag}_audio${suffix}.${mime.includes("mp4") ? "m4a" : "webm"}`;
+      if (blob.size > 0) {
+        try {
+          await idbAdd({
+            sessionTag: capTag, windowIndex: -1, seq: -1, part,
+            recordedAt: new Date(startMs).toISOString(),
+            deltaMs: 0, durMs: endNow - startMs, mime,
+            note: interrupted ? `录音中断（${reason}）` : "整场连续录音",
+            blob, silent: false, micLabel: (seg && seg.mic_label) || capAudioMic,
+            scope: "run", marks: partMarks,
+            audioStartTs: startMs, audioEndTs: endNow,
+            segments: seg ? [capSegPublic(seg)] : [], chunks: seg ? seg.chunks : 0,
+            sampleRate: capAudioSampleRate, micChanges: capMicChanges,
+            interrupted: !!interrupted,
+          });
+          log(`录音段 ${part} 已入库 ${name}（${Math.max(0, Math.round((endNow - startMs) / 1000))}s，`
+              + `${partMarks.length} 个打点，${(blob.size / 1048576).toFixed(1)}MB，分片 ${seg ? seg.chunks : 0}）`,
+              "log-pass");
+        } catch (e) { log(`录音段 ${part} 保存失败：${e.message}`, "log-fail"); }
+      }
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      capAudioRec = null; capAudioStream = null; capAudioChunks = [];
+      capAudioEndTs = endNow;
+      if (interrupted) capAudioMicEnd = "（已断开）";
+      else if (seg && seg.mic_label) capAudioMicEnd = seg.mic_label;
+      capAudioPartIdx += 1;            // 下一段（若重开）用新段号；重开空档里的打点归新段
+      resolve({ name, dur: endNow - startMs, marks: partMarks.length, part });
+    };
+    if (rec.state === "inactive") { finish(); return; }
+    try { rec.onstop = finish; rec.stop(); } catch (e) { finish(); }
+  });
+}
+
+// B98 P1：中断统一入口（rec.onerror / 音轨 ended / 异常 onstop）
+// 顺序：保留已录部分 → 记 audio_interrupt → 用默认输入重开一段 → 失败则停止采集并提示
+async function capAudioInterrupt(reason) {
+  if (!capOn || capAudioStopping) return;
+  capAudioStopping = true;
+  clearInterval(capMicTimer); capMicTimer = null;   // 重开过程中暂停 10s 轮询，避免误报
+  const oldLbl = capAudioMic || capAudioMicStart || "";
+  if (reason !== "track_ended") capMicChanges += 1; // ended 的 +1 已由 capMicEvent 记过
+  capMicEvtTs = Date.now();                          // 顺带压掉同一瞬间的 devicechange/poll 重复计数
+  try { if (navigator.mediaDevices) navigator.mediaDevices.ondevicechange = null; } catch (e) {}
+  connLogAdd({ event: "audio_interrupt", device: oldLbl, sessionTag: capTag,
+               reason, note: `[${reason}] ${oldLbl || "未知"}：停止本段并尝试重开`
+                             + `（第 ${capAudioRestarts + 1} 次，上限 3 次）` });
+  log(`录音中断 [${reason}]：${oldLbl || "未知"}，已停止本段并尝试重开`, "log-warn");
+  capPaint();
+  await capAudioFinalizePart(true, reason);         // 先入库，前段不能丢
+  if (!capOn) { capAudioStopping = false; return; } // 收尾期间用户已结束采集
+  capAudioRestarts += 1;
+  if (capAudioRestarts > 3) {
+    capAudioStopping = false;
+    await capStop();
+    alert("录音中断次数过多，已停止采集");
+    return;
+  }
+  let ok = false;
+  try { ok = await capAudioRestart(); } catch (e) { ok = false; }
+  capAudioStopping = false;
+  if (!ok) {
+    await capStop();
+    alert("录音中断，已停止采集");
+    return;
+  }
+  capMicTimer = setInterval(capMicPoll, 10000);     // 重开后恢复轮询兜底
+  capPaint();
+  log(`录音已重开：第 ${capAudioPartIdx} 段，打点基准切到新段起点`, "log-pass");
+}
+
+// 用默认输入重开一段（不弹耳机确认；失败返回 false）
+async function capAudioRestart() {
+  const base = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
+  let stream = null;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: base }); }
+  catch (e) {
+    log(`重开麦克风失败：${(e && e.name) || e}`, "log-fail");
+    return false;
+  }
+  const lbl = (stream.getAudioTracks()[0] && stream.getAudioTracks()[0].label) || "";
+  voiceMicLabel = lbl || voiceMicLabel;
+  capAudioMic = lbl || "默认输入";
+  capAudioMicEnd = capAudioMic;
+  capAudioBindDevices(stream);
+  return capAudioRecorderStart(stream, capAudioMic);
+}
+
+// B96 P1：统一记录一次麦克风切换（去抖 1s，避免同一次拔插被 ended/devicechange/poll 重复计数）
+function capMicEvent(src, newLbl) {
+  if (!capOn) return;
+  const now = Date.now();
+  if (now - capMicEvtTs < 1000) return;
+  // 一次拔耳机可能先后触发 track_ended 与 devicechange：ended 后 5s 内忽略其他来源
+  if (capMicEvtSrc === "track_ended" && now - capMicEvtTs < 5000 && src !== "track_ended") return;
+  const oldLbl = capAudioMic || capAudioMicStart || "";
+  const lbl = String(newLbl || "");
+  if (lbl && lbl === oldLbl) return;          // 轮询兜底：label 没变就不算切换
+  capMicEvtTs = now;
+  capMicEvtSrc = src;
+  if (lbl) capAudioMic = lbl;
+  capMicChanges += 1;
+  if (capAudioSegs.length) capAudioSegs[capAudioSegs.length - 1].mic_label = lbl || "（已断开）";
+  connLogAdd({ event: "mic_change", device: lbl, sessionTag: capTag,
+               reason: oldLbl,
+               note: `[${src}] ${oldLbl || "未知"} → ${lbl || "（音轨已断开）"}` });
+  log(`采集中麦克风切换 [${src}]：${oldLbl || "未知"} → ${lbl || "（音轨已断开）"}`
+      + `（第 ${capMicChanges} 次）`, "log-warn");
+  capPaint();
+}
+
+// 音轨 ended：耳机断开后 Android 上常见，label 往往不变 → 直接按「已断开」记一条
+function capMicBindTrack() {
+  try {
+    const tr = capAudioStream && capAudioStream.getAudioTracks()[0];
+    if (!tr) return;
+    const onEnded = () => {
+      capMicEvent("track_ended", "");
+      capAudioInterrupt("track_ended");     // B98：音轨结束 → 保留前段并重开，不然只剩静音
+    };
+    if (tr.addEventListener) tr.addEventListener("ended", onEnded);
+    else tr.onended = onEnded;
+  } catch (e) { /* 忽略 */ }
+}
+
+// 设备列表变化：启动时的 deviceId 消失 / 默认输入变了 → 记一条
+async function capMicOnDeviceChange() {
+  if (!capOn || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+  try {
+    const inputs = (await navigator.mediaDevices.enumerateDevices())
+      .filter(d => d.kind === "audioinput");
+    const gone = capAudioDeviceId && !inputs.some(d => d.deviceId === capAudioDeviceId);
+    const def = inputs.find(d => d.deviceId === "default") || inputs[0] || null;
+    const defChanged = !!(def && capAudioDefaultId && def.deviceId !== capAudioDefaultId);
+    if (gone || defChanged) capMicEvent("devicechange", (def && def.label) || "");
+  } catch (e) { /* 忽略 */ }
+}
+
+// B95 P2 / B96 兜底：每 10s 看一次当前音轨 label（覆盖路由切换但 label 不变以外的情况）
 function capMicPoll() {
   if (!capOn || !capAudioStream) return;
   let lbl = "";
@@ -4054,62 +4291,19 @@ function capMicPoll() {
     lbl = (tr && tr.label) || "";
   } catch (e) { return; }
   if (!lbl || lbl === capAudioMic) return;
-  const oldLbl = capAudioMic;
-  capAudioMic = lbl;
-  capMicChanges += 1;
-  if (capAudioSegs.length) capAudioSegs[capAudioSegs.length - 1].mic_label = lbl;
-  connLogAdd({ event: "mic_change", device: lbl, sessionTag: capTag,
-               reason: oldLbl, note: `麦克风切换：${oldLbl || "未知"} → ${lbl}` });
-  log(`采集中麦克风切换：${oldLbl || "未知"} → ${lbl}（第 ${capMicChanges} 次）`, "log-warn");
-  capPaint();
+  capMicEvent("poll", lbl);
 }
 
-// 停止并入库：返回 {name, dur, marks}
-function capAudioStop() {
-  return new Promise(resolve => {
-    const rec = capAudioRec;
-    const stream = capAudioStream;
-    if (!rec || rec.state === "inactive") {
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      capAudioRec = null; capAudioStream = null;
-      resolve(null); return;
-    }
-    clearInterval(capMicTimer); capMicTimer = null;
-    const started = capAudioStartTs || capStartTs;   // B95：优先用音频真正起点
-    rec.onstop = async () => {
-      const mime = rec.mimeType || (capAudioChunks[0] && capAudioChunks[0].type) || "audio/webm";
-      const blob = new Blob(capAudioChunks, { type: mime });
-      const endNow = Date.now();
-      capAudioEndTs = endNow;
-      const last = capAudioSegs[capAudioSegs.length - 1];
-      if (last) {
-        last.end_ts = new Date(endNow).toISOString();
-        last.dur_ms = Math.max(0, endNow - (last._startMs || started));
-        last.chunks = last.chunks || 0;
-      }
-      const dur = endNow - started;
-      const marks = capMarks.slice();
-      const name = capFileName("audio", mime.includes("mp4") ? "m4a" : "webm");
-      try {
-        await idbAdd({
-          sessionTag: capTag, windowIndex: -1, seq: -1,
-          recordedAt: new Date(started).toISOString(),
-          deltaMs: 0, durMs: dur, mime, note: "整场连续录音", blob,
-          silent: false, micLabel: capAudioMicStart || capAudioMic, scope: "run", marks,
-          audioStartTs: started, audioEndTs: endNow,
-          segments: capAudioSegs.slice(), chunks: capAudioChunksN,
-          sampleRate: capAudioSampleRate, micChanges: capMicChanges,
-        });
-        log(`整场录音已入库 ${name}（${(dur / 1000).toFixed(0)}s，${marks.length} 个打点，`
-            + `${(blob.size / 1048576).toFixed(1)}MB，分片 ${capAudioChunksN}）`, "log-pass");
-      } catch (e) { log(`整场录音保存失败：${e.message}`, "log-fail"); }
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      capAudioRec = null; capAudioStream = null; capAudioChunks = [];
-      await voiceUpdateStat();
-      resolve({ name, dur, marks: marks.length });
-    };
-    try { rec.stop(); } catch (e) { resolve(null); }
-  });
+// 停止并入库：返回 {name, dur, marks}（只收最后一段；中断前的各段已在 capAudioInterrupt 里入库）
+async function capAudioStop() {
+  clearInterval(capMicTimer); capMicTimer = null;
+  try { if (navigator.mediaDevices) navigator.mediaDevices.ondevicechange = null; } catch (e) {}
+  capAudioStopping = true;
+  const res = await capAudioFinalizePart(false, "user_stop");
+  capAudioStopping = false;
+  if (res && capAudioMic) capAudioMicEnd = capAudioMic;   // 正常收尾才把末段 label 当作结束输入
+  await voiceUpdateStat();
+  return res;
 }
 
 async function capStart(mode) {
@@ -4124,6 +4318,7 @@ async function capStart(mode) {
   }
   capOn = mode;
   capTag = capNowTag();        // 每次采集各自一个 tag（同一 App 会话里连采两场也不会撞名）
+  if (csvSegs.some(s => s.tag === capTag)) capTag += "_c2";   // 防与同秒的未采集段撞名
   capStartTs = Date.now();
   capMarks = [];
   capVideoName = ""; capVideoSizeMb = 0;
@@ -4166,6 +4361,7 @@ async function capStart(mode) {
       camLog(`视频采集中 ${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`, false);
     }
   }, 1000);
+  csvSegNew(capTag, mode);         // B96：本场窗口归本场 CSV（与 _audio/_video 同名）
   capPaint(); colRefresh();
   log(`采集开始：${mode === "video" ? "视频采集（含整场录音）" : "纯录音采集（摄像头关闭）"}｜`
       + `统一文件名 ${capTag}｜麦克风=${capAudioMic || "默认输入"}`, "log-pass");
@@ -4183,6 +4379,7 @@ async function capStop(doPack = true) {
   try { if (NATIVE && NATIVE.setVoiceAuto) NATIVE.setVoiceAuto(false); } catch (e) {}
   capPaint(); colRefresh();
   const sum = `视频=${capVideoName || "无"}｜音频=${a ? a.name : "无"}｜打点=${a ? a.marks : 0}`;
+  csvOpenUncap();                  // B96：采集结束后的窗口归新的「未采集」CSV，不混进上一场
   camLog(`采集结束 ${capTag}｜${sum}`, false);
   log(`采集结束 ${capTag}｜${sum}`, "log-pass");
   if (doPack) await packExport();
@@ -4417,14 +4614,15 @@ function buildCsvRows(m) {
 }
 
 $("exportSessionCsvBtn").addEventListener("click", () => {
-  if (!sessionWindows.length) { log("本次连接暂无窗口数据", "log-warn"); return; }
-  // 按接收顺序拼接全部窗口（含 FAIL/异物/丢包），Python 端按 seq 列分组即可逐窗口对比
+  // B96：只导出当前段（采集场次），避免把上一场的窗口混进来；空段则取最近一个非空段
+  const seg = (csvOpenSeg && csvOpenSeg.wins.length) ? csvOpenSeg
+            : csvSegs.filter(s => s.wins.length).slice(-1)[0];
+  if (!seg) { log("本次连接暂无窗口数据", "log-warn"); return; }
   let body = "";
-  for (const w of sessionWindows) body += buildCsvRows(w);
-  const tag = capTag || sessionTag();       // 2026-11-05：与视频/音频同名
+  for (const w of seg.wins) body += buildCsvRows(w);
+  const tag = seg.tag;                     // 与同 tag 的视频/音频/打点同名
   download(`tennis_session_${tag}.csv`, CSV_HEADER + body, "text/csv");
-  log(`已导出本次连接全部 ${sessionWindows.length} 个窗口 ` +
-      `(${sessionWindows.length * PROTO.WINDOW.samples} 行)`, "log-info");
+  log(`已导出本段 ${seg.wins.length} 个窗口（${tag}）`, "log-info");
 });
 
 $("exportSessionLogBtn").addEventListener("click", sessionLogExport);
@@ -4434,17 +4632,23 @@ $("exportSessionLogBtn").addEventListener("click", sessionLogExport);
 //   视频不复制（浏览器权限不足 + 大文件内存必崩），只生成 videos/manifest.csv 清单。
 //   打包复用现有 zipBuild（STORE）；窗口 CSV / voice_labels.csv 结构与单独导出逐字节一致。
 // =====================================================================
-// 归档上一次会话（新连接清空 sessionWindows 之前调用）：其 CSV 与单独导出逐字节一致
-function archiveSession() {
-  if (!sessionWindows.length) return;
+// 归档一段（新连接清理前 / 换场时调用）：tag 必须由调用方给出，不能用全局 sessionTag() 现算
+// B96：wins 省略时归档当前打开段（csvOpenSeg）
+function archiveSession(tag, wins, mode) {
+  const seg = csvOpenSeg;
+  const list = wins || (seg && seg.wins) || [];
+  if (!list.length) return;
   let body = "";
-  for (const w of sessionWindows) body += buildCsvRows(w);
+  for (const w of list) body += buildCsvRows(w);
   pastSessions.push({
-    tag: sessionTag(),
+    tag: tag || (seg && seg.tag) || sessionTag(),
+    mode: (mode === undefined ? (seg && seg.mode) : mode) || null,
     csv: CSV_HEADER + body,
-    windows: sessionWindows.length,
-    start: sessionWindows[0].meta.receivedAt,
-    end: sessionWindows[sessionWindows.length - 1].meta.receivedAt,
+    windows: list.length,
+    start: list[0].meta.receivedAt,
+    end: list[list.length - 1].meta.receivedAt,
+    seqBase: list[0].meta.seq,
+    seqLast: list[list.length - 1].meta.seq,
   });
   if (pastSessions.length > PAST_SESSION_MAX) pastSessions = pastSessions.slice(-PAST_SESSION_MAX);
 }
@@ -4473,7 +4677,7 @@ async function packExport() {
     const all = await idbAll().catch(() => []);
     const runRecs = all.filter(r => r.scope === "run");     // 2026-11-05：整场连续录音
     const clips = all.filter(r => r.scope !== "run");       // 旧版每球 5s 片段（保留导出，便于历史数据）
-    if (!sessionWindows.length && !all.length && !pastSessions.length) {
+    if (!csvSegs.some(s => s.wins.length) && !all.length && !pastSessions.length) {
       log("导出失败：本次没有窗口也没有录音，先采集再导出", "log-fail");
       return;
     }
@@ -4482,35 +4686,45 @@ async function packExport() {
     const root = `pack_${tag}/`;
     const enc = new TextEncoder();
     const files = [];
-    // windows/：每个会话一个 CSV，与「导出本次全部 CSV」按钮产出逐字节一致
+    // windows/：每段（采集场次）一个 CSV，不与相邻场次混窗
     const sessFiles = [];          // meta.sessions 清单
     const usedNames = new Set();
-    const pushSession = (name, csvText, n, start, end) => {
-      let nm = name;
+    const pushSession = (g) => {
+      let nm = `tennis_session_${g.tag}.csv`;
       while (usedNames.has(nm)) nm = nm.replace(/\.csv$/, `_${usedNames.size}.csv`);   // 同秒重连防重名
       usedNames.add(nm);
-      files.push({ name: root + "windows/" + nm, data: enc.encode(csvText) });
-      sessFiles.push({ file: nm, windows: n, start, end });
+      files.push({ name: root + "windows/" + nm, data: enc.encode(g.csv) });
+      sessFiles.push({ file: nm, tag: g.tag, mode: g.mode || null,
+                       windows: g.windows, start: g.start, end: g.end,
+                       seq_base: g.seqBase, seq_last: g.seqLast });
     };
-    if (sessionWindows.length) {
-      let body = "";
-      for (const w of sessionWindows) body += buildCsvRows(w);
-      pushSession(`tennis_session_${tag}.csv`, CSV_HEADER + body, sessionWindows.length,
-                  sessionWindows[0].meta.receivedAt,
-                  sessionWindows[sessionWindows.length - 1].meta.receivedAt);
-    }
+    // 历史连接（更早）在前，本连接各段在后，保持时间顺序
     for (const ps of pastSessions) {
-      pushSession(`tennis_session_${ps.tag}.csv`, ps.csv, ps.windows, ps.start, ps.end);
+      pushSession({ tag: ps.tag, mode: ps.mode, csv: ps.csv, windows: ps.windows,
+                    start: ps.start, end: ps.end, seqBase: ps.seqBase, seqLast: ps.seqLast });
     }
+    const curSegs = csvSegs.filter(s => s.wins.length);
+    for (const seg of curSegs) {
+      let body = "";
+      for (const w of seg.wins) body += buildCsvRows(w);
+      pushSession({ tag: seg.tag, mode: seg.mode, csv: CSV_HEADER + body, windows: seg.wins.length,
+                    start: seg.wins[0].meta.receivedAt, end: seg.wins[seg.wins.length - 1].meta.receivedAt,
+                    seqBase: seg.wins[0].meta.seq, seqLast: seg.wins[seg.wins.length - 1].meta.seq });
+    }
+    const packTags = new Set(sessFiles.map(s => s.tag));
+    const capCsvTag = (capTag && packTags.has(capTag)) ? capTag : null;   // 本场 CSV 必须与音频同名
+    const primarySess = (capCsvTag && sessFiles.find(s => s.tag === capCsvTag)) || sessFiles[sessFiles.length - 1] || null;
     // voice/：整场连续录音（tennis_session_<tag>_audio.webm）+ 打点表（..._marks.csv）
     //         旧版每球 5s 片段仍按旧结构导出（clips + voice_labels.csv），历史数据不丢
     const vrows = ["file,seq,window_index,recorded_at,delta_ms,dur_ms,clip,note,source,silent,mic_label"];
-    const sessSeqs = new Set(sessionWindows.map(w => w.meta.seq));
+    const sessSeqs = new Set();
+    for (const seg of curSegs) for (const w of seg.wins) sessSeqs.add(w.meta.seq);
     const missingSeq = [];
     let silentN = 0, btN = 0, phoneN = 0, runN = 0, markN = 0;
     for (const r of runRecs) {
       const ext = (r.mime || "").includes("mp4") ? "m4a" : "webm";
-      const nm = `tennis_session_${r.sessionTag}_audio.${ext}`;
+      const pn = (r.part || 1) > 1 ? `_p${r.part}` : "";   // B98：中断重开段独立成文件
+      const nm = `tennis_session_${r.sessionTag}_audio${pn}.${ext}`;
       files.push({ name: root + "voice/" + nm, data: new Uint8Array(await r.blob.arrayBuffer()) });
       const marks = r.marks || [];
       markN += marks.length;
@@ -4521,7 +4735,7 @@ async function packExport() {
                     `"${String(m.note || "").replace(/"/g, '""')}"`,
                     m.audioTms === undefined ? "" : m.audioTms].join(","));
       }
-      files.push({ name: root + `voice/tennis_session_${r.sessionTag}_marks.csv`,
+      files.push({ name: root + `voice/tennis_session_${r.sessionTag}_marks${pn}.csv`,
                    data: enc.encode("\ufeff" + mrows.join("\n") + "\n") });
       const mk = micKindOf(r.micLabel);
       if (mk === "蓝牙耳机") btN++; else if (r.micLabel) phoneN++;
@@ -4553,26 +4767,50 @@ async function packExport() {
     }
     // videos/manifest.csv：只记文件名/大小/修改时刻，不复制视频本体
     // 2026-11-05：本轮 App 自己录的视频 = tennis_session_<capTag>_video.webm，与 CSV/音频同名
-    if (videoManifest.length || capVideoName) {
+    if (videoManifest.length || capVideos.length) {
       const mrows = ["file,size_mb,last_modified,note"];
-      if (capVideoName) {
-        mrows.push([capVideoName, capVideoSizeMb, new Date(capStartTs).toISOString(), "app-capture"].join(","));
-      }
+      for (const v of capVideos) mrows.push([v.name, v.sizeMb, v.at, "app-capture"].join(","));
       for (const v of videoManifest) mrows.push([v.name, v.sizeMb, v.lastModified, ""].join(","));
       files.push({ name: root + "videos/manifest.csv",
                    data: enc.encode("\ufeff" + mrows.join("\n") + "\n") });
     }
     // meta.json
-    const runRec = runRecs.find(r => r.sessionTag === tag) || runRecs[0] || null;
-    const aStart = (runRec && runRec.audioStartTs) || capAudioStartTs || 0;
-    const aEnd = (runRec && runRec.audioEndTs) || capAudioEndTs || 0;
-    const aSegs = runRec ? (runRec.segments || []) : (capTag ? capAudioSegs : []);
+    const capVideoFile = capCsvTag
+      ? (capVideos.find(v => v.name.indexOf(`tennis_session_${capCsvTag}_video`) === 0) ||
+         (capVideoName && capVideoName.indexOf(`tennis_session_${capCsvTag}_video`) === 0
+           ? { name: capVideoName } : null))
+      : null;
+    // B98：同一场的录音可能分成多段（中断重开），这里按 tag 聚合
+    const capRunRecs = runRecs.filter(r => r.sessionTag === (capCsvTag || capTag));
+    const runRec = capRunRecs[0] || runRecs[0] || null;
+    const aStart = capRunRecs.length
+      ? Math.min.apply(null, capRunRecs.map(r => r.audioStartTs || capStartTs))
+      : (capAudioStartTs || 0);
+    const aEnd = capRunRecs.length
+      ? Math.max.apply(null, capRunRecs.map(r => r.audioEndTs || 0))
+      : (capAudioEndTs || 0);
+    const aSegs = capRunRecs.length
+      ? capRunRecs.reduce((arr, r) => arr.concat(r.segments || []), [])
+      : (capTag ? capAudioSegs.map(capSegPublic) : []);
+    const aChunks = capRunRecs.length
+      ? capRunRecs.reduce((n, r) => n + (r.chunks || 0), 0) : capAudioChunksN;
+    const aMicChanges = capRunRecs.length
+      ? Math.max.apply(null, capRunRecs.map(r => r.micChanges || 0)) : capMicChanges;
+    const lastRun = capRunRecs[capRunRecs.length - 1] || null;
+    const segList = aSegs.map(s => ({ part: s.part || 1,
+                                      start_ts: s.start_ts || null,
+                                      end_ts: s.end_ts || null,
+                                      dur_ms: s.dur_ms || 0,
+                                      chunks: s.chunks || 0,
+                                      mic_label: s.mic_label || null,
+                                      interrupted: !!s.interrupted }));
+    const firstPart = capRunRecs.find(r => (r.part || 1) === 1) || runRec;
     const meta = {
       app_version: APP_BUILD,
       sessionTag: tag,
-      // B95 P0-2：本会话 App 重编号后的 seq 起点/末值（固件 raw seq 可能重连归零，导出以这里为准）
-      seq_base: seqBase,
-      seq_last: sessionWindows.length ? seqLast : null,
+      // B95 P0-2 / B96：seq 起点与末值取「本场 CSV」的首末窗口（换场不归零）
+      seq_base: primarySess ? primarySess.seq_base : null,
+      seq_last: primarySess ? primarySess.seq_last : null,
       exported_at: new Date().toISOString(),
       device_name: $("devName").textContent || "",
       window_contract: { samples: PROTO.WINDOW.samples, channels: PROTO.WINDOW.channels,
@@ -4587,31 +4825,36 @@ async function packExport() {
         mic_auto_label: localStorage.getItem("nt_voice_label") || null,
         // B95：采样率（浏览器给不出则为空）、录音分片数、采集中麦克风切换次数
         sample_rate: (runRec && runRec.sampleRate) || capAudioSampleRate || null,
-        chunks: (runRec && runRec.chunks) || capAudioChunksN || 0,
-        mic_changes: (runRec && runRec.micChanges) || capMicChanges || 0
+        chunks: aChunks || 0,
+        mic_changes: aMicChanges || 0,
+        // B98：中断重开后每段一条（interrupted 标出哪段是被打断的），以及结束时的实际输入
+        mic_label_end: capAudioMicEnd || (lastRun && lastRun.micLabel) || null,
+        audio_segments: segList,
+        audio_interrupts: capRunRecs.filter(r => r.interrupted).length
       },
-      capture: { mode: capTag ? (capOn || "stopped") : null, tag: capTag || null,
-                 started_at: capStartTs ? new Date(capStartTs).toISOString() : null,
+      // B96：capture.describe 只在「本场 CSV 真的在包里」时才给出，避免指向不存在的文件
+      capture: { mode: capCsvTag ? (capOn || "stopped") : null, tag: capCsvTag,
+                 started_at: (capCsvTag && capStartTs) ? new Date(capStartTs).toISOString() : null,
                  // B95 P0-1：音频真正起止（打点换算成音频内位置必须用这两个时刻）
                  audio_start_ts: aStart ? new Date(aStart).toISOString() : null,
                  audio_end_ts: aEnd ? new Date(aEnd).toISOString() : null,
-                 audio_segments: aSegs.map(s => ({ start_ts: s.start_ts || null,
-                                                   end_ts: s.end_ts || null,
-                                                   dur_ms: s.dur_ms || 0,
-                                                   chunks: s.chunks || 0,
-                                                   mic_label: s.mic_label || null })),
-                 files: { csv: `tennis_session_${tag}.csv`,
-                          video: capVideoName || null,
-                          audio: runRec ? `tennis_session_${tag}_audio.` +
-                                 ((runRec.mime || "").includes("mp4") ? "m4a" : "webm") : null,
-                          marks: runRec ? `tennis_session_${tag}_marks.csv` : null } },
+                 audio_segments: segList,
+                 files: { csv: capCsvTag ? `tennis_session_${capCsvTag}.csv` : null,
+                          video: capVideoFile ? capVideoFile.name : null,
+                          audio: firstPart ? `tennis_session_${firstPart.sessionTag}_audio.` +
+                                 ((firstPart.mime || "").includes("mp4") ? "m4a" : "webm") : null,
+                          marks: firstPart ? `tennis_session_${firstPart.sessionTag}_marks.csv` : null,
+                          audio_parts: capRunRecs.map(r => `tennis_session_${r.sessionTag}_audio`
+                                 + ((r.part || 1) > 1 ? `_p${r.part}` : "")
+                                 + `.${(r.mime || "").includes("mp4") ? "m4a" : "webm"}`) } },
       video_hint: "视频未复制进包（避免大文件内存崩溃），同目录下按 manifest 的文件名自行配对"
     };
     files.push({ name: root + "meta.json", data: enc.encode(JSON.stringify(meta, null, 2)) });
-    download(capFileName("pack"), zipBuild(files), "application/zip");
+    download(`pack_${tag}.zip`, zipBuild(files), "application/zip");
     packExported = { clips: all.length, sessions: sessFiles.length, at: new Date() };
     paintPackStat();
-    log(`已导出采集包 ${capFileName("pack")}（会话 ${sessFiles.length} 个 / 窗口 ${sessionWindows.length}`
+    log(`已导出采集包 pack_${tag}.zip（会话 ${sessFiles.length} 个 / 窗口 `
+        + `${curSegs.reduce((a, s) => a + s.wins.length, 0)} 个`
         + ` + 整场录音 ${runN} 段（打点 ${markN}） + 旧片段 ${clips.length} + 日志 ${connLog.length} 条）`, "log-pass");
     // R3：导出成功后提示可清空本地录音（用户决定，不自动清）
     if (all.length && confirm(`采集包已导出（含 ${all.length} 段录音）。是否清空本地录音？`)) {
@@ -5002,6 +5245,7 @@ async function camStartRec() {
     const name = capFileName("video", ext);
     capVideoName = name;
     capVideoSizeMb = +(blob.size / 1048576).toFixed(1);
+    capVideos.push({ name, sizeMb: capVideoSizeMb, at: new Date(capStartTs).toISOString() });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = name;
