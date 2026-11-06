@@ -123,7 +123,6 @@
   @keyframes vpulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
   #voiceStat { font-size: 11px; color: var(--muted); }
   #voiceStat.err { color: var(--fail); }
-  #homeRecInd.on { display: inline-flex; animation: vpulse 1.1s infinite; }
   #voiceDevSel { max-width: 190px; min-height: 40px; padding: 4px 8px; font-size: 12px;
                  background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; }
   /* 家长回顾页：结论句 + 分享卡片预览 */
@@ -233,7 +232,7 @@
     <div class="diag-row"><span class="k">随挥</span>
       <span id="diagFollow"><span class="badge idle">—</span></span>
       <span class="num" id="diagFollowNum">—</span></div>
-    <div class="diag-row"><span class="k">震动</span>
+    <div class="diag-row"><span class="k">打框</span>
       <span id="vtiBadge"><span class="badge idle">—</span></span>
       <span class="num" id="vtiNum">—</span></div>
     <!-- 新增识别项（2026-11-01 用户要求，与引拍/随挥同格式同行列出；数值待标定） -->
@@ -259,11 +258,7 @@
     <span id="micStat">麦克风：待授权</span>
     <span id="spkStat" style="margin-left:auto">播报：手机扬声器</span>
   </div>
-  <!-- 录音控制全部挪到采集页（2026-11-03 用户要求）：现场只用一个页面，首页只留录音中状态点 -->
-  <div style="display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap">
-    <span id="homeRecInd"><span style="color:var(--fail)">●</span>&nbsp;<span id="homeRecIndTxt">录音中</span></span>
-  </div>
-  <!-- 现场状态行（2026-11-01 三份需求通知）：空档秒数 / 待导出语音 -->
+  <!-- 现场状态行：空档秒数 / 待导出音频 -->
   <div style="display:flex;align-items:center;gap:12px;margin-top:4px;font-size:12px;color:var(--muted);flex-wrap:wrap">
     <span id="gapStat"></span>
     <span id="voicePend"></span>
@@ -428,7 +423,7 @@
     </div>
     <div class="statrow">
       <div class="stat"><div class="label">最长连击</div><div class="val" id="rvStreak">—</div></div>
-      <div class="stat"><div class="label">震动提醒</div><div class="val" id="rvVti">—</div></div>
+      <div class="stat"><div class="label">打框提醒</div><div class="val" id="rvVti">—</div></div>
     </div>
     <div class="tip" id="rvComment">—</div>
     <div class="tip" id="rvCompare" style="color:var(--muted)">—</div>
@@ -556,7 +551,7 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B108-20261106-1520";   // B108：①球速字体放大（54px / 手机 46px）②击球时机、引拍时机判决为「正常」时，详情末尾加 ⭐ ③球速 <40km/h 的球全部丢弃（不记录/不分析/不播报/不打点）④「捡球/暂停」真正生效：暂停期间到达的窗口一律丢弃（原来只静音 VTI，仍记录）⑤原生壳逐球 5s 录音在采集期间跳过，并加兜底熄灭与点击消除，「录音中」不再常亮。B107：锚点判定改用收到窗口序号（避免丢弃后首个真球被误判锚点）。B106：术语中文化——界面/日志里 pk_vs_t0_ms→峰值时刻（负=触球前）、t_rise_ms→起速时长、fwd_pos→触球位置（前挥弧比例 0=起挥 1=触球）、fwd_ms→前挥时长；技术视图新增一行「击球时机（时间型）」把 4 个数 + 判决 + 提示全部显示，首页诊断行同步补峰值时刻/起速；其余旧指标英文名一并换中文（CSV 列名不变，脚本仍按英文解析）②修 meta.capture.mode 恒为 "stopped"——改用本场会话真实模式 audio/video/null。B105：修 computeLateContactFeatures 入参布局——data 是通道优先 win[ch][i] 且已换算物理量，B100 起按行优先 win[i][ch] 取值，i≥12 抛 TypeError 被 try/catch 吞掉，导致 meta.late 为空、windows.csv 的 pk_vs_t0_ms/t_rise_ms/fwd_* 全空；现改通道优先并去掉重复的 GYRO_LSB 缩放（特征只用比值，量纲无关），数值口径与固件 B61/Python 1:1。B104：术语收口——首页诊断行「击球点贴身」→「击球过晚」（该行显示的是时间型 late 判决；贴身属空间型、需视频姿态），打标提示条与敲拍口述提示同步改为 2 字「过晚」，离线转写词表新增 guo-wan / ji-qiu-guo-wan 模板（输出 tag 仍写「被挤到」，兼容 175 条历史标注与既有分析脚本）。sw.js CACHE nexttennis-v45。B103：①修 nfRows 直接引用未声明 w（B100 引入）——每个有效窗都会抛 ReferenceError，导致首页诊断卡自 B100 起整体不刷新；late 改为入参 ②话术与徽章同源：提示文案带上「引拍 X°/随挥 Y°」同一组数字，消除"数字正常却听到不足" ③提示优先级：无引拍 > 击球过晚 > 幅度测不准 > 随挥不足 > 引拍赶 > 收拍快 ④击球过晚已判出时，引拍时机行不再重复报（引拍时机=K3 占比相对个人基线，是其上游量）⑤技术页旧规则/引拍时机标注更正。sw.js CACHE nexttennis-v44。B102：①windows.csv 末端追加 5 列 pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict（B100 只在内存算过、未导出；非 NORMAL_HIT 留空，列数恒定，既有列顺序不变）②术语落地：首页诊断行"被挤到"→"击球点贴身"，练习项 B5 tips 同步，技术页旧规则回退值"疑似偏后"→"击球稍晚"；语音打标词表（打框/被挤到/好球/差球）不动，避免断历史标签 ③补齐缓存号记录。sw.js CACHE nexttennis-v43。B101：术语统一（时间型→击球过晚 Late Contact，空间型→击球点贴身 Jammed），仅改注释与部分文案，逻辑不变（sw v42）。B100：击球点偏后（时间型）上线——computeLateContactFeatures 增加带符号投影 V 点切分，输出 fwd_pos（触球在前挥弧中的位置）与 fwd_ms（V 点→触球时长），按 2026-11-06 标定口径判决：fwd_pos<0.30 或 fwd_ms<45ms →「时间型被挤」提示「注意早架拍、早启动」；0.30~0.45 →「偏后」；无 V 点时回退 pk_vs_t0>30ms。技术页「被挤到」改为显示新判决与提示，windowLog 增 fwdPos/fwdMs/lateVerdict。sw.js CACHE nexttennis-v41
+const APP_BUILD = "APP-B109-20261106-1800";   // B109：A. 窗级传输异常检测 link_qc——SHORT（帧数/分片/首尾缺失）、INTERLEAVED（分片非单调）、DOUBLE（窗内两独立冲击簇 >3g/谷<1.5g/间隔>200ms）；GAP（seq 跳变）、FAST（间隔<2.5s）两事件只写日志；windows.csv 末端追加 link_qc,link_note 两列；meta.json 追加 link_qc_counts + pace_median_s + link_events；采集页状态行显示「异常 N/M」，>20% 提示「节奏过快」可手动关闭。B. 删除原生逐球录音与 homeRecInd 指示——CSS/HTML/JS 三段全部移除，__ntVoiceStart/__ntVoice 清空为空函数（原生壳可能仍回调避免报错），voicePend 改文案「待导出音频」，新连接重置 link_qc 计数与 pace 列表。约束：不改固件 qc 语义、不改 CSV 既有列顺序、不补帧/不拼接只标记。sw.js CACHE nexttennis-v49
                                              // B93：Late Contact 特征（击球点偏后识别前置）——复刻固件 B58 line 727-755：全窗 |gyro| 合成 + 5 点盒式平滑 + 找峰值 pk_idx + 10% 峰值前回溯 rise_start，输出 pk_vs_t0_ms 和 t_rise_ms 两个原始值（不判决）。改动点：①新增 computeLateContactFeatures() 30 行 ②onWindow 里调用并推入独立 windowLog[] 数组（容量 2000，防 connLog 500 上限被冲）③session_log.csv 新增 pk_vs_t0_ms / t_rise_ms 两列（event=window 行有值，其他事件留空），窗口日志带 [CALC] 标签与固件 [CLASS] 比对，容忍 ±5ms。所有窗口（含敲拍）都计算。sw.js CACHE nexttennis-v34
                                              // B92：录像文件名改为「开始_结束」双时间戳（video_YYYYMMDD_HHMMSS-HHMMSS.webm）
                                              // B91：原生壳接管语音打标（__ntVoice*，锁屏不再静音）
@@ -691,7 +686,8 @@ class BleStreamParser {
                total, fw, fwMs: ts24, filled: 0, crcFail: 0, quickClass: null, seen: new Set(),
                // [传输诊断] 首片/末片时刻与通知长度，用来判定是 MTU 拆分还是包间隔过大
                tLast: 0, nPk: 0, minB: 9999, maxB: 0, sumB: 0,
-               gMin: 9999, gMax: 0, gSum: 0, gN: 0, gBurst: 0 };   // 包间隔分布
+               gMin: 9999, gMax: 0, gSum: 0, gN: 0, gBurst: 0,   // 包间隔分布
+               cis: [] };   // B109：分片到达顺序 ci 序列（检测 INTERLEAVED）
       this._buf.set(seq, slot);
     }
     // 统计每条真实到达的通知（重复分片也计入，可反映重传量）
@@ -714,6 +710,7 @@ class BleStreamParser {
     const dupKey = ci * 65536 + plen;
     if (slot.seen.has(dupKey)) return;
     slot.seen.add(dupKey);
+    slot.cis.push(ci);   // B109：记录分片到达顺序（去重后才记，重复重传不干扰单调性检测）
     // 首片(chunk_index=0) flags bit[3:2] 携带固件判决：0 NORMAL / 1 FRAME / 2 FOREIGN
     // Step4 flags v2 已把击球/旋转位移交 AI，bit[5:4]/bit[7:6] 恒为 0，App 不再解析
     if (ct === 0) slot.quickClass = imp;
@@ -767,11 +764,36 @@ class BleStreamParser {
           + `包间隔 ${gn ? Math.round(slot.gSum / gn) : 0}ms（最小 ${gn ? slot.gMin : 0} / 最大 ${gn ? slot.gMax : 0}），`
           + `≤20ms 占 ${gn ? Math.round(slot.gBurst * 100 / gn) : 0}%`, "log-info");
     }
+    // B109：link_qc 传输异常检测（SHORT / INTERLEAVED，DOUBLE 在 onWindow 入口做）
+    let link_qc = "OK", link_note = "";
+    const nCis = slot.cis.length;
+    const nSeen = slot.seen.size;
+    const expectedBytes = PROTO.WINDOW.bytes;
+    const expectedChunks = slot.total || PROTO.WINDOW.chunks;
+    const maxCi = expectedChunks - 1;
+    if (slot.filled < expectedBytes) {
+      link_qc = "SHORT"; link_note = `frames=${slot.filled}/${expectedBytes}`;
+    } else if (nSeen < expectedChunks) {
+      link_qc = "SHORT"; link_note = `frags=${nSeen}/${expectedChunks}`;
+    } else if (!slot.cis.includes(0)) {
+      link_qc = "SHORT"; link_note = `first_frag_missing`;
+    } else if (!slot.cis.includes(maxCi)) {
+      link_qc = "SHORT"; link_note = `last_frag_missing`;
+    } else {
+      // INTERLEAVED：去重后的 ci 序列应当单调递增（若固件错序发包则非单调）
+      let badOrder = null;
+      for (let i = 1; i < nCis; i++) {
+        if (slot.cis[i] < slot.cis[i - 1]) { badOrder = slot.cis.slice(Math.max(0, i - 2), i + 3); break; }
+      }
+      if (badOrder) { link_qc = "INTERLEAVED"; link_note = `order=[${badOrder.join(",")}]`; }
+    }
+
     const meta = { seq, timestamp: slot.createdAt, source: "impact",
                    recvBytes: slot.filled, total: slot.total, fw: slot.fw,
                    fwMs: slot.fwMs || 0,          // [B56] 固件触发时刻 (ms since boot, 24bit 回绕)
                    crcFail: slot.crcFail, quickClass: slot.quickClass,
-                   strokeType: null, spinType: null };   // Step4: 击球/旋转移交 AI 判定
+                   strokeType: null, spinType: null,
+                   link_qc, link_note };   // B109：窗级传输异常（独立于固件 qc）
     this._buf.delete(seq);
     this._delivered.add(seq);
     if (this._delivered.size > 64) {   // 只防近 64 个窗口的迟到副本（seq 为 u8，64 ≪ 256 回绕周期）
@@ -993,15 +1015,15 @@ const VOICE_LINES = {
     "把动作做完整，会更漂亮",
   ],
   vti_warn: [
-    "这球震动稍大，往甜区打会更舒服", "击球点有点偏，往中间靠靠", "球拍震了一下，试试打甜区",
-    "打偏一点也正常，下一球往中间打", "震动偏大，握拍放松加找甜区", "这球打到拍边了，甜区更省力",
-    "拍面偏了一点，往中间打手感更好", "震动有点大，瞄准甜区试试", "这球偏了点，甜区打起来更轻松",
-    "握拍放松，往甜区打更稳",
+    "疑似打框，往甜区打会更舒服", "击球点偏了，往中间靠靠", "球拍有点震，试试打甜区",
+    "偏了一点也正常，下一球往中间打", "往甜区打更稳，试试瞄准拍面中心", "击球点偏，甜区打起来更轻松",
+    "握拍放松，往甜区打更护手", "击球点往中间收一收，手感更好", "偏了点，甜区打起来省不少力",
+    "瞄准甜区试试，打框会震手",
   ],
   vti_alarm: [
-    "震动偏大，打甜区会舒服很多", "这拍震得明显，击球点往中间收一收", "可能打偏了，下一球瞄准甜区",
-    "球拍震手，试着用拍面中间击球", "震动比较大，往甜区打能省不少力", "这球打边上啦，甜区更护手",
-    "击球点偏了，往中间打会更顺", "震动明显，握拍放松、瞄准甜区", "偏得有点多，下一球找找甜区",
+    "明显打框啦，往甜区打会舒服很多", "这拍打框了，击球点往中间收一收", "偏得有点多，下一球瞄准甜区",
+    "球拍震手，试着用拍面中间击球", "震动比较大，往甜区打能省不少力", "这球打框啦，甜区更护手",
+    "击球点偏得不少，往中间打会更顺", "震动明显，握拍放松、瞄准甜区", "打框了，下一球找找甜区",
     "拍面中间击球，手会舒服很多",
   ],
   combo: [
@@ -1349,6 +1371,11 @@ function seqNext(rawSeq) {
   seqLast += 1;
   return seqLast;
 }
+// B109：窗级传输异常统计（独立于固件 qc）
+const linkQcCounts = { OK: 0, SHORT: 0, INTERLEAVED: 0, DOUBLE: 0 };
+let gapEvents = 0, fastEvents = 0;
+let winPaceList = [];    // 有效击球窗间间隔（秒），导出 meta.json 用
+let lastValidWinTs = 0;  // 上一有效击球窗的收到时刻（FAST 检测）
 // 2026-11-05（B96）：一次连接内按「场次」切分 CSV。
 // sessionWindows 仍保留本连接全部窗口（回顾页/窗口选择器/锚点判定不受影响），
 // 导出时按 csvSegs 逐段成文件，保证 CSV 与同 tag 的 _audio/_video/_marks 同名同范围。
@@ -1511,6 +1538,12 @@ function onWindow(meta, data) {
   meta.packetLoss = parser.consumeSeq(meta.rawSeq);   // 丢包检测必须用固件 raw seq
   meta.seq = seqNext(meta.rawSeq);                    // B95：导出用的 seq 由 App 重编号，永不归零
   meta.receivedAt = new Date();   // 本地到达时刻（HH:MM:SS，供会话列表/导出）
+  // B109：GAP 事件（固件 seq 不连续）—— 独立于 link_qc，不算到单窗，只写日志
+  if (meta.packetLoss) {
+    gapEvents++;
+    connLogAdd({ event: "link_gap", sessionTag: sessionTag(),
+                 reason: "raw seq 跳变", note: `seq=${meta.seq}` });
+  }
   lastWinT = Date.now(); winTimes.push(lastWinT);   // 断连监控 R2：空档秒数与 60s 数据率
   // ---- B107：拾球/暂停 与 低速球 一律丢弃（不记录、不分析、不播报、不打点）----
   winRecvN += 1;
@@ -1537,6 +1570,65 @@ function onWindow(meta, data) {
   }
   res = qc.check(data, meta);
   const w = { meta, data, qc: res };
+
+  // ---- B109：DOUBLE 检测（窗内两个独立冲击簇）----
+  // 合成三轴加速度 g 值，找 >3g 的峰；峰间谷 <1.5g 且间隔 >200ms → DOUBLE
+  {
+    const N = PROTO.WINDOW.samples, FS = PROTO.WINDOW.sampleRate;
+    const THRESH_PEAK = 3.0, THRESH_VALLEY = 1.5, MIN_SEP_MS = 200;
+    const acc = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const ax = data[0][i], ay = data[1][i], az = data[2][i];
+      acc[i] = Math.sqrt(ax * ax + ay * ay + az * az);
+    }
+    // 找局部峰（比左右邻居高 >0.3g）
+    const peaks = [];
+    for (let i = 1; i < N - 1; i++) {
+      if (acc[i] > THRESH_PEAK && acc[i] > acc[i - 1] && acc[i] > acc[i + 1] && acc[i] - Math.max(acc[i - 1], acc[i + 1]) > 0.3) {
+        peaks.push({ i, g: acc[i] });
+      }
+    }
+    // 峰按位置排序（已天然有序）
+    let isDouble = false, peakNote = "";
+    if (peaks.length >= 2) {
+      for (let a = 0; a < peaks.length - 1; a++) {
+        for (let b = a + 1; b < peaks.length; b++) {
+          const p1 = peaks[a], p2 = peaks[b];
+          const sepMs = (p2.i - p1.i) / FS * 1000;
+          if (sepMs < MIN_SEP_MS) continue;
+          // 找峰间谷值
+          let minV = Infinity;
+          for (let k = p1.i; k <= p2.i; k++) if (acc[k] < minV) minV = acc[k];
+          if (minV < THRESH_VALLEY) {
+            isDouble = true;
+            peakNote = `peaks@${Math.round(p1.i / FS * 1000)}/${Math.round(p2.i / FS * 1000)}ms`;
+            break;
+          }
+        }
+        if (isDouble) break;
+      }
+    }
+    if (isDouble) {
+      meta.link_qc = "DOUBLE";
+      meta.link_note = peakNote;
+    }
+  }
+  // B109：link_qc 计数字段（DOUBLE 覆盖 _deliver 的 SHORT/INTERLEAVED）
+  linkQcCounts[meta.link_qc] = (linkQcCounts[meta.link_qc] || 0) + 1;
+
+  // ---- B109：FAST 事件 + pace 列表（仅有效击球窗）----
+  const nowTs = Date.now();
+  if (lastValidWinTs > 0) {
+    const gapS = (nowTs - lastValidWinTs) / 1000;
+    winPaceList.push(gapS);
+    if (gapS < 2.5) {
+      fastEvents++;
+      connLogAdd({ event: "link_fast", sessionTag: sessionTag(),
+                   reason: `pace ${gapS.toFixed(1)}s < 2.5s`, note: `seq=${meta.seq}` });
+    }
+  }
+  lastValidWinTs = nowTs;
+
   meta.t0Index = findT0Index(data);   // 实测 T0（详情面板读数 + 波形标注 + 验证固件对齐）
   meta.strokeFhBh = findStrokeFhBh(data, meta.t0Index);  // 正反手 W2 零校准硬判决（App 端，固件不再下发）
   // K3 个人基线只吃有效击球窗：异物/拍框/丢包窗的时长特征不具语义，无条件入 buf 会把 running P50 拉偏
@@ -1769,16 +1861,18 @@ const VTI = {
   HALF_MS: 20,          // T0±20ms 观察窗
   F1_HALF_MS: 10,       // F1 门限的取峰窗（与 injury_analyzer.f1 同口径）
   GATE_F1_G: 10,        // 三重门限第 3 重：F1>10g 才给反馈（保留打框等高力度事件）
-  // 20261105 重定（11-02~11-05 共 10 会话 410 唯一窗，去重后无负样本，仅按分布一致性定档）：
-  //   FH n=274 P75/P90=208/294；BH n=131 P75/P90=127/204
-  //   旧值 (100,130)/(50,60) 会让 FH/BH 各约 76% 正常球落入预警 → 明显过报
-  TH_FH: [208, 294],    // 正手 (预警, 干预)：P75/P90 —— 冷启动兜底
-  TH_BH: [127, 204],    // 反手 (预警, 干预)：P75/P90 —— 冷启动兜底
-  // 自适应门限（20261029 实测：VTI 绝对值跨会话漂 5.3× / 0.6×，固定值不可跨硬件硬套）
-  // 本次会话累积 ≥ADAPT_N 球后改用会话内 P75/P90；下限=固定值的 FLOOR_RATIO 倍，防"全员正常却报警"
-  ADAPT_N: 12,
-  BUF_MAX: 100,
-  FLOOR_RATIO: 0.6,
+  // ====== 20261106 改为固定绝对值门限（依据：11-02~11-05 共 422 窗 + 12 条语音打框正例） ======
+  // 物理意义：VTI = 峰值带通幅值 × τ，量的是"100~200Hz 高频振动在拍柄的暴露总量"。
+  // 甜区击球能量传去球，拍体余振小 → VTI 低；打框/偏甜区击球能量留在拍上 → VTI 高。
+  // 为什么不用会话内分位：打框是异常事件（全量只占 ~3%），P90 门限会把打框也筛掉（召回仅 25%）。
+  // 为什么不用球速调门限：VTI vs 球速 r=0.082，物理上无依据。
+  TH_WARN: 200,         // VTI ≥ 200 → 疑似打框 / 偏甜区（召回 75%，误报 21%，落在用户容忍的 10~20% 区间）
+  TH_ALARM: 300,        // VTI ≥ 300 → 明显打框（召回 45%，误报 7%）
+  // 安装松动检测：会话内该侧 P50 > LOOSE_P50，说明大部分球 VTI 都偏高 → 提示检查板-壳安装或拍线
+  // 累计 ≥LOOSE_N 球后才检测（防止冷启动偶然）
+  LOOSE_P50: 200,
+  LOOSE_N: 6,
+  BUF_MAX: 100,         // 会话内 VTI 分布滚存（用于安装松动检测，不再用于判决门限）
 };
 
 // 会话内 VTI 分布（分侧，滚存最近 BUF_MAX 球）；与 tools/injury_analyzer.py 同口径
@@ -1793,19 +1887,20 @@ function vtiPct(arr, p) {
   return lo === hi ? a[lo] : a[lo] + (a[hi] - a[lo]) * (i - lo);
 }
 
-// 解析本球生效门限：冷启动→固定值；热→会话 P75/P90（带绝对下限）
+// 解析本球生效门限：固定绝对值（VTI 物理量纲恒定，打框/偏甜区/安装松三种异常都抬高 VTI，
+// 会话内分布漂移只能归因于安装松动，不能用于判决门限）
 function vtiResolveTh(side) {
-  const isBh = side === "反手";
-  const base = isBh ? VTI.TH_BH : VTI.TH_FH;
-  const h = isBh ? vtiHist.BH : vtiHist.FH;
-  // 冷启动期（该侧不足 ADAPT_N 球）不判档：只累计分布，门限稳住后再给提示，
-  // 避免"固定兜底值不当"（反手 50/60 明显偏低）在新会话前 12 球集中误报
-  if (h.length < VTI.ADAPT_N) {
-    return { th: base, calib: true, src: `校准中 ${h.length}/${VTI.ADAPT_N} 球` };
+  return { th: [VTI.TH_WARN, VTI.TH_ALARM], src: `固定 ${VTI.TH_WARN}/${VTI.TH_ALARM}` };
+}
+// 安装松动检测：该侧累计 ≥LOOSE_N 球后，若会话 P50 > LOOSE_P50 → 提示
+function vtiLooseCheck(side) {
+  const h = side === "反手" ? vtiHist.BH : vtiHist.FH;
+  if (h.length < VTI.LOOSE_N) return null;
+  const p50 = vtiPct(h, 0.5);
+  if (p50 > VTI.LOOSE_P50) {
+    return `⚠️ 会话基线 VTI P50=${p50.toFixed(0)}>${VTI.LOOSE_P50}，设备安装可能松动或拍线偏松，建议检查`;
   }
-  const w0 = vtiPct(h, 0.75), a0 = vtiPct(h, 0.90);
-  const th = [Math.max(w0, VTI.FLOOR_RATIO * base[0]), Math.max(a0, VTI.FLOOR_RATIO * base[1])];
-  return { th, src: `会话 P75/P90 ${th[0].toFixed(0)}/${th[1].toFixed(0)}（n=${h.length}）` };
+  return null;
 }
 function vtiPushHist(side, v) {
   if (!isFinite(v)) return;
@@ -1914,8 +2009,9 @@ function vtiCompute(data, t0) {
 }
 
 // 三重门限 + 三级分档（Python classify_vti 同口径；等级 off = 未启用，不反馈）
+// 20261106：门限改为固定绝对值 VTI≥200/300；新增安装松动基线检测
 function vtiEvaluate(w, commit = true) {
-  const r = { level: "off", vti: NaN, tau: NaN, pkAmp: NaN, f1g: 0, n: 0, gate: [], why: "" };
+  const r = { level: "off", vti: NaN, tau: NaN, pkAmp: NaN, f1g: 0, n: 0, gate: [], why: "", looseHint: "" };
   if (!w) return r;
   const t0 = w.meta.t0Index != null ? w.meta.t0Index : findT0Index(w.data);
   const v = vtiCompute(w.data, t0);
@@ -1930,15 +2026,16 @@ function vtiEvaluate(w, commit = true) {
   if (r.gate.length) return r;
 
   const side = w.meta.strokeFhBh && w.meta.strokeFhBh.side;
-  // 先按"不含本球"的会话分布定门限，再把本球计入分布（防止自己抬高自己的门限）
   const rt = vtiResolveTh(side);
   const th = rt.th;
-  // 校准中不出结论（不播话术、不给徽章判定），只显示数值与进度
-  r.level = rt.calib ? "calib"
-    : (r.vti > th[1] ? "alarm" : (r.vti > th[0] ? "warn" : "ok"));
+  r.level = r.vti > th[1] ? "alarm" : (r.vti > th[0] ? "warn" : "ok");
   r.th = th;
   r.thSrc = rt.src;
-  if (commit) vtiPushHist(side, r.vti);   // 重算（如切会话状态）不再重复入分布
+  // 安装松动检测（先入分布再检测，避免自己抬高自己的基线）
+  if (commit) {
+    vtiPushHist(side, r.vti);
+    r.looseHint = vtiLooseCheck(side) || "";
+  }
   return r;
 }
 
@@ -2837,9 +2934,9 @@ function nfRows(f, late) {
     B("nfTiming", tm === "正常" ? "pass" : (tm === "—" ? "idle" : "warn"), tm);
     N("nfTimingNum", f.timingWhy + (tm === "正常" ? " ⭐" : ""));   // B108：正常给星
   }
-  // 其它四项：无标定门限，只报值
+  // 其它三项：无标定门限，只报值（打框已独立成行，由 VTI 判决；20261106）
   B("nfOther", "idle", "标定中");
-  N("nfOtherNum", `打框 hf ${n2(f.hfRms)} · 拍面 ${n2(f.parMean)}±${n2(f.parStd)}`
+  N("nfOtherNum", `拍面 ${n2(f.parMean)}±${n2(f.parStd)}`
     + ` · 流畅 ${n2(f.flowDip)}/${n2(f.flowJerk)} · 刷球 ${n2(f.brushRatio)}`);
 }
 
@@ -3022,14 +3119,13 @@ function updateDiagnosis(w) {
   tipEl.style.color = col;
 }
 
-// ---------- 震动（VTI）行：家庭视图只给正向短句，技术视图给全部数字 ----------
-// 永不给负面措辞（冻结决策）：warn/alarm 都指向「往甜区打」，颜色最高只到 warn。
-// 口径依据 20261029 实测：VTI 与甜区/非甜区 3/3 对齐，与「力度」无关（最用力一球 VTI 最低）。
+// ---------- 打框（VTI）行：20261106 改为固定绝对值门限 VTI≥200/300 ----------
+// VTI = 峰值带通幅值 × τ，量的是 100~200Hz 高频振动在拍柄的暴露总量。
+// 甜区击球能量传去球 → VTI 低；打框/偏甜区击球能量留在拍上 → VTI 高。
 const VTI_TEXT = {
-  calib: ["idle", "校准中"],
-  ok:    ["pass", "震动很小"],
-  warn:  ["warn", "震动稍大，往甜区打"],
-  alarm: ["warn", "震动偏大，击球点往中间收"],
+  ok:    ["pass", "打甜区"],
+  warn:  ["warn", "疑似打框"],
+  alarm: ["bad", "明显打框"],   // alarm 用 bad class（红色），视觉上有区分；warn 仍是 warn class（橙色）
 };
 function updateVti(w) {
   const el = $("vtiBadge"), num = $("vtiNum");
@@ -3044,10 +3140,10 @@ function updateVti(w) {
   const [cls, txt] = VTI_TEXT[v.level];
   el.innerHTML = `<span class="badge ${cls}">${txt}</span>`;
   const thTxt = v.th ? `，门限 ${v.th[0].toFixed(0)}/${v.th[1].toFixed(0)} · ${v.thSrc}` : "";
-  const lvlTxt = v.level === "calib" ? "校准中" : v.level;
-  num.textContent = `VTI ${v.vti.toFixed(0)}（${lvlTxt}${thTxt}）`
-    + ` · τ ${isFinite(v.tau) ? v.tau.toFixed(1) + "ms" : "—"}`
-    + ` · pk ${v.pkAmp.toFixed(2)}g · F1 ${v.f1g.toFixed(1)}g · n ${v.n}`;
+  num.textContent = `VTI ${v.vti.toFixed(0)} · τ ${isFinite(v.tau) ? v.tau.toFixed(1) + "ms" : "—"}`
+    + ` · pk ${v.pkAmp.toFixed(2)}g · F1 ${v.f1g.toFixed(1)}g · n ${v.n}`
+    + thTxt
+    + (v.looseHint ? ` ⚠️ ${v.looseHint}` : "");
 }
 
 // ---------- 会话状态（VTI 三重门限第 1 重） ----------
@@ -3397,71 +3493,9 @@ window.__ntStatus = function (json) {
 };
 window.__ntLog = function (msg) { log(msg, "log-info"); };
 
-// 原生录音：锁屏时页面麦克风会被系统挂起，改由前台服务在击球点起录 5s，解锁后把片段送回来入库
-window.__ntVoiceStart = function (seq, maxMs) {
-  try {
-    // B107：采集中已由网页整场连续录音，原生壳的逐球 5s 录音必须让位，
-    // 否则会重复入库、把 TTS 静音、并让首页「录音中」常亮不灭
-    if (capOn) {
-      log(`原生逐球录音跳过（采集中已整场录音）seq=${seq}`, "log-info");
-      return;
-    }
-    ttsMute(true);                       // 录音期间静音播报，避免把自己的话术录进去
-    clearTimeout(window.__ntVoiceTimer);
-    window.__ntVoiceTimer = setTimeout(() => {
-      try { ttsMute(capOn != null); } catch (e) {}
-    }, (maxMs || 5000) + 1200);
-    // B107：兜底——原生回调没回来（服务被杀/异常）也要熄灭指示，不能一直亮着
-    clearTimeout(window.__ntVoiceWatch);
-    window.__ntVoiceWatch = setTimeout(() => {
-      try {
-        $("homeRecInd").classList.remove("on");
-        $("homeRecIndTxt").textContent = "录音中";
-        ttsMute(capOn != null);
-        log("原生录音未回传，已重置「录音中」指示", "log-warn");
-      } catch (e) {}
-    }, (maxMs || 5000) + 3000);
-    $("voiceStat").textContent = `● 原生录音 ${(maxMs || 5000) / 1000}s → seq=${seq}`;
-    $("homeRecInd").classList.add("on");
-    $("homeRecIndTxt").textContent = `原生录音 ${(maxMs || 5000) / 1000}s`;
-  } catch (e) {}
-};
-window.__ntVoice = async function (seq, b64, durMs, silent, at) {
-  try {
-    const buf = _ntB64ToBuf(b64);
-    const blob = new Blob([buf], { type: "audio/mp4" });
-    const wi = sessionWindows.findIndex(x => x.meta.seq === seq);
-    const w = wi >= 0 ? sessionWindows[wi] : null;
-    if (w) {                             // 与页面录音一致的 @v 标记
-      if (!w.meta.note) w.meta.note = "@v";
-      else if (!w.meta.note.split(/\s+/).includes("@v")) w.meta.note += " @v";
-      updateWinSelector(false);
-    }
-    const recv = (w && w.recv) ? w.recv.getTime() : (at || Date.now());
-    const rec = {
-      sessionTag: sessionTag(), windowIndex: wi, seq,
-      recordedAt: new Date(at || Date.now()).toISOString(),
-      deltaMs: Math.max(0, (at || Date.now()) - recv),
-      durMs: durMs || 5000, mime: "audio/mp4", note: w ? (w.meta.note || "") : "", blob,
-      silent: !!silent,
-      micLabel: "原生壳默认输入"
-    };
-    voiceLastId = await idbAdd(rec);
-    const dup = (await idbAll()).filter(r => r.id !== voiceLastId
-      && r.sessionTag === rec.sessionTag && r.seq === rec.seq);
-    for (const d of dup) await idbDel(d.id);
-    try { NATIVE.voiceAck(seq); } catch (e) {}
-    clearTimeout(window.__ntVoiceTimer);
-    clearTimeout(window.__ntVoiceWatch);   // B107：正常回传，取消兜底熄灭
-    ttsMute(capOn != null);
-    $("homeRecInd").classList.remove("on");
-    log(`已录音 ${((durMs || 5000) / 1000).toFixed(1)}s → seq=${seq}（原生壳默认输入）${silent ? " ⚠️疑似无语音" : ""}`
-        + (dup.length ? `，替换旧录音 ${dup.length} 条` : ""), silent ? "log-warn" : "log-pass");
-    await voiceUpdateStat();
-  } catch (e) {
-    log(`原生录音入库失败：${e.message}`, "log-fail");
-  }
-};
+// B109：原生壳逐球录音与「录音中」指示已全量移除；整场连续录音由 capOn/capAudio 模块负责
+window.__ntVoiceStart = function (seq, maxMs) {};   // 空壳：原生壳可能仍调用，避免报错
+window.__ntVoice = function (seq, b64, durMs, silent, at) {};  // 空壳：原生壳可能仍回调，避免报错
 
 // ---------- Web Bluetooth 连接（冲击窗口协议） ----------
 // 通知处理抽成具名函数：首次连接与断连自动重连共用（2026-11-01 需求通知 R3）
@@ -3664,6 +3698,9 @@ $("connectBtn").addEventListener("click", async () => {
   for (const seg of csvSegs) archiveSession(seg.tag, seg.wins, seg.mode);
   sessionWindows = [];
   winRecvN = 0; pausedDropsN = 0; slowDropsN = 0; lastDropLogT = 0;   // B107：新连接重置丢弃计数与锚点序号
+  // B109：窗级传输异常统计随新会话重置
+  linkQcCounts.OK = 0; linkQcCounts.SHORT = 0; linkQcCounts.INTERLEAVED = 0; linkQcCounts.DOUBLE = 0;
+  gapEvents = 0; fastEvents = 0; winPaceList = []; lastValidWinTs = 0;
   csvSegs = []; csvOpenSeg = null;
   colBlkBase = 0;                  // 采集页「本块球数」按新会话重新计（块选择保留）
   try { localStorage.setItem("nt_collect_base", "0"); } catch (_) {}
@@ -3705,19 +3742,7 @@ $("sessPause").addEventListener("click", () => setSessionState("pause"));
 // 采集页同款（2026-11-02）：现场只在采集页操作
 if ($("cSessTrain")) $("cSessTrain").addEventListener("click", () => setSessionState("train"));
   if ($("cSessPause")) $("cSessPause").addEventListener("click", () => setSessionState("pause"));
-  // B107：首页「录音中」指示点可手动点掉（原生回传丢失时不用干等）
-  if ($("homeRecInd")) {
-    $("homeRecInd").style.cursor = "pointer";
-    $("homeRecInd").title = "点击消除「录音中」指示";
-    $("homeRecInd").addEventListener("click", () => {
-      clearTimeout(window.__ntVoiceTimer);
-      clearTimeout(window.__ntVoiceWatch);
-      $("homeRecInd").classList.remove("on");
-      $("homeRecIndTxt").textContent = "录音中";
-      try { ttsMute(capOn != null); } catch (e) {}
-      log("已手动消除「录音中」指示", "log-info");
-    });
-  }
+  // B109：homeRecInd 元素已删除，点击清除逻辑随之移除
 
 // ---------- 话术库状态（技术视图）：占位期如实标注 ----------
 $("voicePackStat").textContent = `${Object.keys(VOICE_LINES).length} 类 × `
@@ -3858,10 +3883,10 @@ async function voiceUpdateStat() {
     st.classList.toggle("err", voiceMicError);
     st.textContent = base
       + (voiceMicError ? `｜麦克风未就绪${voiceMicReason ? "：" + voiceMicReason : ""}` : "");
-    // 首页「待导出语音 N 段」（2026-11-01 需求通知 R2）：>0 高亮，提醒刷新/关闭可能丢失
+    // 首页「待导出音频 N 段」：包含整场连续录音 + 历史逐球片段；>0 高亮，提醒刷新/关闭可能丢失
     const vp = $("voicePend");
     if (vp) {
-      vp.textContent = all.length ? `待导出语音 ${all.length} 段` : "";
+      vp.textContent = all.length ? `待导出音频 ${all.length} 段` : "";
       vp.style.color = all.length ? "var(--warn)" : "";
       vp.style.fontWeight = all.length ? "700" : "";
       vp.title = all.length ? "刷新/关闭浏览器可能丢失，打完请导出" : "";
@@ -4130,7 +4155,8 @@ function capFileName(kind, ext) {
   return `tennis_session_${tag}`;
 }
 
-// 采集状态行：模式 / 计时 / 统一文件名 / 麦克风 / 打点数
+// 采集状态行：模式 / 计时 / 统一文件名 / 麦克风 / 打点数 / 传输异常（B109）
+let capPaceWarnClosed = false;   // B109：>20% 异常提示本轮采集只提示一次
 function capPaint() {
   if ($("capStartVideo")) $("capStartVideo").disabled = !!capOn;
   if ($("capStartAudio")) $("capStartAudio").disabled = !!capOn;
@@ -4142,8 +4168,34 @@ function capPaint() {
   const hms = `${String(Math.floor(s / 3600)).padStart(2, "0")}:` +
               `${String(Math.floor(s / 60) % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
   const mic = _micRecordingTxt().replace(/\s*🔵$/, "").replace(/\s*📱$/, "");
+  // B109：link_qc 异常统计（只在有效击球窗上累加，被 pause/slow 丢弃的不计入）
+  const lqcTotal = linkQcCounts.OK + linkQcCounts.SHORT + linkQcCounts.INTERLEAVED + linkQcCounts.DOUBLE;
+  const lqcBad = lqcTotal - linkQcCounts.OK;
+  const lqcStr = lqcTotal ? `｜异常 ${lqcBad}/${lqcTotal}` : "";
   st.textContent = `● ${capOn === "video" ? "视频采集" : "纯录音采集"} ${hms}｜${capTag}｜`
-                 + `${mic}｜打点 ${capMarks.length}`;
+                 + `${mic}｜打点 ${capMarks.length}${lqcStr}`;
+  // >20% 异常占比提示（手动关闭后本轮不再弹；不做 alert 弹窗打断）
+  if (lqcTotal > 5 && lqcBad / lqcTotal > 0.2 && !capPaceWarnClosed) {
+    let box = document.getElementById("capPaceWarn");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "capPaceWarn";
+      box.style.cssText = "position:fixed;top:8px;left:50%;transform:translateX(-50%);"
+        + "background:var(--warn);color:#000;padding:6px 14px;border-radius:8px;font-size:13px;"
+        + "z-index:9999;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3);"
+        + "user-select:none;";
+      box.title = "点此关闭";
+      box.addEventListener("click", () => {
+        capPaceWarnClosed = true;
+        if (box.parentNode) box.parentNode.removeChild(box);
+      });
+      document.body.appendChild(box);
+    }
+    box.textContent = `节奏过快，建议放慢（异常 ${lqcBad}/${lqcTotal}）`;
+  } else if ((lqcTotal === 0 || lqcBad / lqcTotal <= 0.2) && !capPaceWarnClosed) {
+    const box = document.getElementById("capPaceWarn");
+    if (box && box.parentNode) box.parentNode.removeChild(box);
+  }
   st.style.color = "var(--pass)";
 }
 
@@ -4480,6 +4532,7 @@ async function capStart(mode) {
     return;
   }
   capOn = mode;
+  capPaceWarnClosed = false;   // B109：新采集重置「节奏过快」提示标记
   capTag = capNowTag();        // 每次采集各自一个 tag（同一 App 会话里连采两场也不会撞名）
   if (csvSegs.some(s => s.tag === capTag)) capTag += "_c2";   // 防与同秒的未采集段撞名
   capStartTs = Date.now();
@@ -4749,7 +4802,7 @@ $("exportCsvBtn").addEventListener("click", () => {
 // CSV 表头与行构建（单窗口 / 会话导出共用；impact_type 为固件板判）
 // stroke_type：固件已停发该字段（Step4 移交 App），改为 App W2 零校准判决写入（FH→FOREHAND / BH→BACKHAND），
 // 仅 NORMAL_HIT(0) 且判决有效时填写；列名不变、不写 note，不影响块名解析。
-const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,vti,vti_level,fw_ms,pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict\n";
+const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,vti,vti_level,fw_ms,pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict,link_qc,link_note\n";
 function buildCsvRows(m) {
   const impactType = m.meta.quickClass != null
     ? ["NORMAL_HIT", "FRAME_HIT", "FOREIGN_IMPACT"][m.meta.quickClass] : "";
@@ -4762,6 +4815,9 @@ function buildCsvRows(m) {
     ? ["FLAT", "TOPSPIN", "BACKSPIN", "SIDESPIN"][m.meta.spinType] : "";
   const note = m.meta.note || "";
   const noteEsc = `"${String(note).replace(/"/g, '""')}"`;   // note 可能含逗号（块名），必须转义否则后置新列会错位
+  // B109：link_qc 追加列（独立于固件 qc，不混入 note 字段）
+  const lqc = m.meta.link_qc || "";
+  const lnoteEsc = `"${String(m.meta.link_note || "").replace(/"/g, '""')}"`;
   // 会话状态 / VTI 快照：导出后可按 sess_state 剔除捡球窗，VTI 列用于按当日会话重锚门限
   const ss = m.meta.sessState === "pause" ? "pause" : "train";
   const vv = m.meta.vti || {};
@@ -4779,7 +4835,7 @@ function buildCsvRows(m) {
   for (let i = 0; i < PROTO.WINDOW.samples; i++) {
     rows += `${m.meta.seq},${m.meta.timestamp},${i},`;
     for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) rows += m.data[ch][i].toFixed(6) + ",";
-    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${vtiVal},${vtiLvl},${m.meta.fwMs || 0},${lateTail}\n`;
+    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${vtiVal},${vtiLvl},${m.meta.fwMs || 0},${lateTail},${lqc},${lnoteEsc}\n`;
   }
   return rows;
 }
@@ -5018,6 +5074,16 @@ async function packExport() {
                           audio_parts: capRunRecs.map(r => `tennis_session_${r.sessionTag}_audio`
                                  + ((r.part || 1) > 1 ? `_p${r.part}` : "")
                                  + `.${(r.mime || "").includes("mp4") ? "m4a" : "webm"}`) } },
+      // B109：窗级传输异常统计（独立于固件 qc）
+      link_qc_counts: { ...linkQcCounts },
+      pace_median_s: winPaceList.length
+        ? (() => {
+            const s = winPaceList.slice().sort((a, b) => a - b);
+            const mid = Math.floor(s.length / 2);
+            return s.length % 2 ? +s[mid].toFixed(2) : +((s[mid - 1] + s[mid]) / 2).toFixed(2);
+          })()
+        : null,
+      link_events: { gap: gapEvents, fast: fastEvents },
       video_hint: "视频未复制进包（避免大文件内存崩溃），同目录下按 manifest 的文件名自行配对"
     };
     files.push({ name: root + "meta.json", data: enc.encode(JSON.stringify(meta, null, 2)) });
@@ -5077,10 +5143,13 @@ function reviewBaseline(list) {
 }
 
 // 本次连接的全部窗口 → 回顾数字（含 FAIL 窗口，但只统计有效击球）
+// 20261106：新增损伤风险行为统计（late 击球过晚 / loose 安装松动基线 / vti 打框已在上）
 function reviewSummarize() {
   const s = { ts: sessionStartTs || Date.now(), tag: sessionTag(),
               balls: 0, fh: 0, bh: 0, maxSpeed: 0, speedSum: 0, speedN: 0,
-              good: 0, streak: 0, bestStreak: 0, vtiWarn: 0, vtiAlarm: 0 };
+              good: 0, streak: 0, bestStreak: 0, vtiWarn: 0, vtiAlarm: 0,
+              lateSoft: 0, lateHard: 0,    // 击球稍晚 / 击球过晚
+              vtiHistFH: [], vtiHistBH: [] };  // 会话内 VTI 分布（用于安装松动基线）
   let run = 0;
   for (const w of sessionWindows) {
     if (!isQcOk(w.qc.code, w.meta)) {
@@ -5090,6 +5159,7 @@ function reviewSummarize() {
     }
     s.balls++;
     const side = w.meta.strokeFhBh && w.meta.strokeFhBh.side;
+    const sideKey = side === "反手" ? "BH" : "FH";
     if (side === "正手") s.fh++; else if (side === "反手") s.bh++;
     if (isFinite(w.meta.speedKmh)) {
       s.speedSum += w.meta.speedKmh; s.speedN++;
@@ -5097,8 +5167,15 @@ function reviewSummarize() {
     }
     const d = w.diag || {};
     if (d.tbVerdict === "有" && d.ftVerdict === "完整") s.good++;
+    // 打框计数 + 入分布
     const lv = w.meta.vti && w.meta.vti.level;
     if (lv === "warn") s.vtiWarn++; else if (lv === "alarm") s.vtiAlarm++;
+    const vtiV = w.meta.vti && w.meta.vti.vti;
+    if (isFinite(vtiV)) (sideKey === "BH" ? s.vtiHistBH : s.vtiHistFH).push(vtiV);
+    // 击球过晚计数
+    const late = w.meta.late;
+    if (late && late.verdict === "击球过晚") s.lateHard++;
+    else if (late && late.verdict === "击球稍晚") s.lateSoft++;
     run++;
     if (run > s.bestStreak) s.bestStreak = run;
   }
@@ -5106,6 +5183,13 @@ function reviewSummarize() {
   s.rate = s.balls ? s.good / s.balls : 0;
   s.avgSpeed = s.speedN ? s.speedSum / s.speedN : 0;
   s.durMin = sessionStartTs ? (Date.now() - sessionStartTs) / 60000 : 0;
+  // 安装松动基线：取该侧 P50，若 >200 则 looseP50=true
+  const pct50 = arr => { const a = arr.slice().sort((x,y)=>x-y); if (!a.length) return NaN;
+    const i = (a.length-1)*0.5; return a[Math.floor(i)] + (a[Math.ceil(i)]-a[Math.floor(i)])*(i-Math.floor(i)); };
+  const p50FH = pct50(s.vtiHistFH), p50BH = pct50(s.vtiHistBH);
+  s.looseP50 = Math.max(isFinite(p50FH)?p50FH:0, isFinite(p50BH)?p50BH:0);
+  s.looseFH = isFinite(p50FH) && s.vtiHistFH.length >= 6 && p50FH > 200;
+  s.looseBH = isFinite(p50BH) && s.vtiHistBH.length >= 6 && p50BH > 200;
   return s;
 }
 
@@ -5140,15 +5224,62 @@ function fmtDay(ts) {
 }
 
 // 家长视角结论：只给结论，不出现 tbArc / dps / 门限之类术语
+// 20261106：损伤风险行为 + 年龄系数合并进 reviewRiskAdvice，reviewCommentText 回归正面反馈
 function reviewCommentText(s) {
   if (!s.balls) return "这次还没有有效击球。先让孩子打几球热热身，再回来看。";
   let txt;
   if (s.rate >= 0.8) txt = "动作整体很稳：引拍和随挥大部分都做到位了，保持这个感觉。";
   else if (s.rate >= 0.5) txt = "大部分球动作到位，个别球收拍偏快。下次提醒孩子把球拍送完整一点。";
   else txt = "这次引拍普遍不够充分。先让孩子把球拍向后拉满再挥，比追求力量更重要。";
-  if (s.vtiAlarm > 0) txt += ` 有 ${s.vtiAlarm} 球震动偏大，多是击球点偏外，提醒孩子往甜区打，手会舒服很多。`;
-  else if (s.vtiWarn > 0) txt += " 有几球震动稍大，往拍面中间击球会更省力。";
   return txt;
+}
+
+// 损伤风险行为汇总 + 年龄系数（20261106 新增）
+// 年龄系数只影响文案语气强度，不影响判决门限。
+// 医学依据：青少年骨化中，振动暴露阈值约成人 1/3（LIBM 少儿网球研究）；
+// 中老年组织弹性下降，但缺乏直接振动阈值数据，故系数保守。
+function reviewRiskAdvice(s) {
+  if (!s || !s.balls) return { text: "" };
+  const totalRisk = s.vtiWarn + s.vtiAlarm + s.lateSoft + s.lateHard;
+  if (!totalRisk && !s.looseFH && !s.looseBH) {
+    return { text: "本次训练未检测到明显损伤风险行为，继续保持甜区击球和早启动的习惯。" };
+  }
+
+  // 年龄系数
+  const age = (() => {
+    const el = $("pfAge");
+    return el && el.value ? +el.value : NaN;
+  })();
+  let ageLabel = "";
+  if (isFinite(age)) {
+    if (age < 18) ageLabel = "青少年期骨骼正在发育";
+    else if (age > 50) ageLabel = "中老年组织恢复较慢";
+  }
+
+  const lines = [];
+  // 打框相关
+  const frameN = s.vtiWarn + s.vtiAlarm;
+  if (frameN > 0) {
+    const framePct = (frameN / s.balls * 100).toFixed(0);
+    if (age < 18) lines.push(`⚠️ 有 ${frameN} 球（约 ${framePct}%）疑似打框/偏甜区击球，青少年骨骼发育阶段应尽量避免高频振动暴露，往甜区打能显著减轻手-腕冲击。`);
+    else if (age > 50) lines.push(`⚠️ 有 ${frameN} 球（约 ${framePct}%）疑似打框/偏甜区击球，组织弹性下降后振动暴露更容易累积，建议关注击球点。`);
+    else lines.push(`⚠️ 有 ${frameN} 球（约 ${framePct}%）疑似打框/偏甜区击球，高频振动可能累积，往甜区打能显著减轻手-腕冲击。`);
+  }
+  // 击球过晚相关
+  const lateN = s.lateSoft + s.lateHard;
+  if (lateN > 0) {
+    const latePct = (lateN / s.balls * 100).toFixed(0);
+    if (age < 18) lines.push(`⚠️ 有 ${lateN} 球（约 ${latePct}%）击球偏晚，杠杆臂错误会增加肩-肘扭矩，青少年关节不宜长期承受。`);
+    else if (age > 50) lines.push(`⚠️ 有 ${lateN} 球（约 ${latePct}%）击球偏晚，肩-肘扭矩过载在组织弹性下降时更容易累积损伤。`);
+    else lines.push(`⚠️ 有 ${lateN} 球（约 ${latePct}%）击球偏晚，击球杠杆臂错误会增加肩-肘扭矩。`);
+  }
+  // 安装松动相关（独立于年龄，属于设备问题）
+  if (s.looseFH || s.looseBH) {
+    const sideTxt = (s.looseFH ? "正手" : "") + (s.looseFH && s.looseBH ? "、" : "") + (s.looseBH ? "反手" : "");
+    lines.push(`⚠️ ${sideTxt}侧会话基线 VTI P50=${s.looseP50.toFixed(0)}，疑似板-壳安装松动或拍线偏松，建议检查设备（不是你击球的问题）。`);
+  }
+
+  return { text: lines.join(" ") };
 }
 
 function reviewRender() {
@@ -5165,8 +5296,23 @@ function reviewRender() {
   $("rvSide").textContent = (s.fh + s.bh) > 0 ? `${s.fh} / ${s.bh}` : "—";
   $("rvRate").textContent = s.balls ? Math.round(s.rate * 100) + "%" : "—";
   $("rvStreak").textContent = s.bestStreak ? s.bestStreak + " 球" : "—";
-  const vtiN = s.vtiWarn + s.vtiAlarm;
-  $("rvVti").textContent = !s.balls ? "—" : (vtiN ? `${vtiN} 球提醒放松` : "无提醒");
+  // 击球过晚概览（新增，20261106）
+  const lateTotal = s.lateSoft + s.lateHard;
+  $("rvLate").textContent = !s.balls ? "—" : (lateTotal ? `${lateTotal} 球` : "无");
+  // 损伤风险面板（新增，20261106）
+  $("rvFrameWarn").textContent = !s.balls ? "—" : (s.vtiWarn ? `${s.vtiWarn} 球` : "无");
+  $("rvFrameAlarm").textContent = !s.balls ? "—" : (s.vtiAlarm ? `${s.vtiAlarm} 球` : "无");
+  $("rvLateSoft").textContent = !s.balls ? "—" : (s.lateSoft ? `${s.lateSoft} 球` : "无");
+  $("rvLateHard").textContent = !s.balls ? "—" : (s.lateHard ? `${s.lateHard} 球` : "无");
+  const looseTxt = !s.balls ? "—"
+    : (s.looseFH || s.looseBH ? `⚠️ 偏高（P50=${s.looseP50.toFixed(0)}）`
+    : (s.vtiHistFH.length + s.vtiHistBH.length < 6 ? "样本不足"
+    : `正常（P50=${s.looseP50.toFixed(0)}）`));
+  $("rvLoose").textContent = looseTxt;
+  const riskSum = s.vtiWarn + s.vtiAlarm + s.lateSoft + s.lateHard;
+  $("rvRiskSum").textContent = !s.balls ? "—" : (riskSum ? `${riskSum} 球（${(riskSum/s.balls*100).toFixed(0)}%）` : "0");
+  const advice = reviewRiskAdvice(s);
+  $("rvRiskAdvice").textContent = advice.text || "—";
   $("rvComment").textContent = reviewCommentText(s);
 
   let cmp = `第 ${n} 次训练`;
