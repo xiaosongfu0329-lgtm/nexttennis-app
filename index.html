@@ -65,7 +65,7 @@
   .diag { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
           padding: 8px 12px; margin-top: 8px; }
   .diag-row { display: flex; align-items: baseline; gap: 8px; font-size: 14px; padding: 2px 0; }
-  .diag-row .k { color: var(--muted); font-size: 12px; min-width: 34px; }
+  .diag-row .k { color: var(--muted); font-size: 12px; min-width: 34px; white-space: nowrap; }
   .diag-row .num { margin-left: auto; font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); display: none; }
   body.tech-mode .diag-row .num { display: block; }
   .diag .tip { font-size: 12px; margin-top: 4px; color: var(--muted); }
@@ -236,7 +236,7 @@
       <span id="vtiBadge"><span class="badge idle">—</span></span>
       <span class="num" id="vtiNum">—</span></div>
     <!-- 新增识别项（2026-11-01 用户要求，与引拍/随挥同格式同行列出；数值待标定） -->
-    <div class="diag-row"><span class="k">被挤到</span>
+    <div class="diag-row"><span class="k">击球过晚</span>
       <span id="nfSqz"><span class="badge idle">—</span></span>
       <span class="num" id="nfSqzNum">—</span></div>
     <div class="diag-row"><span class="k">引拍时机</span>
@@ -251,7 +251,7 @@
 
   <div id="sessStat" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
   <!-- 打标提示条（APP-B72）：只提示说什么，录音管线在「我的」页；正反手/引拍/随挥由 App 自判，不用报 -->
-  <div class="hint" id="tagHintBar" style="margin-top:4px">打标：每球后说一个词 —— 打框 · 被挤到 · 好球 · 差球 · 随挥不足 · 引拍不足（自动录音，课后转写）</div>
+  <div class="hint" id="tagHintBar" style="margin-top:4px">打标：每球后说一个词 —— 打框 · 过晚 · 好球 · 差球 · 随挥 · 引拍（自动录音，课后转写）</div>
   <!-- 蓝牙耳机/麦克风连接状态（2026-11-01 用户要求上首页）：录音用耳机麦、播报走手机扬声器 -->
   <div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:4px;color:var(--muted)">
     <span id="micDot" style="color:var(--muted)">●</span>
@@ -312,7 +312,7 @@
     </div>
     <div class="c-phrase" id="cPhrase">—</div>
     <p class="c-hint" id="cBlkTip" style="color:var(--fg)">—</p>
-    <p class="c-hint">敲拍+口述=块边界；每球可报一词（好球/差球/打框/被挤到）</p>
+    <p class="c-hint">敲拍+口述=块边界；每球可报一词（好球/差球/打框/过晚）</p>
   </div>
 
   <div class="panel">
@@ -555,7 +555,7 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B101-20261106-1500";   // B101：术语统一——时间型→击球过晚（Late Contact），空间型→击球点贴身（Jammed）；文案与练习项更名，逻辑不变。B100：击球点偏后（时间型）上线——computeLateContactFeatures 增加带符号投影 V 点切分，输出 fwd_pos（触球在前挥弧中的位置）与 fwd_ms（V 点→触球时长），按 2026-11-06 标定口径判决：fwd_pos<0.30 或 fwd_ms<45ms →「时间型被挤」提示「注意早架拍、早启动」；0.30~0.45 →「偏后」；无 V 点时回退 pk_vs_t0>30ms。技术页「被挤到」改为显示新判决与提示，windowLog 增 fwdPos/fwdMs/lateVerdict。sw.js CACHE nexttennis-v41
+const APP_BUILD = "APP-B104-20261106-1402";   // B104：术语收口——首页诊断行「击球点贴身」→「击球过晚」（该行显示的是时间型 late 判决；贴身属空间型、需视频姿态），打标提示条与敲拍口述提示同步改为 2 字「过晚」，离线转写词表新增 guo-wan / ji-qiu-guo-wan 模板（输出 tag 仍写「被挤到」，兼容 175 条历史标注与既有分析脚本）。sw.js CACHE nexttennis-v45。B103：①修 nfRows 直接引用未声明 w（B100 引入）——每个有效窗都会抛 ReferenceError，导致首页诊断卡自 B100 起整体不刷新；late 改为入参 ②话术与徽章同源：提示文案带上「引拍 X°/随挥 Y°」同一组数字，消除"数字正常却听到不足" ③提示优先级：无引拍 > 击球过晚 > 幅度测不准 > 随挥不足 > 引拍赶 > 收拍快 ④击球过晚已判出时，引拍时机行不再重复报（引拍时机=K3 占比相对个人基线，是其上游量）⑤技术页旧规则/引拍时机标注更正。sw.js CACHE nexttennis-v44。B102：①windows.csv 末端追加 5 列 pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict（B100 只在内存算过、未导出；非 NORMAL_HIT 留空，列数恒定，既有列顺序不变）②术语落地：首页诊断行"被挤到"→"击球点贴身"，练习项 B5 tips 同步，技术页旧规则回退值"疑似偏后"→"击球稍晚"；语音打标词表（打框/被挤到/好球/差球）不动，避免断历史标签 ③补齐缓存号记录。sw.js CACHE nexttennis-v43。B101：术语统一（时间型→击球过晚 Late Contact，空间型→击球点贴身 Jammed），仅改注释与部分文案，逻辑不变（sw v42）。B100：击球点偏后（时间型）上线——computeLateContactFeatures 增加带符号投影 V 点切分，输出 fwd_pos（触球在前挥弧中的位置）与 fwd_ms（V 点→触球时长），按 2026-11-06 标定口径判决：fwd_pos<0.30 或 fwd_ms<45ms →「时间型被挤」提示「注意早架拍、早启动」；0.30~0.45 →「偏后」；无 V 点时回退 pk_vs_t0>30ms。技术页「被挤到」改为显示新判决与提示，windowLog 增 fwdPos/fwdMs/lateVerdict。sw.js CACHE nexttennis-v41
                                              // B93：Late Contact 特征（击球点偏后识别前置）——复刻固件 B58 line 727-755：全窗 |gyro| 合成 + 5 点盒式平滑 + 找峰值 pk_idx + 10% 峰值前回溯 rise_start，输出 pk_vs_t0_ms 和 t_rise_ms 两个原始值（不判决）。改动点：①新增 computeLateContactFeatures() 30 行 ②onWindow 里调用并推入独立 windowLog[] 数组（容量 2000，防 connLog 500 上限被冲）③session_log.csv 新增 pk_vs_t0_ms / t_rise_ms 两列（event=window 行有值，其他事件留空），窗口日志带 [CALC] 标签与固件 [CLASS] 比对，容忍 ±5ms。所有窗口（含敲拍）都计算。sw.js CACHE nexttennis-v34
                                              // B92：录像文件名改为「开始_结束」双时间戳（video_YYYYMMDD_HHMMSS-HHMMSS.webm）
                                              // B91：原生壳接管语音打标（__ntVoice*，锁屏不再静音）
@@ -2705,7 +2705,7 @@ function nfCompute(data, t0, form) {
   // ---- 初判（仅技术页，标定中；不做归因）----
   const squeezed = (isFinite(preDurS) && preDurS < NF.PRE_SHORT_S)
                 || (isFinite(wlpRatio) && wlpRatio < NF.WLP_RATIO_THR)
-    ? "疑似偏后" : "正常";
+    ? "击球稍晚" : "正常";
 
   let timing = "—", timingWhy = "无 K3 基线";
   if (form && form.k3P50 != null && form.k3N >= FORM_K3_MIN_N && isFinite(form.ratio)) {
@@ -2737,21 +2737,22 @@ function nfRender(w) {
   const n2 = v => (Number.isFinite(v) ? v.toFixed(2) : "—");
   const n3 = v => (Number.isFinite(v) ? v.toFixed(3) : "—");
   const html = [
-    `<b>击球过晚 / Late Contact</b>（旧规则，标定中；新规则见下方）—— pre_dur_s=${n3(f.preDurS)}s · acc_dur_s=${n3(f.accDurS)}s · `
-      + `ω_lp_ratio=${n2(f.wlpRatio)} · t_peak_lp−T0=${n2(f.tPeakLpMs)}ms → 初判 <b>${f.squeezedVerdict}</b>`,
+    `<b>击球过晚 / Late Contact</b>（旧时间型规则，仅技术视图保留；正式判决见上方首页行）—— pre_dur_s=${n3(f.preDurS)}s · acc_dur_s=${n3(f.accDurS)}s · `
+      + `ω_lp_ratio=${n2(f.wlpRatio)} · t_peak_lp−T0=${n2(f.tPeakLpMs)}ms → 旧初判 <b>${f.squeezedVerdict}</b>`,
     `<b>打框特征</b>（标定中，不判决）—— hf_rms=${n2(f.hfRms)}（T0+5~30ms 三轴二阶差分 RMS）`,
-    `<b>引拍时机</b>（标定中）—— ${f.timingVerdict}（${f.timingWhy}）`,
+    `<b>引拍时机</b>（个人基线相对量，属 Late Contact 上游；逐球不重复报）—— ${f.timingVerdict}（${f.timingWhy}）`,
     `<b>翻拍 / 拍面稳定</b>（标定中）—— 旋内轴占比=${n2(f.parMean)} ± ${n2(f.parStd)}（前挥段 |ω∥|/|ω|）`,
     `<b>挥拍流畅度</b>（标定中）—— dip_ratio=${n2(f.flowDip)} · jerk=${n2(f.flowJerk)}（宏观段前挥 10Hz 低通）`,
     `<b>刷球占比</b>（观察值，已降档不进激励）—— brush_ratio=${n2(f.brushRatio)}（|ω_perp|=${n2(f.wPerp)} dps / |ω|=${n2(f.wTot)} dps）`,
   ].join("\n");
   els.forEach(el => el.innerHTML = html);
-  nfRows(f);
+  nfRows(f, w && w.meta && w.meta.late);
 }
 
 // 首页诊断卡里的新增识别项行（与引拍/随挥同格式）；初判只标「疑似/正常」，不归因
 // 打框 / 拍面 / 流畅度 / 刷球 四项无门限，压成一行「其它」保证首页一屏（明细在技术页）
-function nfRows(f) {
+// late 必须由调用方传入（B103 修：原实现直接引用未声明的 w，运行时会抛 ReferenceError）
+function nfRows(f, late) {
   const B = (id, cls, txt) => { const e = $(id); if (e) e.innerHTML = `<span class="badge ${cls}">${txt}</span>`; };
   const N = (id, txt) => { const e = $(id); if (e) e.textContent = txt; };
   const HEAD = ["nfSqz", "nfTiming", "nfOther"];
@@ -2764,7 +2765,6 @@ function nfRows(f) {
   const n2 = v => (Number.isFinite(v) ? v.toFixed(2) : "—");
   const n3 = v => (Number.isFinite(v) ? v.toFixed(3) : "—");
   // 被挤到（时间型）：APP-B100——触球在前挥弧中的位置 + 前挥时长（2026-11-06 标定口径）
-  const late = w && w.meta && w.meta.late;
   if (late) {
     const lv = late.verdict || "正常";
     B("nfSqz", lv === "正常" ? "pass" : "warn", lv);
@@ -2773,14 +2773,22 @@ function nfRows(f) {
         : `无 V 点 · 回退峰值 ${late.pk_vs_t0_ms >= 0 ? "+" : ""}${late.pk_vs_t0_ms}ms`)
       + (late.hint ? ` · ${late.hint}` : ""));
   } else {
-    const sqz = f.squeezedVerdict === "疑似偏后";
+    const sqz = f.squeezedVerdict === "击球稍晚";
     B("nfSqz", sqz ? "warn" : "pass", f.squeezedVerdict);
     N("nfSqzNum", `pre ${n3(f.preDurS)}s · acc ${n3(f.accDurS)}s · ω_lp ${n2(f.wlpRatio)} · 峰差 ${n2(f.tPeakLpMs)}ms`);
   }
-  // 引拍时机：复用 K3 个人基线
+  // 引拍时机：K3 个人基线相对量（ratio=引拍时长/整条弧时长 相对自己 P50 的偏移）
+  // 与 Late Contact 同源但不同层：引拍时机＝上游节奏分配（相对自己），Late Contact＝触球点位置（绝对/几何）。
+  // 按「每球只报根本原因」约定：Late Contact 已判出时不再重复报引拍时机。
+  const lateAbn = !!(late && late.verdict && late.verdict !== "正常");
   const tm = f.timingVerdict;
-  B("nfTiming", tm === "正常" ? "pass" : (tm === "—" ? "idle" : "warn"), tm);
-  N("nfTimingNum", f.timingWhy);
+  if (lateAbn) {
+    B("nfTiming", "idle", "—");
+    N("nfTimingNum", "已由「击球过晚」覆盖（引拍时机是其上游，不重复提示）");
+  } else {
+    B("nfTiming", tm === "正常" ? "pass" : (tm === "—" ? "idle" : "warn"), tm);
+    N("nfTimingNum", f.timingWhy);
+  }
   // 其它四项：无标定门限，只报值
   B("nfOther", "idle", "标定中");
   N("nfOtherNum", `打框 hf ${n2(f.hfRms)} · 拍面 ${n2(f.parMean)}±${n2(f.parStd)}`
@@ -2946,14 +2954,22 @@ function updateDiagnosis(w) {
   const d = diagnoseSwing(w.data, t0, w.meta.form, side);
   w.diag = d;
   if (!d.alive) { idle("（本窗无陀螺数据，无法诊断引拍/随挥）"); return; }
+  // 话术与徽章同源：徽章显示「引拍量/随挥量」的数值，话术必须带同一组数字，避免"数字正常却听到不足"
+  // 优先级（每球只报一条）：无引拍 > 击球过晚（根本原因）> 幅度测不准 > 随挥不足 > 引拍赶 > 收拍快 > 合格
+  const late = w.meta && w.meta.late;
+  const lateAbn = !!(late && late.verdict && late.verdict !== "正常");
+  const volTxt = (vol && Number.isFinite(vol.pre_deg) && Number.isFinite(vol.post_deg))
+    ? `（引拍 ${Math.round(vol.pre_deg)}° / 随挥 ${Math.round(vol.post_deg)}°）` : "";
   let tip, col = "";
-  if (d.tbVerdict === "无") { tip = "引拍不足：球拍没有充分向后拉开，先解决引拍"; col = "var(--fail)"; }
-  else if (d.ftVerdict === "不足") { tip = "随挥不足：触球后没有把球拍送完整"; col = "var(--fail)"; }
-  else if (d.tbGate) { tip = "这一球引拍有点赶，试着把拍子再向后拉一点"; col = "var(--warn)"; }
-  else if (d.ftGate) { tip = "这一球收拍稍快，把动作送完整会更稳"; col = "var(--warn)"; }
+  if (d.tbVerdict === "无") { tip = `引拍不足：球拍没有充分向后拉开，先解决引拍${volTxt}`; col = "var(--fail)"; }
+  else if (lateAbn) { tip = `${late.verdict}：${late.hint || "早架拍、早启动"}${volTxt}`; col = "var(--warn)"; }
+  else if (vol && vol.confidence === "low") { tip = `这一球动作幅度测不准（拍速过低或没找到换向点），不下结论${volTxt}`; col = "var(--warn)"; }
+  else if (d.ftVerdict === "不足") { tip = `随挥不足：触球后没有把球拍送完整${volTxt}`; col = "var(--fail)"; }
+  else if (d.tbGate) { tip = `这一球引拍有点赶，试着把拍子再向后拉一点${volTxt}`; col = "var(--warn)"; }
+  else if (d.ftGate) { tip = `这一球收拍稍快，把动作送完整会更稳${volTxt}`; col = "var(--warn)"; }
   else if (d.tbVerdict === "不确定" || d.ftVerdict === "不确定") {
-    tip = "动作幅度落在门限附近，本球不下结论"; col = "var(--warn)";
-  } else { tip = "引拍与随挥都在合格区间"; col = "var(--pass)"; }
+    tip = `动作幅度落在门限附近，本球不下结论${volTxt}`; col = "var(--warn)";
+  } else { tip = `引拍与随挥都在合格区间${volTxt}`; col = "var(--pass)"; }
   tipEl.textContent = tip;
   tipEl.style.color = col;
 }
@@ -4654,7 +4670,7 @@ $("exportCsvBtn").addEventListener("click", () => {
 // CSV 表头与行构建（单窗口 / 会话导出共用；impact_type 为固件板判）
 // stroke_type：固件已停发该字段（Step4 移交 App），改为 App W2 零校准判决写入（FH→FOREHAND / BH→BACKHAND），
 // 仅 NORMAL_HIT(0) 且判决有效时填写；列名不变、不写 note，不影响块名解析。
-const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,vti,vti_level,fw_ms\n";
+const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,vti,vti_level,fw_ms,pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict\n";
 function buildCsvRows(m) {
   const impactType = m.meta.quickClass != null
     ? ["NORMAL_HIT", "FRAME_HIT", "FOREIGN_IMPACT"][m.meta.quickClass] : "";
@@ -4672,11 +4688,19 @@ function buildCsvRows(m) {
   const vv = m.meta.vti || {};
   const vtiVal = Number.isFinite(vv.vti) ? vv.vti.toFixed(1) : "";
   const vtiLvl = vv.level || "";
+  // B102：Late Contact / V 点特征（B100 已在 meta.late 算好，此前只在内存、未进 CSV）。
+  // 只在末端追加 5 列；非 NORMAL_HIT 或未算到时留空，列数恒定不影响既有解析。
+  const lt = m.meta.late;
+  const lateTail = (ok && lt && Number.isFinite(lt.pk_vs_t0_ms))
+    ? `${lt.pk_vs_t0_ms},${Number.isFinite(lt.t_rise_ms) ? lt.t_rise_ms : ""},`
+      + `${lt.fwd_pos != null ? lt.fwd_pos.toFixed(3) : ""},`
+      + `${lt.fwd_ms != null ? lt.fwd_ms : ""},${lt.verdict || ""}`
+    : ",,,,";
   let rows = "";
   for (let i = 0; i < PROTO.WINDOW.samples; i++) {
     rows += `${m.meta.seq},${m.meta.timestamp},${i},`;
     for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) rows += m.data[ch][i].toFixed(6) + ",";
-    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${vtiVal},${vtiLvl},${m.meta.fwMs || 0}\n`;
+    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${vtiVal},${vtiLvl},${m.meta.fwMs || 0},${lateTail}\n`;
   }
   return rows;
 }
@@ -5357,7 +5381,7 @@ const COL_BLOCKS = [
   { id: "C", act: "回到正常打", plan: 10,
     tip: "回到与 A 块一致的常态击球。" },
   { id: "B5", act: "击球过晚（Late Contact）", plan: 8,
-    tip: "刻意等球到身体侧面/前髋线才击球，制造「被挤到」正例。" },
+    tip: "刻意等球到身体侧面/前髋线才击球，制造「击球点贴身」正例。" },
   { id: "B1'", act: "反手 有引拍 + 有随挥", plan: 6,
     tip: "反手教科书动作：充分引拍，完整随挥到肩后。" },
   { id: "B2'", act: "反手 无引拍 + 有随挥", plan: 6,
