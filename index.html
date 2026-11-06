@@ -555,7 +555,7 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B105-20261106-1420";   // B105：修 computeLateContactFeatures 入参布局——data 是通道优先 win[ch][i] 且已换算物理量，B100 起按行优先 win[i][ch] 取值，i≥12 抛 TypeError 被 try/catch 吞掉，导致 meta.late 为空、windows.csv 的 pk_vs_t0_ms/t_rise_ms/fwd_* 全空；现改通道优先并去掉重复的 GYRO_LSB 缩放（特征只用比值，量纲无关），数值口径与固件 B61/Python 1:1。B104：术语收口——首页诊断行「击球点贴身」→「击球过晚」（该行显示的是时间型 late 判决；贴身属空间型、需视频姿态），打标提示条与敲拍口述提示同步改为 2 字「过晚」，离线转写词表新增 guo-wan / ji-qiu-guo-wan 模板（输出 tag 仍写「被挤到」，兼容 175 条历史标注与既有分析脚本）。sw.js CACHE nexttennis-v45。B103：①修 nfRows 直接引用未声明 w（B100 引入）——每个有效窗都会抛 ReferenceError，导致首页诊断卡自 B100 起整体不刷新；late 改为入参 ②话术与徽章同源：提示文案带上「引拍 X°/随挥 Y°」同一组数字，消除"数字正常却听到不足" ③提示优先级：无引拍 > 击球过晚 > 幅度测不准 > 随挥不足 > 引拍赶 > 收拍快 ④击球过晚已判出时，引拍时机行不再重复报（引拍时机=K3 占比相对个人基线，是其上游量）⑤技术页旧规则/引拍时机标注更正。sw.js CACHE nexttennis-v44。B102：①windows.csv 末端追加 5 列 pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict（B100 只在内存算过、未导出；非 NORMAL_HIT 留空，列数恒定，既有列顺序不变）②术语落地：首页诊断行"被挤到"→"击球点贴身"，练习项 B5 tips 同步，技术页旧规则回退值"疑似偏后"→"击球稍晚"；语音打标词表（打框/被挤到/好球/差球）不动，避免断历史标签 ③补齐缓存号记录。sw.js CACHE nexttennis-v43。B101：术语统一（时间型→击球过晚 Late Contact，空间型→击球点贴身 Jammed），仅改注释与部分文案，逻辑不变（sw v42）。B100：击球点偏后（时间型）上线——computeLateContactFeatures 增加带符号投影 V 点切分，输出 fwd_pos（触球在前挥弧中的位置）与 fwd_ms（V 点→触球时长），按 2026-11-06 标定口径判决：fwd_pos<0.30 或 fwd_ms<45ms →「时间型被挤」提示「注意早架拍、早启动」；0.30~0.45 →「偏后」；无 V 点时回退 pk_vs_t0>30ms。技术页「被挤到」改为显示新判决与提示，windowLog 增 fwdPos/fwdMs/lateVerdict。sw.js CACHE nexttennis-v41
+const APP_BUILD = "APP-B106-20261106-1440";   // B106：①术语中文化——界面/日志里 pk_vs_t0_ms→峰值时刻（负=触球前）、t_rise_ms→起速时长、fwd_pos→触球位置（前挥弧比例 0=起挥 1=触球）、fwd_ms→前挥时长；技术视图新增一行「击球时机（时间型）」把 4 个数 + 判决 + 提示全部显示，首页诊断行同步补峰值时刻/起速；其余旧指标英文名一并换中文（CSV 列名不变，脚本仍按英文解析）②修 meta.capture.mode 恒为 "stopped"——改用本场会话真实模式 audio/video/null。B105：修 computeLateContactFeatures 入参布局——data 是通道优先 win[ch][i] 且已换算物理量，B100 起按行优先 win[i][ch] 取值，i≥12 抛 TypeError 被 try/catch 吞掉，导致 meta.late 为空、windows.csv 的 pk_vs_t0_ms/t_rise_ms/fwd_* 全空；现改通道优先并去掉重复的 GYRO_LSB 缩放（特征只用比值，量纲无关），数值口径与固件 B61/Python 1:1。B104：术语收口——首页诊断行「击球点贴身」→「击球过晚」（该行显示的是时间型 late 判决；贴身属空间型、需视频姿态），打标提示条与敲拍口述提示同步改为 2 字「过晚」，离线转写词表新增 guo-wan / ji-qiu-guo-wan 模板（输出 tag 仍写「被挤到」，兼容 175 条历史标注与既有分析脚本）。sw.js CACHE nexttennis-v45。B103：①修 nfRows 直接引用未声明 w（B100 引入）——每个有效窗都会抛 ReferenceError，导致首页诊断卡自 B100 起整体不刷新；late 改为入参 ②话术与徽章同源：提示文案带上「引拍 X°/随挥 Y°」同一组数字，消除"数字正常却听到不足" ③提示优先级：无引拍 > 击球过晚 > 幅度测不准 > 随挥不足 > 引拍赶 > 收拍快 ④击球过晚已判出时，引拍时机行不再重复报（引拍时机=K3 占比相对个人基线，是其上游量）⑤技术页旧规则/引拍时机标注更正。sw.js CACHE nexttennis-v44。B102：①windows.csv 末端追加 5 列 pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict（B100 只在内存算过、未导出；非 NORMAL_HIT 留空，列数恒定，既有列顺序不变）②术语落地：首页诊断行"被挤到"→"击球点贴身"，练习项 B5 tips 同步，技术页旧规则回退值"疑似偏后"→"击球稍晚"；语音打标词表（打框/被挤到/好球/差球）不动，避免断历史标签 ③补齐缓存号记录。sw.js CACHE nexttennis-v43。B101：术语统一（时间型→击球过晚 Late Contact，空间型→击球点贴身 Jammed），仅改注释与部分文案，逻辑不变（sw v42）。B100：击球点偏后（时间型）上线——computeLateContactFeatures 增加带符号投影 V 点切分，输出 fwd_pos（触球在前挥弧中的位置）与 fwd_ms（V 点→触球时长），按 2026-11-06 标定口径判决：fwd_pos<0.30 或 fwd_ms<45ms →「时间型被挤」提示「注意早架拍、早启动」；0.30~0.45 →「偏后」；无 V 点时回退 pk_vs_t0>30ms。技术页「被挤到」改为显示新判决与提示，windowLog 增 fwdPos/fwdMs/lateVerdict。sw.js CACHE nexttennis-v41
                                              // B93：Late Contact 特征（击球点偏后识别前置）——复刻固件 B58 line 727-755：全窗 |gyro| 合成 + 5 点盒式平滑 + 找峰值 pk_idx + 10% 峰值前回溯 rise_start，输出 pk_vs_t0_ms 和 t_rise_ms 两个原始值（不判决）。改动点：①新增 computeLateContactFeatures() 30 行 ②onWindow 里调用并推入独立 windowLog[] 数组（容量 2000，防 connLog 500 上限被冲）③session_log.csv 新增 pk_vs_t0_ms / t_rise_ms 两列（event=window 行有值，其他事件留空），窗口日志带 [CALC] 标签与固件 [CLASS] 比对，容忍 ±5ms。所有窗口（含敲拍）都计算。sw.js CACHE nexttennis-v34
                                              // B92：录像文件名改为「开始_结束」双时间戳（video_YYYYMMDD_HHMMSS-HHMMSS.webm）
                                              // B91：原生壳接管语音打标（__ntVoice*，锁屏不再静音）
@@ -1547,8 +1547,8 @@ function onWindow(meta, data) {
       lateVerdict: meta.late.verdict,
     });
     if (windowLog.length > WINDOWLOG_MAX) windowLog.splice(0, windowLog.length - WINDOWLOG_MAX);
-    log(`[CALC] seq=${meta.seq} pk_idx=${meta.late.pk_idx} pk_vs_t0_ms=${meta.late.pk_vs_t0_ms >= 0 ? "+" : ""}${meta.late.pk_vs_t0_ms} t_rise_ms=${meta.late.t_rise_ms}`
-      + ` fwd_pos=${meta.late.fwd_pos != null ? meta.late.fwd_pos.toFixed(2) : "—"} fwd=${meta.late.fwd_ms != null ? meta.late.fwd_ms + "ms" : "—"}`
+    log(`[CALC] seq=${meta.seq} 峰值索引=${meta.late.pk_idx} 峰值时刻=${meta.late.pk_vs_t0_ms >= 0 ? "+" : ""}${meta.late.pk_vs_t0_ms}ms 起速时长=${meta.late.t_rise_ms}ms`
+      + ` 触球位置=${meta.late.fwd_pos != null ? meta.late.fwd_pos.toFixed(2) : "—"} 前挥时长=${meta.late.fwd_ms != null ? meta.late.fwd_ms + "ms" : "—"}`
       + ` => ${meta.late.verdict}${meta.late.hint ? "（" + meta.late.hint + "）" : ""}`, "log-info");
   } catch (e) {
     log(`[CALC] Late Contact 计算异常: ${e.message}`, "log-warn");
@@ -2739,14 +2739,26 @@ function nfRender(w) {
   w.nf = f;
   const n2 = v => (Number.isFinite(v) ? v.toFixed(2) : "—");
   const n3 = v => (Number.isFinite(v) ? v.toFixed(3) : "—");
+  // 2026-11-06（B106）：术语中文化——界面上不再出现 pk_vs_t0 / t_rise / fwd_pos / fwd_ms 这些字段名，
+  // 统一叫「峰值时刻 / 起速时长 / 触球位置 / 前挥时长」。CSV 列名保持不变（脚本按英文列名解析）。
+  const lt = w.meta && w.meta.late;
+  const lateLine = lt
+    ? `<b>击球时机（时间型）</b> —— 判决 <b>${lt.verdict || "正常"}</b> · `
+      + `峰值时刻 ${lt.pk_vs_t0_ms >= 0 ? "+" : ""}${lt.pk_vs_t0_ms}ms（负=触球前达到角速度峰值） · `
+      + `起速时长 ${lt.t_rise_ms}ms（从 10% 峰值升到峰值） · `
+      + `触球位置 ${lt.fwd_pos != null ? lt.fwd_pos.toFixed(3) : "—"}（0=起挥 1=触球，前挥弧比例） · `
+      + `前挥时长 ${lt.fwd_ms != null ? lt.fwd_ms + "ms" : "—"}（起挥点→触球）`
+      + (lt.hint ? ` · 提示：${lt.hint}` : "")
+    : `<b>击球时机（时间型）</b> —— 本窗未算出（非有效窗或数据缺失）`;
   const html = [
-    `<b>击球过晚 / Late Contact</b>（旧时间型规则，仅技术视图保留；正式判决见上方首页行）—— pre_dur_s=${n3(f.preDurS)}s · acc_dur_s=${n3(f.accDurS)}s · `
-      + `ω_lp_ratio=${n2(f.wlpRatio)} · t_peak_lp−T0=${n2(f.tPeakLpMs)}ms → 旧初判 <b>${f.squeezedVerdict}</b>`,
-    `<b>打框特征</b>（标定中，不判决）—— hf_rms=${n2(f.hfRms)}（T0+5~30ms 三轴二阶差分 RMS）`,
+    lateLine,
+    `<b>击球过晚 / Late Contact</b>（旧时间型规则，仅技术视图保留；正式判决见上方首页行）—— 引拍时长=${n3(f.preDurS)}s · 加速时长=${n3(f.accDurS)}s · `
+      + `低通角速度占比=${n2(f.wlpRatio)} · 低通峰值相对触球=${n2(f.tPeakLpMs)}ms → 旧初判 <b>${f.squeezedVerdict}</b>`,
+    `<b>打框特征</b>（标定中，不判决）—— 高频冲击能量=${n2(f.hfRms)}（触球后 5~30ms 三轴二阶差分 RMS）`,
     `<b>引拍时机</b>（个人基线相对量，属 Late Contact 上游；逐球不重复报）—— ${f.timingVerdict}（${f.timingWhy}）`,
-    `<b>翻拍 / 拍面稳定</b>（标定中）—— 旋内轴占比=${n2(f.parMean)} ± ${n2(f.parStd)}（前挥段 |ω∥|/|ω|）`,
-    `<b>挥拍流畅度</b>（标定中）—— dip_ratio=${n2(f.flowDip)} · jerk=${n2(f.flowJerk)}（宏观段前挥 10Hz 低通）`,
-    `<b>刷球占比</b>（观察值，已降档不进激励）—— brush_ratio=${n2(f.brushRatio)}（|ω_perp|=${n2(f.wPerp)} dps / |ω|=${n2(f.wTot)} dps）`,
+    `<b>翻拍 / 拍面稳定</b>（标定中）—— 旋内轴占比=${n2(f.parMean)} ± ${n2(f.parStd)}（前挥段 平行轴角速度/总角速度）`,
+    `<b>挥拍流畅度</b>（标定中）—— 凹陷比=${n2(f.flowDip)} · 顿挫=${n2(f.flowJerk)}（宏观段前挥 10Hz 低通）`,
+    `<b>刷球占比</b>（观察值，已降档不进激励）—— 刷球比=${n2(f.brushRatio)}（垂直轴角速度=${n2(f.wPerp)} dps / 总角速度=${n2(f.wTot)} dps）`,
   ].join("\n");
   els.forEach(el => el.innerHTML = html);
   nfRows(f, w && w.meta && w.meta.late);
@@ -2771,9 +2783,12 @@ function nfRows(f, late) {
   if (late) {
     const lv = late.verdict || "正常";
     B("nfSqz", lv === "正常" ? "pass" : "warn", lv);
-    N("nfSqzNum", (late.fwd_pos != null
-        ? `触球位置 ${late.fwd_pos.toFixed(2)} · 前挥 ${late.fwd_ms}ms`
-        : `无 V 点 · 回退峰值 ${late.pk_vs_t0_ms >= 0 ? "+" : ""}${late.pk_vs_t0_ms}ms`)
+    // B106：中文名——峰值时刻（负=触球前）/ 起速时长 / 触球位置 / 前挥时长
+    N("nfSqzNum", `峰值时刻 ${late.pk_vs_t0_ms >= 0 ? "+" : ""}${late.pk_vs_t0_ms}ms`
+      + ` · 起速 ${late.t_rise_ms}ms · `
+      + (late.fwd_pos != null
+          ? `触球位置 ${late.fwd_pos.toFixed(2)} · 前挥时长 ${late.fwd_ms}ms`
+          : `触球位置 未算出`)
       + (late.hint ? ` · ${late.hint}` : ""));
   } else {
     const sqz = f.squeezedVerdict === "击球稍晚";
@@ -4927,8 +4942,8 @@ async function packExport() {
         audio_segments: segList,
         audio_interrupts: capRunRecs.filter(r => r.interrupted).length
       },
-      // B96：capture.describe 只在「本场 CSV 真的在包里」时才给出，避免指向不存在的文件
-      capture: { mode: capCsvTag ? (capOn || "stopped") : null, tag: capCsvTag,
+      // mode 用本场会话的真实模式（audio/video/null）；B106 修：原来取 capOn，导出时采集已结束 → 恒为 "stopped"
+      capture: { mode: capCsvTag ? ((primarySess && primarySess.mode) || null) : null, tag: capCsvTag,
                  started_at: (capCsvTag && capStartTs) ? new Date(capStartTs).toISOString() : null,
                  // B95 P0-1：音频真正起止（打点换算成音频内位置必须用这两个时刻）
                  audio_start_ts: aStart ? new Date(aStart).toISOString() : null,
