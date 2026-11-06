@@ -571,7 +571,8 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B109-20261106-1900";   // B109 v2：①关闭 VSHADOW 影子期——引拍/随挥幅度直接给档位判决徽章（偏小/正常/偏大），不再只显示纯数值 ②游戏式⭐弹出动画——完美击球（Late Contact 正常 + 引拍/随挥档位不偏）时屏幕弹出三颗金色大⭐+"完美击球"字样，1.8s 自动消失 ③BLE 数据流空档从首页挪技术页连接状态面板（不是打球节奏指标，不应干扰打球界面）。B109 v1（1800）：link_qc 传输异常检测（SHORT/INTERLEAVED/DOUBLE + GAP/FAST 事件 + windows.csv 两列 + meta.json 三项 + 采集页异常统计）+ 删除原生逐球录音与 homeRecInd（CSS/HTML/JS 三段移除，__ntVoiceStart/__ntVoice 空壳）。约束：不改固件 qc、不改 CSV 既有列顺序、不补帧只标记。sw.js CACHE nexttennis-v49
+const APP_BUILD = "APP-B110-20261106-1605";   // B110：Late Contact（击球过晚）判决修正——复算标定发现两处实现偏差：①投影序列未平滑，原始 960Hz 陀螺噪声制造假过零点，V 点被切到触球前 1ms、fwd_pos 被压到 0.05（参考实现应为 0.236）；②积分用了 max(0,·) 截断，违背「带符号投影」口径，随挥段正偏移全计入分母，正常球 fwd_pos 被系统性压低（正常球 66% 被误报晚，即"总是显示击球稍晚"的根因）。修正：投影 5 点盒式平滑 + 带符号积分 + 随挥止固定 idx347（T0+168ms）。门限重标定（11-04：62被挤/70Yangka正常/126教练）：过晚 fwd_pos<0.20 或 fwd_ms<45ms（召回 67%、教练误报 10%），稍晚 [0.20,0.30)（教练 5%）。11-05 复算预测：正常 50%/稍晚 13%/过晚 24%（旧版 14/19/68）。sw.js CACHE nexttennis-v51
+                                             // B109 v2：①关闭 VSHADOW 影子期——引拍/随挥幅度直接给档位判决徽章（偏小/正常/偏大），不再只显示纯数值 ②游戏式⭐弹出动画——完美击球（Late Contact 正常 + 引拍/随挥档位不偏）时屏幕弹出三颗金色大⭐+"完美击球"字样，1.8s 自动消失 ③BLE 数据流空档从首页挪技术页连接状态面板（不是打球节奏指标，不应干扰打球界面）。B109 v1（1800）：link_qc 传输异常检测（SHORT/INTERLEAVED/DOUBLE + GAP/FAST 事件 + windows.csv 两列 + meta.json 三项 + 采集页异常统计）+ 删除原生逐球录音与 homeRecInd（CSS/HTML/JS 三段移除，__ntVoiceStart/__ntVoice 空壳）。约束：不改固件 qc、不改 CSV 既有列顺序、不补帧只标记。sw.js CACHE nexttennis-v49
                                              // B93：Late Contact 特征（击球点偏后识别前置）——复刻固件 B58 line 727-755：全窗 |gyro| 合成 + 5 点盒式平滑 + 找峰值 pk_idx + 10% 峰值前回溯 rise_start，输出 pk_vs_t0_ms 和 t_rise_ms 两个原始值（不判决）。改动点：①新增 computeLateContactFeatures() 30 行 ②onWindow 里调用并推入独立 windowLog[] 数组（容量 2000，防 connLog 500 上限被冲）③session_log.csv 新增 pk_vs_t0_ms / t_rise_ms 两列（event=window 行有值，其他事件留空），窗口日志带 [CALC] 标签与固件 [CLASS] 比对，容忍 ±5ms。所有窗口（含敲拍）都计算。sw.js CACHE nexttennis-v34
                                              // B92：录像文件名改为「开始_结束」双时间戳（video_YYYYMMDD_HHMMSS-HHMMSS.webm）
                                              // B91：原生壳接管语音打标（__ntVoice*，锁屏不再静音）
@@ -1460,6 +1461,8 @@ function setConn(text, cls) {
 function computeLateContactFeatures(win) {
   const WIN_SAMPLES = 396;
   const T0_IDX = 186;           // 固件 buildWindow：idx 186 = T0
+  const E_END = 347;            // 随挥止=微观段末（T0+168ms）。B110 固定截断：跨人可复现，
+                                // 不再随 10% 峰值衰减点漂移（宏段 120Hz 尾巴会把分母越拖越大）
   // 三段非均匀采样映射（与 Python injury_analyzer.t_ms / 固件 B60 1:1）
   // macro 120Hz = 8.33ms/idx（idx 0-137, 348-395）；micro 960Hz = 1.0417ms/idx（idx 138-347）
   const MICRO_DT = 1000 / 960;
@@ -1503,7 +1506,14 @@ function computeLateContactFeatures(win) {
   const t_rise_ms = Math.round(tMs(pk_idx) - tMs(rise_start));
 
   // 6) 带符号投影 → V 点（引拍→前挥反转点），计算触球在前挥弧中的位置
-  //    依据 2026-11-06 标定：被挤组触球位置中位 0.236、前挥时长 32ms；教练 0.692 / 80ms
+  //    B110 修正（2026-11-06 复算标定发现两处实现偏差，已按参考实现 1:1 校正）：
+  //    ① 投影序列先做 5 点盒式平滑——原始 960Hz 陀螺的噪声会制造假过零点，
+  //       V 点被切到触球前 1ms（物理上不可能），fwd_pos 被噪声压到 0；
+  //    ② 积分带符号（删 max(0,·) 截断）——「带符号投影」本就是定义口径，
+  //       截断会把随挥段的正偏移全计入分母，系统性压低 fwd_pos（被挤 0.053 vs 参考实现 0.236）；
+  //    ③ 随挥止固定 E_END=347。
+  //    校正后 11-04 标定（62 被挤 / 70 Yangka正常 / 126 教练）：
+  //    被挤 0.217[0.04,0.44] / 41ms · Yangka正常 0.383 / 109ms · 教练 0.487[0.41,0.70] / 80ms
   const axis = [0, 0, 0];
   for (let i = Math.max(0, pk_idx - 4); i <= Math.min(WIN_SAMPLES - 1, pk_idx + 4); i++) {
     axis[0] += win[3][i]; axis[1] += win[4][i]; axis[2] += win[5][i];
@@ -1512,20 +1522,24 @@ function computeLateContactFeatures(win) {
   let v_idx = -1, fwd_pos = null, fwd_ms = null;
   if (an > 1e-6) {
     axis[0] /= an; axis[1] /= an; axis[2] /= an;
+    const proj_raw = new Float32Array(WIN_SAMPLES);
+    for (let i = 0; i < WIN_SAMPLES; i++) {
+      proj_raw[i] = win[3][i] * axis[0] + win[4][i] * axis[1] + win[5][i] * axis[2];
+    }
     const proj = new Float32Array(WIN_SAMPLES);
     for (let i = 0; i < WIN_SAMPLES; i++) {
-      proj[i] = win[3][i] * axis[0] + win[4][i] * axis[1] + win[5][i] * axis[2];
+      const lo = Math.max(0, i - 2), hi = Math.min(WIN_SAMPLES, i + 3);
+      let sum = 0;
+      for (let j = lo; j < hi; j++) sum += proj_raw[j];
+      proj[i] = sum / (hi - lo);
     }
     for (let i = pk_idx; i > 0; i--) {
       if (proj[i - 1] < 0 && proj[i] >= 0) { v_idx = i; break; }
     }
-    if (v_idx > 0) {
-      let e_idx = pk_idx;
-      const ten = 0.1 * pk_val;
-      while (e_idx < WIN_SAMPLES - 1 && g_smooth[e_idx] > ten) e_idx++;
+    if (v_idx > 0 && v_idx <= E_END) {
       let a_t0 = 0, a_all = 0;
-      for (let i = v_idx + 1; i <= e_idx; i++) {
-        const d = Math.max(0, proj[i]) * (tMs(i) - tMs(i - 1));
+      for (let i = v_idx + 1; i <= E_END; i++) {
+        const d = proj[i] * (tMs(i) - tMs(i - 1));   // B110：带符号积分
         if (i <= T0_IDX) a_t0 += d;
         a_all += d;
       }
@@ -1537,10 +1551,13 @@ function computeLateContactFeatures(win) {
   }
 
   // 7) 击球过晚（Late Contact）判决（仅提示，不做归因）
+  //    B110 门限重标定（旧 0.30/0.45 是按带偏差实现的值域定的，正常球误报 66%）。
+  //    修正实现上 11-04 实测：过晚 pos<0.20 或 ms<45 → 被挤召回 67%、教练误报 10%；
+  //    稍晚带 [0.20,0.30) → 教练再 5%。Yangka 52% 误报属标注口径问题（待 B 方案复核）。
   let verdict = "正常", hint = "";
   if (fwd_pos != null) {
-    if (fwd_pos < 0.30 || fwd_ms < 45) { verdict = "击球过晚"; hint = "早架拍、早启动"; }
-    else if (fwd_pos < 0.45) { verdict = "击球稍晚"; hint = "架拍稍晚，注意提前启动"; }
+    if (fwd_pos < 0.20 || fwd_ms < 45) { verdict = "击球过晚"; hint = "早架拍、早启动"; }
+    else if (fwd_pos < 0.30) { verdict = "击球稍晚"; hint = "架拍稍晚，注意提前启动"; }
   } else if (pk_vs_t0_ms > 30) {
     verdict = "击球过晚"; hint = "早架拍、早启动";
   } else if (pk_vs_t0_ms > 15) {

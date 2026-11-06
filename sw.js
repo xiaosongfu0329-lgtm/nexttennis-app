@@ -1,5 +1,5 @@
 // Nexttennis V101 Service Worker — app shell cache for offline PWA
-const CACHE = "nexttennis-v50";
+const CACHE = "nexttennis-v51";
 const SHELL = [
   "./",
   "./index.html",
