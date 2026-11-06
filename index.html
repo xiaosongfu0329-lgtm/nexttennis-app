@@ -62,6 +62,26 @@
   .stat.big .val { font-size: 54px; color: var(--accent); line-height: 1.0; }   /* B108：球速放大 */
   .stat .val .unit { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 4px; }
   .stat.big .val .unit { font-size: 14px; }   /* B108：放在 .stat .val .unit 之后才生效 */
+  /* B109：游戏式完美击球⭐弹出动画 */
+  @keyframes starPop {
+    0%   { transform: scale(0.2) translateY(40px); opacity: 0; }
+    20%  { transform: scale(1.4) translateY(-10px); opacity: 1; }
+    40%  { transform: scale(1.0) translateY(0); opacity: 1; }
+    70%  { transform: scale(1.1) translateY(-5px); opacity: 1; }
+    100% { transform: scale(1.0) translateY(-60px); opacity: 0; }
+  }
+  .star-pop-wrap { position: fixed; top: 28%; left: 50%; transform: translateX(-50%);
+                   z-index: 9998; pointer-events: none; text-align: center; }
+  .star-pop-wrap .star-row { display: flex; gap: 18px; justify-content: center; }
+  .star-pop-wrap .star { font-size: 72px; line-height: 1; filter: drop-shadow(0 0 12px #ffd700) drop-shadow(0 0 24px #ffb700);
+                         animation: starPop 1.8s ease-out forwards; display: inline-block; }
+  .star-pop-wrap .star:nth-child(1) { animation-delay: 0s; }
+  .star-pop-wrap .star:nth-child(2) { animation-delay: .12s; }
+  .star-pop-wrap .star:nth-child(3) { animation-delay: .24s; }
+  .star-pop-wrap .star-text { color: #ffd700; font-size: 20px; font-weight: 700; letter-spacing: 4px;
+                              margin-top: 10px; text-shadow: 0 0 8px #ffb700; opacity: 0;
+                              animation: starPop 1.8s ease-out .1s forwards; }
+  @media (max-width: 480px) { .star-pop-wrap .star { font-size: 58px; gap: 10px; } }
   /* ---------- 动作诊断（引拍 / 随挥）：两行紧凑，不挤占球速卡 ---------- */
   .diag { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
           padding: 8px 12px; margin-top: 8px; }
@@ -551,7 +571,7 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B109-20261106-1800";   // B109：A. 窗级传输异常检测 link_qc——SHORT（帧数/分片/首尾缺失）、INTERLEAVED（分片非单调）、DOUBLE（窗内两独立冲击簇 >3g/谷<1.5g/间隔>200ms）；GAP（seq 跳变）、FAST（间隔<2.5s）两事件只写日志；windows.csv 末端追加 link_qc,link_note 两列；meta.json 追加 link_qc_counts + pace_median_s + link_events；采集页状态行显示「异常 N/M」，>20% 提示「节奏过快」可手动关闭。B. 删除原生逐球录音与 homeRecInd 指示——CSS/HTML/JS 三段全部移除，__ntVoiceStart/__ntVoice 清空为空函数（原生壳可能仍回调避免报错），voicePend 改文案「待导出音频」，新连接重置 link_qc 计数与 pace 列表。约束：不改固件 qc 语义、不改 CSV 既有列顺序、不补帧/不拼接只标记。sw.js CACHE nexttennis-v49
+const APP_BUILD = "APP-B109-20261106-1900";   // B109 v2：①关闭 VSHADOW 影子期——引拍/随挥幅度直接给档位判决徽章（偏小/正常/偏大），不再只显示纯数值 ②游戏式⭐弹出动画——完美击球（Late Contact 正常 + 引拍/随挥档位不偏）时屏幕弹出三颗金色大⭐+"完美击球"字样，1.8s 自动消失 ③BLE 数据流空档从首页挪技术页连接状态面板（不是打球节奏指标，不应干扰打球界面）。B109 v1（1800）：link_qc 传输异常检测（SHORT/INTERLEAVED/DOUBLE + GAP/FAST 事件 + windows.csv 两列 + meta.json 三项 + 采集页异常统计）+ 删除原生逐球录音与 homeRecInd（CSS/HTML/JS 三段移除，__ntVoiceStart/__ntVoice 空壳）。约束：不改固件 qc、不改 CSV 既有列顺序、不补帧只标记。sw.js CACHE nexttennis-v49
                                              // B93：Late Contact 特征（击球点偏后识别前置）——复刻固件 B58 line 727-755：全窗 |gyro| 合成 + 5 点盒式平滑 + 找峰值 pk_idx + 10% 峰值前回溯 rise_start，输出 pk_vs_t0_ms 和 t_rise_ms 两个原始值（不判决）。改动点：①新增 computeLateContactFeatures() 30 行 ②onWindow 里调用并推入独立 windowLog[] 数组（容量 2000，防 connLog 500 上限被冲）③session_log.csv 新增 pk_vs_t0_ms / t_rise_ms 两列（event=window 行有值，其他事件留空），窗口日志带 [CALC] 标签与固件 [CLASS] 比对，容忍 ±5ms。所有窗口（含敲拍）都计算。sw.js CACHE nexttennis-v34
                                              // B92：录像文件名改为「开始_结束」双时间戳（video_YYYYMMDD_HHMMSS-HHMMSS.webm）
                                              // B91：原生壳接管语音打标（__ntVoice*，锁屏不再静音）
@@ -1684,6 +1704,7 @@ function onWindow(meta, data) {
   updateQcPanel(res);
   updateDiagnosis(w);
   formRenderThresholds();        // 刷新技术视图里的生效门限 / K3 基线 / 实测对照
+  starPopIfPerfect(w);           // B109：完美击球弹⭐（游戏式鼓励）
 
   view.render(data, res.info.peakIdx, meta.t0Index);
   } catch (err) { log(`[DBG] onWindow 异常: ${err.message}\n${err.stack}`, "log-fail"); return; }
@@ -3054,9 +3075,8 @@ function updateDiagnosis(w) {
   };
   if (!w) { idle("—"); return; }
 
-  // ---------- 2026-11-02 新幅度指标（pre_deg / post_deg）· 影子期展示 ----------
-  // 影子期 = 数值全展示 + 档位占位 + 话术停更（等 2 场基线数据稳定后再开档位颜色和提示文案）
-  const VSHADOW = true;  // §8 阶段 1+2：只展示数值，档位颜色/话术停更
+  // 2026-11-06（B109）：影子期关闭——引拍/随挥幅度直接给档位判决（不是绝对准确没关系，先激励起来）
+  const VSHADOW = false;
   const vol = w.meta && w.meta.vol;
   const vtier = w.meta && w.meta.volTier;
   const side = w.meta && w.meta.strokeFhBh && w.meta.strokeFhBh.side;
@@ -3117,6 +3137,30 @@ function updateDiagnosis(w) {
   } else { tip = `引拍与随挥都在合格区间${volTxt}`; col = "var(--pass)"; }
   tipEl.textContent = tip;
   tipEl.style.color = col;
+}
+
+// B109：完美击球弹⭐——击球时机正常 + 引拍/随挥档位都不偏（无基线时不扣分）
+function starPopIfPerfect(w) {
+  if (!w || !w.meta) return;
+  if (!(w.qc && isQcOk(w.qc.code, w.meta))) return;   // 只在有效击球窗弹
+
+  // 击球时机（Late Contact）正常 → 核心条件
+  const lt = w.meta.late;
+  if (!lt || lt.verdict !== "正常") return;
+
+  // 引拍/随挥档位：只要有"偏小"或"偏大"就不弹；null（没基线）不扣
+  const vt = w.meta.volTier;
+  if (vt && (vt.pre_tier === "偏小" || vt.pre_tier === "偏大"
+          || vt.post_tier === "偏小" || vt.post_tier === "偏大")) return;
+
+  // 条件满足 → 三颗大⭐ + "完美击球"字样，1.8s 动画自动消失
+  const wrap = document.createElement("div");
+  wrap.className = "star-pop-wrap";
+  wrap.innerHTML =
+    `<div class="star-row">${["⭐","⭐","⭐"].map(s => `<span class="star">${s}</span>`).join("")}</div>`
+    + `<div class="star-text">完美击球</div>`;
+  document.body.appendChild(wrap);
+  setTimeout(() => { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); }, 2000);
 }
 
 // ---------- 打框（VTI）行：20261106 改为固定绝对值门限 VTI≥200/300 ----------
