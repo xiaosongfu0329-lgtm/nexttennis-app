@@ -555,7 +555,7 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B104-20261106-1402";   // B104：术语收口——首页诊断行「击球点贴身」→「击球过晚」（该行显示的是时间型 late 判决；贴身属空间型、需视频姿态），打标提示条与敲拍口述提示同步改为 2 字「过晚」，离线转写词表新增 guo-wan / ji-qiu-guo-wan 模板（输出 tag 仍写「被挤到」，兼容 175 条历史标注与既有分析脚本）。sw.js CACHE nexttennis-v45。B103：①修 nfRows 直接引用未声明 w（B100 引入）——每个有效窗都会抛 ReferenceError，导致首页诊断卡自 B100 起整体不刷新；late 改为入参 ②话术与徽章同源：提示文案带上「引拍 X°/随挥 Y°」同一组数字，消除"数字正常却听到不足" ③提示优先级：无引拍 > 击球过晚 > 幅度测不准 > 随挥不足 > 引拍赶 > 收拍快 ④击球过晚已判出时，引拍时机行不再重复报（引拍时机=K3 占比相对个人基线，是其上游量）⑤技术页旧规则/引拍时机标注更正。sw.js CACHE nexttennis-v44。B102：①windows.csv 末端追加 5 列 pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict（B100 只在内存算过、未导出；非 NORMAL_HIT 留空，列数恒定，既有列顺序不变）②术语落地：首页诊断行"被挤到"→"击球点贴身"，练习项 B5 tips 同步，技术页旧规则回退值"疑似偏后"→"击球稍晚"；语音打标词表（打框/被挤到/好球/差球）不动，避免断历史标签 ③补齐缓存号记录。sw.js CACHE nexttennis-v43。B101：术语统一（时间型→击球过晚 Late Contact，空间型→击球点贴身 Jammed），仅改注释与部分文案，逻辑不变（sw v42）。B100：击球点偏后（时间型）上线——computeLateContactFeatures 增加带符号投影 V 点切分，输出 fwd_pos（触球在前挥弧中的位置）与 fwd_ms（V 点→触球时长），按 2026-11-06 标定口径判决：fwd_pos<0.30 或 fwd_ms<45ms →「时间型被挤」提示「注意早架拍、早启动」；0.30~0.45 →「偏后」；无 V 点时回退 pk_vs_t0>30ms。技术页「被挤到」改为显示新判决与提示，windowLog 增 fwdPos/fwdMs/lateVerdict。sw.js CACHE nexttennis-v41
+const APP_BUILD = "APP-B105-20261106-1420";   // B105：修 computeLateContactFeatures 入参布局——data 是通道优先 win[ch][i] 且已换算物理量，B100 起按行优先 win[i][ch] 取值，i≥12 抛 TypeError 被 try/catch 吞掉，导致 meta.late 为空、windows.csv 的 pk_vs_t0_ms/t_rise_ms/fwd_* 全空；现改通道优先并去掉重复的 GYRO_LSB 缩放（特征只用比值，量纲无关），数值口径与固件 B61/Python 1:1。B104：术语收口——首页诊断行「击球点贴身」→「击球过晚」（该行显示的是时间型 late 判决；贴身属空间型、需视频姿态），打标提示条与敲拍口述提示同步改为 2 字「过晚」，离线转写词表新增 guo-wan / ji-qiu-guo-wan 模板（输出 tag 仍写「被挤到」，兼容 175 条历史标注与既有分析脚本）。sw.js CACHE nexttennis-v45。B103：①修 nfRows 直接引用未声明 w（B100 引入）——每个有效窗都会抛 ReferenceError，导致首页诊断卡自 B100 起整体不刷新；late 改为入参 ②话术与徽章同源：提示文案带上「引拍 X°/随挥 Y°」同一组数字，消除"数字正常却听到不足" ③提示优先级：无引拍 > 击球过晚 > 幅度测不准 > 随挥不足 > 引拍赶 > 收拍快 ④击球过晚已判出时，引拍时机行不再重复报（引拍时机=K3 占比相对个人基线，是其上游量）⑤技术页旧规则/引拍时机标注更正。sw.js CACHE nexttennis-v44。B102：①windows.csv 末端追加 5 列 pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict（B100 只在内存算过、未导出；非 NORMAL_HIT 留空，列数恒定，既有列顺序不变）②术语落地：首页诊断行"被挤到"→"击球点贴身"，练习项 B5 tips 同步，技术页旧规则回退值"疑似偏后"→"击球稍晚"；语音打标词表（打框/被挤到/好球/差球）不动，避免断历史标签 ③补齐缓存号记录。sw.js CACHE nexttennis-v43。B101：术语统一（时间型→击球过晚 Late Contact，空间型→击球点贴身 Jammed），仅改注释与部分文案，逻辑不变（sw v42）。B100：击球点偏后（时间型）上线——computeLateContactFeatures 增加带符号投影 V 点切分，输出 fwd_pos（触球在前挥弧中的位置）与 fwd_ms（V 点→触球时长），按 2026-11-06 标定口径判决：fwd_pos<0.30 或 fwd_ms<45ms →「时间型被挤」提示「注意早架拍、早启动」；0.30~0.45 →「偏后」；无 V 点时回退 pk_vs_t0>30ms。技术页「被挤到」改为显示新判决与提示，windowLog 增 fwdPos/fwdMs/lateVerdict。sw.js CACHE nexttennis-v41
                                              // B93：Late Contact 特征（击球点偏后识别前置）——复刻固件 B58 line 727-755：全窗 |gyro| 合成 + 5 点盒式平滑 + 找峰值 pk_idx + 10% 峰值前回溯 rise_start，输出 pk_vs_t0_ms 和 t_rise_ms 两个原始值（不判决）。改动点：①新增 computeLateContactFeatures() 30 行 ②onWindow 里调用并推入独立 windowLog[] 数组（容量 2000，防 connLog 500 上限被冲）③session_log.csv 新增 pk_vs_t0_ms / t_rise_ms 两列（event=window 行有值，其他事件留空），窗口日志带 [CALC] 标签与固件 [CLASS] 比对，容忍 ±5ms。所有窗口（含敲拍）都计算。sw.js CACHE nexttennis-v34
                                              // B92：录像文件名改为「开始_结束」双时间戳（video_YYYYMMDD_HHMMSS-HHMMSS.webm）
                                              // B91：原生壳接管语音打标（__ntVoice*，锁屏不再静音）
@@ -1402,12 +1402,11 @@ function setConn(text, cls) {
 
 // =====================================================
 // computeLateContactFeatures — 复刻固件 B58/B60（击球点偏后识别）
-// 输入：win[396][12] int16 原始窗口（BLE payload 拼好后）
-// 输出：{ pk_idx, pk_vs_t0_ms, t_rise_ms }
+// 输入：win[12][396] 通道优先、已换算物理量（陀螺 rad/s、加速度 g）
+// 输出：{ pk_idx, pk_vs_t0_ms, t_rise_ms, v_idx, fwd_pos, fwd_ms, verdict, hint }
 // =====================================================
 function computeLateContactFeatures(win) {
   const WIN_SAMPLES = 396;
-  const GYRO_LSB = 0.140;       // dps/LSB（±4000dps 档）
   const T0_IDX = 186;           // 固件 buildWindow：idx 186 = T0
   // 三段非均匀采样映射（与 Python injury_analyzer.t_ms / 固件 B60 1:1）
   // macro 120Hz = 8.33ms/idx（idx 0-137, 348-395）；micro 960Hz = 1.0417ms/idx（idx 138-347）
@@ -1417,10 +1416,14 @@ function computeLateContactFeatures(win) {
                   : (165.5 + 8 * (i - 348)) * MICRO_DT;
 
   // 1) 全窗口 |gyro| 合成（固件 line 727-732）
+  // 2026-11-06（B105）：data 布局是「通道优先」win[ch][i]（且已换算成物理量：陀螺 rad/s、加速度 g）。
+  // 原来按行优先 win[i][3] 取，i≥12 时 win[i] 为 undefined，直接抛 TypeError，
+  // 被 onWindow 的 try/catch 吞掉 → meta.late 缺失 → CSV 两列全空。改为通道优先。
+  // 该特征只用「峰值 / 10% 阈值 / 投影比值」，量纲不影响结果，故不再乘 GYRO_LSB。
   const g_raw = new Float32Array(WIN_SAMPLES);
   for (let i = 0; i < WIN_SAMPLES; i++) {
-    const gx = win[i][3], gy = win[i][4], gz = win[i][5];
-    g_raw[i] = Math.sqrt(gx * gx + gy * gy + gz * gz) * GYRO_LSB;
+    const gx = win[3][i], gy = win[4][i], gz = win[5][i];
+    g_raw[i] = Math.sqrt(gx * gx + gy * gy + gz * gz);
   }
 
   // 2) 5 点盒式平滑（固件 line 735-742）
@@ -1451,7 +1454,7 @@ function computeLateContactFeatures(win) {
   //    依据 2026-11-06 标定：被挤组触球位置中位 0.236、前挥时长 32ms；教练 0.692 / 80ms
   const axis = [0, 0, 0];
   for (let i = Math.max(0, pk_idx - 4); i <= Math.min(WIN_SAMPLES - 1, pk_idx + 4); i++) {
-    axis[0] += win[i][3]; axis[1] += win[i][4]; axis[2] += win[i][5];
+    axis[0] += win[3][i]; axis[1] += win[4][i]; axis[2] += win[5][i];
   }
   const an = Math.hypot(axis[0], axis[1], axis[2]);
   let v_idx = -1, fwd_pos = null, fwd_ms = null;
@@ -1459,7 +1462,7 @@ function computeLateContactFeatures(win) {
     axis[0] /= an; axis[1] /= an; axis[2] /= an;
     const proj = new Float32Array(WIN_SAMPLES);
     for (let i = 0; i < WIN_SAMPLES; i++) {
-      proj[i] = (win[i][3] * axis[0] + win[i][4] * axis[1] + win[i][5] * axis[2]) * GYRO_LSB;
+      proj[i] = win[3][i] * axis[0] + win[4][i] * axis[1] + win[5][i] * axis[2];
     }
     for (let i = pk_idx; i > 0; i--) {
       if (proj[i - 1] < 0 && proj[i] >= 0) { v_idx = i; break; }
