@@ -258,9 +258,8 @@
     <span id="micStat">麦克风：待授权</span>
     <span id="spkStat" style="margin-left:auto">播报：手机扬声器</span>
   </div>
-  <!-- 现场状态行：空档秒数 / 待导出音频 -->
+  <!-- 现场状态行：待导出音频（BLE 空档已挪技术页连接状态面板） -->
   <div style="display:flex;align-items:center;gap:12px;margin-top:4px;font-size:12px;color:var(--muted);flex-wrap:wrap">
-    <span id="gapStat"></span>
     <span id="voicePend"></span>
   </div>
 
@@ -372,6 +371,7 @@
     <div class="kv"><span>MTU / 吞吐</span><span class="v" id="devMtu">—</span></div>
     <div class="kv"><span>已接收窗口</span><span class="v" id="winCount">0</span></div>
     <div class="kv"><span>分片重组缓存</span><span class="v" id="reasmStat">—</span></div>
+    <div class="kv"><span>BLE 数据流空档</span><span class="v" id="gapStat">—</span></div>
   </div>
   <div class="panel">
     <h2>Sanity Check QC 引擎</h2>
@@ -3352,18 +3352,18 @@ function linkConnected() {
   return !!(btDevice && btDevice.gatt && btDevice.gatt.connected) || !!mockDev;
 }
 
-// R2 空档显示：首页「距上一窗口 Ns」，≥15s 变黄、≥40s 变红闪烁
+// B109：BLE 数据流空档——技术页连接状态面板，≥15s 变黄、≥40s 变红闪烁（调试用，首页不显示）
 setInterval(() => {
   const el = $("gapStat");
   if (!el) return;
   const connected = linkConnected();
   if (!connected || !lastWinT) {
-    el.textContent = connected ? "等待首个窗口…" : "";
+    el.textContent = connected ? "等待首个窗口…" : "（未连接）";
     el.style.color = ""; el.style.fontWeight = ""; el.style.animation = "";
     return;
   }
   const s = Math.round((Date.now() - lastWinT) / 1000);
-  el.textContent = `距上一窗口 ${s}s`;
+  el.textContent = `${s}s`;
   el.style.color = s >= 40 ? "var(--fail)" : s >= 15 ? "var(--warn)" : "var(--muted)";
   el.style.fontWeight = s >= 15 ? "700" : "";
   el.style.animation = s >= 40 ? "vpulse .8s infinite" : "";
