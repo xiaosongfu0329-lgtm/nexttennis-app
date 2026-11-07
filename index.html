@@ -202,10 +202,20 @@
   @media (max-height: 700px) {
     #chart { height: 150px; }
   }
-  /* 2026-11-07：横屏采集（手机横置）——画面放大，取景看得清 */
+  /* 2026-11-07：横屏采集页——左视频、右控制；视频占满左侧可视高度，取景看得清 */
   @media (orientation: landscape) {
-    #page6 #camWrap { max-height: 58vh; }
-    #page6 .c-num { font-size: 32px; }
+    #page6.active { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(300px, 1fr);
+                    gap: 8px; align-items: stretch; align-content: start; }
+    #page6.active > .panel:nth-child(1) { grid-column: 1; grid-row: 1 / span 2;
+                                          display: flex; flex-direction: column; }
+    #page6.active > .panel:nth-child(2) { grid-column: 2; grid-row: 1; }
+    #page6.active > .panel:nth-child(3) { grid-column: 2; grid-row: 2; }
+    /* camWrap 的内联 aspect-ratio 由 camOpen 按真实分辨率写入，必须 !important 才能让横屏撑满左列 */
+    #page6 #camWrap { flex: 1; min-height: 46vh; aspect-ratio: auto !important; max-height: none !important; }
+    /* 横屏左列够宽，采集键压成一行，省下的高度全给视频 */
+    #page6 .actions { flex-wrap: nowrap; }
+    #page6 .actions button { flex: 1 1 auto; white-space: nowrap; }
+    #page6 .c-num { font-size: 34px; }
     #page6 .c-phrase { font-size: 15px; }
   }
 </style>
@@ -585,7 +595,8 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B112-20261107-1800";   // B112：横屏采集 + 1080p/60fps + 自适应码率 + 取景辅助框（详见下行）
+const APP_BUILD = "APP-B113-20261107-1900";   // B113：采集页横屏双列布局定稿（左视频/右控制，取景看得清）（详见下行）
+// B113：横屏采集页布局——①`@media (orientation: landscape)` 下 #page6 改双列网格：左列 1.65fr 放视频+采集按键，右列 1fr 放计数/块/会话/导出，一屏不滚动；②#camWrap 在该模式下取消固定 16:9、改为 flex:1 + min-height:46vh 撑满左侧可视高度（视频仍 object-fit:contain，不变形）；③选择器写 `#page6.active`，否则 id 优先级会盖掉 `.page{display:none}`，导致采集页在非激活状态也显示；④standalone/tennis_app.html 逐字同步。sw.js CACHE nexttennis-v54
 // B112：①camOpen 请求 1920×1080@60fps（设备不支持自动降级，不弹窗、不要求人工处理）②读 getSettings() 实际值存 camActual 并写 meta.capture.video③预览改 contain、宽高比按真实分辨率④码率自适应：≥50fps→12Mbps、1080p30→8Mbps、其余 4Mbps⑤新增 #camGuide 取景框「球员全身占框 40% 以上」⑥横屏媒体查询放大采集画面⑦camOff 文案提示横置。sw.js CACHE nexttennis-v53
 // B111：Late Contact V 点退化修复——11-04（65 被挤）+11-06（274 正常）同人对照召回 51%/误报 23%，其中 64 个误报有 39 个是 fwd_pos=0（占六成）。根因：V 点判据只查 proj[i-1]<0 && proj[i]>=0，峰值前一个样本为负即命中（v_idx=pk_idx，累加区间为空 → fwd_pos=0），而 0 不是 null，永远走不到 pk_vs_t0 兜底，被 0<0.20 判「击球过晚」——「没有证据」当「有证据」。改动（门限一律不动 0.20/0.30/45/30/15，t_rise 计算不动）：①交叉点加四项约束（连续 3 样本为正排除毛刺 / 不与峰值重合 i≤pk_idx-3 / 距 T0 20–400ms），不满足跳过继续往前找，不直接 break；②交叉点同区段内线性内插（新增 tMsF 浮点索引版三段映射），fwd_ms=tMsF(T0)−tMsF(vF)，fwd_pos 积分起点仍用整数 v_idx；③找不到有效 V 点 → fwd_pos/fwd_ms=null 走 pk_vs_t0 兜底，fwd_pos=0 不再表示「没找到」。standalone/tennis_app.html 逐字同步。sw.js CACHE nexttennis-v52
                                              // B109 v2：①关闭 VSHADOW 影子期——引拍/随挥幅度直接给档位判决徽章（偏小/正常/偏大），不再只显示纯数值 ②游戏式⭐弹出动画——完美击球（Late Contact 正常 + 引拍/随挥档位不偏）时屏幕弹出三颗金色大⭐+"完美击球"字样，1.8s 自动消失 ③BLE 数据流空档从首页挪技术页连接状态面板（不是打球节奏指标，不应干扰打球界面）。B109 v1（1800）：link_qc 传输异常检测（SHORT/INTERLEAVED/DOUBLE + GAP/FAST 事件 + windows.csv 两列 + meta.json 三项 + 采集页异常统计）+ 删除原生逐球录音与 homeRecInd（CSS/HTML/JS 三段移除，__ntVoiceStart/__ntVoice 空壳）。约束：不改固件 qc、不改 CSV 既有列顺序、不补帧只标记。sw.js CACHE nexttennis-v49
