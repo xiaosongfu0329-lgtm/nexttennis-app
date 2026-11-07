@@ -644,7 +644,10 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B115-20261107-2130";   // B115：拍摄中全屏取景 + 叠加层；竖流反向旋转铺满，解决「摄像头窗口与页面不一致」（详见下行）
+const APP_BUILD = "APP-B116-20261107-1525";   // B116：摄像头能力上限 + 实测落帧诊断；B115：拍摄中全屏取景 + 叠加层，竖流反向旋转铺满
+// B116：只加诊断、不改采集参数与判决规则——①camOpen 成功后打印 getCapabilities() 的分辨率/帧率上限（设备到底给不给 60fps）；
+// ②录像开始用 requestVideoFrameCallback 计帧，停止时打印「落帧 N 帧 / T 秒 = X fps」，区分「相机只给 30fps」与「编码丢帧」。
+// 结论同时写进页面日志，真机在室外强光下录 20s 即可定参数。standalone 逐字同步。sw.js CACHE nexttennis-v57
 // B115：①拍摄中（capOn=video）给 body 加 capVideo：采集页改成取景铺满整屏，计数/块/会话/录音压成半透明叠加层，提示文字缩到 10~13px；②竖屏锁定时相机流是竖的（h>w），整页已转 90°会导致画面成一条竖窄条——layoutCamVideo() 把视频宽高互换后反向旋转（跟随翻转键），流本身是横的则不动；③进入采集页/开摄像头/转屏/resize/翻转都会重排。sw.js CACHE nexttennis-v56
 // B114：现场手机横过来拍，但系统旋转常锁在竖屏，导致 B113 的 landscape 媒体查询根本没机会生效（用户实测「没看到横屏」）。改动：①两列排版移出媒体查询，竖屏/横屏共用同一套内部布局；②`@media (orientation: portrait)` 下 #page6 改为 fixed 100vh×100vw + `rotate(90deg) translateY(-100%)`，把整页连同文字、按钮、视频窗口一起转 90° 铺满屏幕（width 用 100svh 兜底地址栏）；③新增「翻转」键（body.capFlip → rotate(-90deg)），方向存 localStorage nt_cap_flip；④新增「切页」键（旋转后页签被盖住，用它回打球页）；⑤进 page6 时尝试 screen.orientation.lock("landscape")，离开时 unlock，能锁就真横屏、锁不住靠 CSS；⑥设置区在放不下时只在本面板内滚动，不裁切。standalone 逐字同步。sw.js CACHE nexttennis-v55
 // B113：横屏采集页布局——①`@media (orientation: landscape)` 下 #page6 改双列网格：左列 1.65fr 放视频+采集按键，右列 1fr 放计数/块/会话/导出，一屏不滚动；②#camWrap 在该模式下取消固定 16:9、改为 flex:1 + min-height:46vh 撑满左侧可视高度（视频仍 object-fit:contain，不变形）；③选择器写 `#page6.active`，否则 id 优先级会盖掉 `.page{display:none}`，导致采集页在非激活状态也显示；④standalone/tennis_app.html 逐字同步。sw.js CACHE nexttennis-v54
@@ -5684,6 +5687,32 @@ function layoutCamVideo() {
 window.addEventListener("resize", layoutCamVideo);
 window.addEventListener("orientationchange", () => setTimeout(layoutCamVideo, 250));
 
+// 2026-11-07：诊断——统计预览流真正送到的帧（requestVideoFrameCallback），
+// 用来区分「相机本来就只给 30fps」和「相机给了 60fps 但编码丢了一半」。
+let camFrameOn = false, camFrameN = 0, camFrameT0 = 0, camFrameT1 = 0;
+function camFrameWatchStart() {
+  const v = $("camVideo");
+  camFrameOn = false; camFrameN = 0; camFrameT0 = 0; camFrameT1 = 0;
+  if (!v || !v.requestVideoFrameCallback) return false;
+  camFrameOn = true;
+  const tick = (now, meta) => {
+    if (!camFrameOn) return;
+    camFrameN++;
+    const t = (meta && meta.presentationTime) ? meta.presentationTime : now;
+    if (!camFrameT0) camFrameT0 = t;
+    camFrameT1 = t;
+    v.requestVideoFrameCallback(tick);
+  };
+  v.requestVideoFrameCallback(tick);
+  return true;
+}
+function camFrameWatchStop() {
+  if (!camFrameOn) return null;
+  camFrameOn = false;
+  const sec = (camFrameT1 - camFrameT0) / 1000;
+  return { frames: camFrameN, sec: +sec.toFixed(1), fps: sec > 0 ? +(camFrameN / sec).toFixed(1) : 0 };
+}
+
 function camLog(txt, err) {
   const el = $("camStat");
   if (!el) return;
@@ -5738,9 +5767,21 @@ async function camOpen() {
       $("camWrap").style.aspectRatio = camActual.w + " / " + camActual.h;
     }
   } catch (_) {}
+  // 2026-11-07：诊断——浏览器/设备允许的最高尺寸与帧率（判断 60fps 是设备不给，还是编码丢帧）
+  let camCapTxt = "能力未知";
+  try {
+    const tr = camStream.getVideoTracks()[0];
+    const cap = tr && tr.getCapabilities ? tr.getCapabilities() : {};
+    const cw = cap.width, chh = cap.height, cf = cap.frameRate;
+    const sizeTxt = (cw && chh)
+      ? `${Math.round(cw.min)}×${Math.round(chh.min)}~${Math.round(cw.max)}×${Math.round(chh.max)}`
+      : "尺寸未知";
+    camCapTxt = (cf && cf.max) ? `最高 ${Math.round(cf.max)}fps` : "帧率未知";
+    log(`摄像头能力：${sizeTxt}，${camCapTxt}；本次实际 ${camActual.w}×${camActual.h}@${camActual.fps}fps`, "log-info");
+  } catch (_) {}
   const gd = $("camGuide"); if (gd) gd.classList.add("on");
   setTimeout(layoutCamVideo, 60);
-  camLog(camActual.w ? `摄像头已开启 ${camActual.w}×${camActual.h}@${camActual.fps}fps`
+  camLog(camActual.w ? `摄像头已开启 ${camActual.w}×${camActual.h}@${camActual.fps}fps（${camCapTxt}）`
                      : "摄像头已开启（后置优先）", false);
   log("采集页：摄像头已开启", "log-info");
   return true;
@@ -5748,6 +5789,7 @@ async function camOpen() {
 
 // 纯录音采集：释放摄像头、隐藏画面（不动已经在录的音频）
 function camRelease() {
+  camFrameWatchStop();
   if (camRec && camRec.state !== "inactive") {
     camRec.onstop = null;            // 不当作一次正常录像：不下载、不写 manifest
     try { camRec.stop(); } catch (e) {}
@@ -5785,6 +5827,7 @@ async function camStartRec() {
   camRec.ondataavailable = e => { if (e.data && e.data.size) camChunks.push(e.data); };
   camRec.onerror = e => camLog("录像出错：" + (e.error ? e.error.name : "unknown"), true);
   camRec.onstop = () => {
+    const fs = camFrameWatchStop();   // 2026-11-07：诊断落帧
     clearInterval(camTimer); camTimer = null;
     $("camRecTag").classList.remove("on");
     camAutoPaused = false;
@@ -5809,8 +5852,14 @@ async function camStartRec() {
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
     camLog(`视频已保存 ${name}（${capVideoSizeMb} MB）`, false);
     log(`采集页：视频已保存 ${name}`, "log-info");
+    if (fs) {
+      const fm = `录像实测：落帧 ${fs.frames} 帧 / ${fs.sec}s = ${fs.fps}fps（相机 ${camActual.w}×${camActual.h}@${camActual.fps}fps，码率档 ${Math.round(camBr / 1e6)}Mbps）`;
+      log(fm, "log-info");
+      camLog(`${fm}｜已存 ${capVideoSizeMb} MB`, false);
+    }
     if (camStopResolve) { const r = camStopResolve; camStopResolve = null; r({ name, sizeMb: capVideoSizeMb }); }
   };
+  camFrameWatchStart();      // 2026-11-07：诊断落帧
   camRec.start(3000);        // 3s 分片
   camRecStart = Date.now();
   $("camRecTag").classList.add("on");
