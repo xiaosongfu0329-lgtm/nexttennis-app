@@ -240,6 +240,31 @@
     #page6.active > .panel:nth-child(3) { overflow-y: auto; }   /* 设置区放不下时只在内部滚，不裁切 */
     #capFlipBtn, #capExitBtn { display: inline-flex; }
   }
+  /* 2026-11-07：视频采集进行中——取景铺满整页，计数/块/会话/录音压成半透明叠加层，提示文字缩小 */
+  body.capVideo #page6.active { display: block; padding: 0; }
+  body.capVideo #page6.active > .panel { position: absolute; z-index: 5; margin: 0; padding: 4px 8px;
+    background: rgba(13,17,23,.66); border: 1px solid rgba(255,255,255,.14); border-radius: 10px;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+  body.capVideo #page6.active > .panel:nth-child(1) { position: absolute; inset: 0; padding: 0;
+    background: #000; border: none; border-radius: 0; z-index: 1; }
+  body.capVideo #page6 #camWrap { position: absolute; inset: 0; border: none; border-radius: 0; }
+  body.capVideo #page6.active > .panel:nth-child(2) { left: 10px; top: 40px; width: 40%;
+    max-height: 52%; overflow-y: auto; }
+  body.capVideo #page6.active > .panel:nth-child(3) { right: 10px; top: 40px; width: 40%;
+    max-height: 52%; overflow-y: auto; }
+  body.capVideo #page6.active > .panel:nth-child(1) > .actions {
+    position: absolute; left: 10px; right: 10px; bottom: 8px; margin: 0; z-index: 6; }
+  body.capVideo #page6 #camStat, body.capVideo #page6 #capStat {
+    position: absolute; left: 12px; right: 12px; margin: 0; z-index: 6;
+    color: #fff; text-shadow: 0 1px 3px #000; }
+  body.capVideo #page6 #camStat { bottom: 56px; }
+  body.capVideo #page6 #capStat { bottom: 76px; }
+  body.capVideo #page6 .c-num { font-size: 24px; }
+  body.capVideo #page6 .c-phrase { font-size: 13px; }
+  body.capVideo #page6 .c-hint { font-size: 10px; line-height: 1.35; }
+  @media (orientation: landscape) {
+    body.capVideo #page6.active { position: relative; height: 100dvh; overflow: hidden; }
+  }
 </style>
 </head>
 <body>
@@ -619,7 +644,8 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B114-20261107-2030";   // B114：采集页强制横置——竖屏视口下整页旋转 90°（文字/按钮/视频一起转）（详见下行）
+const APP_BUILD = "APP-B115-20261107-2130";   // B115：拍摄中全屏取景 + 叠加层；竖流反向旋转铺满，解决「摄像头窗口与页面不一致」（详见下行）
+// B115：①拍摄中（capOn=video）给 body 加 capVideo：采集页改成取景铺满整屏，计数/块/会话/录音压成半透明叠加层，提示文字缩到 10~13px；②竖屏锁定时相机流是竖的（h>w），整页已转 90°会导致画面成一条竖窄条——layoutCamVideo() 把视频宽高互换后反向旋转（跟随翻转键），流本身是横的则不动；③进入采集页/开摄像头/转屏/resize/翻转都会重排。sw.js CACHE nexttennis-v56
 // B114：现场手机横过来拍，但系统旋转常锁在竖屏，导致 B113 的 landscape 媒体查询根本没机会生效（用户实测「没看到横屏」）。改动：①两列排版移出媒体查询，竖屏/横屏共用同一套内部布局；②`@media (orientation: portrait)` 下 #page6 改为 fixed 100vh×100vw + `rotate(90deg) translateY(-100%)`，把整页连同文字、按钮、视频窗口一起转 90° 铺满屏幕（width 用 100svh 兜底地址栏）；③新增「翻转」键（body.capFlip → rotate(-90deg)），方向存 localStorage nt_cap_flip；④新增「切页」键（旋转后页签被盖住，用它回打球页）；⑤进 page6 时尝试 screen.orientation.lock("landscape")，离开时 unlock，能锁就真横屏、锁不住靠 CSS；⑥设置区在放不下时只在本面板内滚动，不裁切。standalone 逐字同步。sw.js CACHE nexttennis-v55
 // B113：横屏采集页布局——①`@media (orientation: landscape)` 下 #page6 改双列网格：左列 1.65fr 放视频+采集按键，右列 1fr 放计数/块/会话/导出，一屏不滚动；②#camWrap 在该模式下取消固定 16:9、改为 flex:1 + min-height:46vh 撑满左侧可视高度（视频仍 object-fit:contain，不变形）；③选择器写 `#page6.active`，否则 id 优先级会盖掉 `.page{display:none}`，导致采集页在非激活状态也显示；④standalone/tennis_app.html 逐字同步。sw.js CACHE nexttennis-v54
 // B112：①camOpen 请求 1920×1080@60fps（设备不支持自动降级，不弹窗、不要求人工处理）②读 getSettings() 实际值存 camActual 并写 meta.capture.video③预览改 contain、宽高比按真实分辨率④码率自适应：≥50fps→12Mbps、1080p30→8Mbps、其余 4Mbps⑤新增 #camGuide 取景框「球员全身占框 40% 以上」⑥横屏媒体查询放大采集画面⑦camOff 文案提示横置。sw.js CACHE nexttennis-v53
@@ -4297,6 +4323,9 @@ function capFileName(kind, ext) {
 // 采集状态行：模式 / 计时 / 统一文件名 / 麦克风 / 打点数 / 传输异常（B109）
 let capPaceWarnClosed = false;   // B109：>20% 异常提示本轮采集只提示一次
 function capPaint() {
+  // 拍摄中：采集页切到「取景铺满 + 叠加层」的紧凑版式
+  document.body.classList.toggle("capVideo", capOn === "video");
+  layoutCamVideo();
   if ($("capStartVideo")) $("capStartVideo").disabled = !!capOn;
   if ($("capStartAudio")) $("capStartAudio").disabled = !!capOn;
   if ($("capStopBtn")) $("capStopBtn").disabled = !capOn;
@@ -4662,6 +4691,18 @@ async function capAudioStop() {
 
 async function capStart(mode) {
   if (capOn) { log("已在采集中，先点「■ 结束采集」", "log-warn"); return; }
+  // 2026-11-07：视频采集尽量先进全屏并锁横屏——真横屏后相机流与页面天然一致；
+  // 必须在点击手势里同步发起，失败就静默退回 CSS 整页旋转（B114/B115 兜底）。
+  if (mode === "video") {
+    try {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen().then(() => {
+          try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(() => {}); } catch (_) {}
+          setTimeout(layoutCamVideo, 300);
+        }).catch(() => {});
+      }
+    } catch (_) {}
+  }
   camLog("正在准备采集…", false);
   await voicePrimeMic().catch(() => {});          // 先拿权限、刷新设备 label，才能判断耳机
   capHeadsetOK = false;
@@ -5610,6 +5651,39 @@ let camStream = null, camRec = null, camChunks = [], camRecStart = 0, camTimer =
 let camActual = { w: 0, h: 0, fps: 0, br: 0 };
 let camAutoPaused = false;   // 捡球自动暂停录像的标记（回训练中才自动续录）
 
+// 2026-11-07：竖屏锁定时相机流是竖的（如 1080×1920），而整页已旋转 90°——
+// 视频要反向转回去并铺满取景框，否则画面是一条竖窄条；流本身就是横的则不动。
+// 方向跟随「翻转」键（body.capFlip）。只在「视口竖屏 + 停在采集页 + 流是竖的」时生效。
+let _camLayoutKey = "";
+function layoutCamVideo() {
+  const wrap = $("camWrap"), v = $("camVideo");
+  if (!wrap || !v) return;
+  const turned = matchMedia("(orientation: portrait)").matches
+              && document.body.classList.contains("capPage");
+  const flip = document.body.classList.contains("capFlip");
+  const need = turned && camActual.h > camActual.w;
+  if (!need) {
+    if (v.dataset.rot === "1") {
+      v.style.position = ""; v.style.left = ""; v.style.top = "";
+      v.style.width = ""; v.style.height = ""; v.style.transform = "";
+      v.dataset.rot = ""; _camLayoutKey = "";
+    }
+    return;
+  }
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  if (!w || !h) return;
+  const key = w + "x" + h + (flip ? "F" : "");
+  if (key === _camLayoutKey) return;
+  _camLayoutKey = key;
+  v.style.position = "absolute";
+  v.style.left = "50%"; v.style.top = "50%";
+  v.style.width = h + "px"; v.style.height = w + "px";      // 宽高互换，转完正好铺满
+  v.style.transform = "translate(-50%,-50%) rotate(" + (flip ? 90 : -90) + "deg)";
+  v.dataset.rot = "1";
+}
+window.addEventListener("resize", layoutCamVideo);
+window.addEventListener("orientationchange", () => setTimeout(layoutCamVideo, 250));
+
 function camLog(txt, err) {
   const el = $("camStat");
   if (!el) return;
@@ -5665,6 +5739,7 @@ async function camOpen() {
     }
   } catch (_) {}
   const gd = $("camGuide"); if (gd) gd.classList.add("on");
+  setTimeout(layoutCamVideo, 60);
   camLog(camActual.w ? `摄像头已开启 ${camActual.w}×${camActual.h}@${camActual.fps}fps`
                      : "摄像头已开启（后置优先）", false);
   log("采集页：摄像头已开启", "log-info");
@@ -5872,6 +5947,7 @@ function switchPage(id) {
     if (capOn !== "video" && $("camWrap")) $("camWrap").style.display = "none";
     // B114：优先真的锁成横屏（PWA/全屏下有效）；被系统旋转锁挡住也没关系，CSS 会把整页转 90°
     try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(() => {}); } catch (_) {}
+    setTimeout(layoutCamVideo, 30);
   } else {
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (_) {}
   }
@@ -5883,6 +5959,7 @@ try { if (localStorage.getItem("nt_cap_flip") === "1") document.body.classList.a
 $("capFlipBtn").addEventListener("click", () => {
   const on = document.body.classList.toggle("capFlip");
   try { localStorage.setItem("nt_cap_flip", on ? "1" : "0"); } catch (_) {}
+  layoutCamVideo();
 });
 $("capExitBtn").addEventListener("click", () => switchPage("page1"));
 
