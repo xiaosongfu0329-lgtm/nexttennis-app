@@ -174,7 +174,14 @@
                font-size: 11px; color: #fff; max-width: 80%; overflow: hidden; white-space: nowrap; }
   #camWrap { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000;
              border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
-  #camVideo { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* 2026-11-07：改为 contain，不裁切画面；取景以实际分辨率为准 */
+  #camVideo { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+  /* 2026-11-07：横屏取景辅助框（只提示，不拦截录制） */
+  #camGuide { position: absolute; inset: 8% 6%; border: 2px dashed rgba(61,220,151,.7);
+              border-radius: 8px; pointer-events: none; display: none; }
+  #camGuide.on { display: block; }
+  #camGuide b { position: absolute; left: 0; top: -22px; font-size: 12px; font-weight: 600;
+                color: #3ddc97; background: rgba(0,0,0,.55); padding: 2px 6px; border-radius: 4px; }
   #camOff { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
             color: var(--muted); font-size: 16px; text-align: center; padding: 12px; }
   #camRecTag { position: absolute; top: 8px; left: 8px; font-size: 14px; font-weight: 700; color: #fff;
@@ -194,6 +201,12 @@
   }
   @media (max-height: 700px) {
     #chart { height: 150px; }
+  }
+  /* 2026-11-07：横屏采集（手机横置）——画面放大，取景看得清 */
+  @media (orientation: landscape) {
+    #page6 #camWrap { max-height: 58vh; }
+    #page6 .c-num { font-size: 32px; }
+    #page6 .c-phrase { font-size: 15px; }
   }
 </style>
 </head>
@@ -293,8 +306,9 @@
   <div class="panel" style="margin-top:0">
     <div id="camWrap">
       <video id="camVideo" playsinline autoplay muted></video>
-      <div id="camOff">点此开启摄像头</div>
+      <div id="camOff">手机请横置 · 点此开启摄像头</div>
       <div id="camRecTag">● 录像中</div>
+      <div id="camGuide"><b>球员全身应占此框 40% 以上</b></div>
       <div class="c-camstat">
         <span id="cConn" class="badge idle">未连接</span>
         <span id="cDev" style="font-family:ui-monospace,monospace">—</span>
@@ -571,7 +585,9 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B111-20261107-1030";   // B111：Late Contact V 点退化修复——11-04（65 被挤）+11-06（274 正常）同人对照召回 51%/误报 23%，其中 64 个误报有 39 个是 fwd_pos=0（占六成）。根因：V 点判据只查 proj[i-1]<0 && proj[i]>=0，峰值前一个样本为负即命中（v_idx=pk_idx，累加区间为空 → fwd_pos=0），而 0 不是 null，永远走不到 pk_vs_t0 兜底，被 0<0.20 判「击球过晚」——「没有证据」当「有证据」。改动（门限一律不动 0.20/0.30/45/30/15，t_rise 计算不动）：①交叉点加四项约束（连续 3 样本为正排除毛刺 / 不与峰值重合 i≤pk_idx-3 / 距 T0 20–400ms），不满足跳过继续往前找，不直接 break；②交叉点同区段内线性内插（新增 tMsF 浮点索引版三段映射），fwd_ms=tMsF(T0)−tMsF(vF)，fwd_pos 积分起点仍用整数 v_idx；③找不到有效 V 点 → fwd_pos/fwd_ms=null 走 pk_vs_t0 兜底，fwd_pos=0 不再表示「没找到」。standalone/tennis_app.html 逐字同步。sw.js CACHE nexttennis-v52
+const APP_BUILD = "APP-B112-20261107-1800";   // B112：横屏采集 + 1080p/60fps + 自适应码率 + 取景辅助框（详见下行）
+// B112：①camOpen 请求 1920×1080@60fps（设备不支持自动降级，不弹窗、不要求人工处理）②读 getSettings() 实际值存 camActual 并写 meta.capture.video③预览改 contain、宽高比按真实分辨率④码率自适应：≥50fps→12Mbps、1080p30→8Mbps、其余 4Mbps⑤新增 #camGuide 取景框「球员全身占框 40% 以上」⑥横屏媒体查询放大采集画面⑦camOff 文案提示横置。sw.js CACHE nexttennis-v53
+// B111：Late Contact V 点退化修复——11-04（65 被挤）+11-06（274 正常）同人对照召回 51%/误报 23%，其中 64 个误报有 39 个是 fwd_pos=0（占六成）。根因：V 点判据只查 proj[i-1]<0 && proj[i]>=0，峰值前一个样本为负即命中（v_idx=pk_idx，累加区间为空 → fwd_pos=0），而 0 不是 null，永远走不到 pk_vs_t0 兜底，被 0<0.20 判「击球过晚」——「没有证据」当「有证据」。改动（门限一律不动 0.20/0.30/45/30/15，t_rise 计算不动）：①交叉点加四项约束（连续 3 样本为正排除毛刺 / 不与峰值重合 i≤pk_idx-3 / 距 T0 20–400ms），不满足跳过继续往前找，不直接 break；②交叉点同区段内线性内插（新增 tMsF 浮点索引版三段映射），fwd_ms=tMsF(T0)−tMsF(vF)，fwd_pos 积分起点仍用整数 v_idx；③找不到有效 V 点 → fwd_pos/fwd_ms=null 走 pk_vs_t0 兜底，fwd_pos=0 不再表示「没找到」。standalone/tennis_app.html 逐字同步。sw.js CACHE nexttennis-v52
                                              // B109 v2：①关闭 VSHADOW 影子期——引拍/随挥幅度直接给档位判决徽章（偏小/正常/偏大），不再只显示纯数值 ②游戏式⭐弹出动画——完美击球（Late Contact 正常 + 引拍/随挥档位不偏）时屏幕弹出三颗金色大⭐+"完美击球"字样，1.8s 自动消失 ③BLE 数据流空档从首页挪技术页连接状态面板（不是打球节奏指标，不应干扰打球界面）。B109 v1（1800）：link_qc 传输异常检测（SHORT/INTERLEAVED/DOUBLE + GAP/FAST 事件 + windows.csv 两列 + meta.json 三项 + 采集页异常统计）+ 删除原生逐球录音与 homeRecInd（CSS/HTML/JS 三段移除，__ntVoiceStart/__ntVoice 空壳）。约束：不改固件 qc、不改 CSV 既有列顺序、不补帧只标记。sw.js CACHE nexttennis-v49
                                              // B93：Late Contact 特征（击球点偏后识别前置）——复刻固件 B58 line 727-755：全窗 |gyro| 合成 + 5 点盒式平滑 + 找峰值 pk_idx + 10% 峰值前回溯 rise_start，输出 pk_vs_t0_ms 和 t_rise_ms 两个原始值（不判决）。改动点：①新增 computeLateContactFeatures() 30 行 ②onWindow 里调用并推入独立 windowLog[] 数组（容量 2000，防 connLog 500 上限被冲）③session_log.csv 新增 pk_vs_t0_ms / t_rise_ms 两列（event=window 行有值，其他事件留空），窗口日志带 [CALC] 标签与固件 [CLASS] 比对，容忍 ±5ms。所有窗口（含敲拍）都计算。sw.js CACHE nexttennis-v34
                                              // B92：录像文件名改为「开始_结束」双时间戳（video_YYYYMMDD_HHMMSS-HHMMSS.webm）
@@ -5149,6 +5165,11 @@ async function packExport() {
       // mode 用本场会话的真实模式（audio/video/null）；B106 修：原来取 capOn，导出时采集已结束 → 恒为 "stopped"
       capture: { mode: capCsvTag ? ((primarySess && primarySess.mode) || null) : null, tag: capCsvTag,
                  started_at: (capCsvTag && capStartTs) ? new Date(capStartTs).toISOString() : null,
+                 // 2026-11-07：视频实际生效参数（判断素材能否做姿态分析的唯一依据）；纯录音场次为 null
+                 video: (camActual.w && primarySess && primarySess.mode === "video")
+                        ? { w: camActual.w, h: camActual.h, fps: camActual.fps,
+                            bitrate: camActual.br || 0,
+                            orientation: camActual.w >= camActual.h ? "landscape" : "portrait" } : null,
                  // B95 P0-1：音频真正起止（打点换算成音频内位置必须用这两个时刻）
                  audio_start_ts: aStart ? new Date(aStart).toISOString() : null,
                  audio_end_ts: aEnd ? new Date(aEnd).toISOString() : null,
@@ -5549,6 +5570,8 @@ if (urlMode && ["mock", "impact", "step1"].includes(urlMode)) {
 // App 内直接录像省掉独立相机：手机固定在三脚架、本页保持前台；录像只做块级对齐，
 // 逐拍同步仍靠事后音频/锚点匹配。MediaRecorder 按 3s 分片，长录像不驻留内存峰值。
 let camStream = null, camRec = null, camChunks = [], camRecStart = 0, camTimer = null, camLock = null;
+// 2026-11-07：实际生效的画面参数（设备可能不给 1080p/60fps，如实记录，不要求用户处理）
+let camActual = { w: 0, h: 0, fps: 0, br: 0 };
 let camAutoPaused = false;   // 捡球自动暂停录像的标记（回训练中才自动续录）
 
 function camLog(txt, err) {
@@ -5581,10 +5604,13 @@ async function camOpen() {
   try {
     // 2026-11-05：视频流只要画面（audio:false）—— 音频统一由 capAudioStart 常开录制，
     // 两路 getUserMedia 抢同一麦克风会互相挤掉（尤其蓝牙耳机）
+    // 2026-11-07：横屏采集、1080p、优先 60fps——姿态分析要"全身入画 + 触球前后可分辨"。
+    // 设备达不到就自动降级，实际值记进 camActual 与 meta，不弹窗、不要求人工处理。
     camStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: { facingMode: { ideal: "environment" },
-               width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+               width: { ideal: 1920 }, height: { ideal: 1080 },
+               frameRate: { ideal: 60 }, aspectRatio: { ideal: 16 / 9 } },
     });
   } catch (e) {
     camLog("摄像头开启失败：" + (e && e.message ? e.message : e), true); return false;
@@ -5593,7 +5619,18 @@ async function camOpen() {
   v.srcObject = camStream;
   try { await v.play(); } catch (_) {}
   $("camOff").style.display = "none";
-  camLog("摄像头已开启（后置优先）", false);
+  // 2026-11-07：读实际生效参数，预览按真实比例显示（不再写死 16:9）
+  try {
+    const st = camStream.getVideoTracks()[0].getSettings ? camStream.getVideoTracks()[0].getSettings() : {};
+    camActual = { w: st.width || v.videoWidth || 0, h: st.height || v.videoHeight || 0,
+                  fps: Math.round(st.frameRate || 0), br: 0 };
+    if (camActual.w && camActual.h) {
+      $("camWrap").style.aspectRatio = camActual.w + " / " + camActual.h;
+    }
+  } catch (_) {}
+  const gd = $("camGuide"); if (gd) gd.classList.add("on");
+  camLog(camActual.w ? `摄像头已开启 ${camActual.w}×${camActual.h}@${camActual.fps}fps`
+                     : "摄像头已开启（后置优先）", false);
   log("采集页：摄像头已开启", "log-info");
   return true;
 }
@@ -5608,6 +5645,7 @@ function camRelease() {
   if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
   const v = $("camVideo"); if (v) v.srcObject = null;
   if ($("camWrap")) $("camWrap").style.display = "none";
+  const gd = $("camGuide"); if (gd) gd.classList.remove("on");
   clearInterval(camTimer); camTimer = null;
   $("camRecTag").classList.remove("on");
   camWake(false);
@@ -5629,7 +5667,10 @@ async function camStartRec() {
   if (!mime) { camLog("本浏览器不支持 MediaRecorder", true); return false; }
   camChunks = [];
   camAutoPaused = false;     // 新一段录像：清掉捡球暂停标记
-  camRec = new MediaRecorder(camStream, { mimeType: mime, videoBitsPerSecond: 4000000 });
+  // 2026-11-07：码率跟随实际参数——1080p60 用 12 Mbps（低于 8 Mbps 运动模糊），720p30 维持 4 Mbps
+  const camBr = camActual.fps >= 50 ? 12000000 : (camActual.w >= 1920 ? 8000000 : 4000000);
+  camActual.br = camBr;
+  camRec = new MediaRecorder(camStream, { mimeType: mime, videoBitsPerSecond: camBr });
   camRec.ondataavailable = e => { if (e.data && e.data.size) camChunks.push(e.data); };
   camRec.onerror = e => camLog("录像出错：" + (e.error ? e.error.name : "unknown"), true);
   camRec.onstop = () => {
