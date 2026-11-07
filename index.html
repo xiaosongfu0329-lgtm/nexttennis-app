@@ -571,7 +571,7 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B110-20261106-1605";   // B110：Late Contact（击球过晚）判决修正——复算标定发现两处实现偏差：①投影序列未平滑，原始 960Hz 陀螺噪声制造假过零点，V 点被切到触球前 1ms、fwd_pos 被压到 0.05（参考实现应为 0.236）；②积分用了 max(0,·) 截断，违背「带符号投影」口径，随挥段正偏移全计入分母，正常球 fwd_pos 被系统性压低（正常球 66% 被误报晚，即"总是显示击球稍晚"的根因）。修正：投影 5 点盒式平滑 + 带符号积分 + 随挥止固定 idx347（T0+168ms）。门限重标定（11-04：62被挤/70Yangka正常/126教练）：过晚 fwd_pos<0.20 或 fwd_ms<45ms（召回 67%、教练误报 10%），稍晚 [0.20,0.30)（教练 5%）。11-05 复算预测：正常 50%/稍晚 13%/过晚 24%（旧版 14/19/68）。sw.js CACHE nexttennis-v51
+const APP_BUILD = "APP-B111-20261107-1030";   // B111：Late Contact V 点退化修复——11-04（65 被挤）+11-06（274 正常）同人对照召回 51%/误报 23%，其中 64 个误报有 39 个是 fwd_pos=0（占六成）。根因：V 点判据只查 proj[i-1]<0 && proj[i]>=0，峰值前一个样本为负即命中（v_idx=pk_idx，累加区间为空 → fwd_pos=0），而 0 不是 null，永远走不到 pk_vs_t0 兜底，被 0<0.20 判「击球过晚」——「没有证据」当「有证据」。改动（门限一律不动 0.20/0.30/45/30/15，t_rise 计算不动）：①交叉点加四项约束（连续 3 样本为正排除毛刺 / 不与峰值重合 i≤pk_idx-3 / 距 T0 20–400ms），不满足跳过继续往前找，不直接 break；②交叉点同区段内线性内插（新增 tMsF 浮点索引版三段映射），fwd_ms=tMsF(T0)−tMsF(vF)，fwd_pos 积分起点仍用整数 v_idx；③找不到有效 V 点 → fwd_pos/fwd_ms=null 走 pk_vs_t0 兜底，fwd_pos=0 不再表示「没找到」。standalone/tennis_app.html 逐字同步。sw.js CACHE nexttennis-v52
                                              // B109 v2：①关闭 VSHADOW 影子期——引拍/随挥幅度直接给档位判决徽章（偏小/正常/偏大），不再只显示纯数值 ②游戏式⭐弹出动画——完美击球（Late Contact 正常 + 引拍/随挥档位不偏）时屏幕弹出三颗金色大⭐+"完美击球"字样，1.8s 自动消失 ③BLE 数据流空档从首页挪技术页连接状态面板（不是打球节奏指标，不应干扰打球界面）。B109 v1（1800）：link_qc 传输异常检测（SHORT/INTERLEAVED/DOUBLE + GAP/FAST 事件 + windows.csv 两列 + meta.json 三项 + 采集页异常统计）+ 删除原生逐球录音与 homeRecInd（CSS/HTML/JS 三段移除，__ntVoiceStart/__ntVoice 空壳）。约束：不改固件 qc、不改 CSV 既有列顺序、不补帧只标记。sw.js CACHE nexttennis-v49
                                              // B93：Late Contact 特征（击球点偏后识别前置）——复刻固件 B58 line 727-755：全窗 |gyro| 合成 + 5 点盒式平滑 + 找峰值 pk_idx + 10% 峰值前回溯 rise_start，输出 pk_vs_t0_ms 和 t_rise_ms 两个原始值（不判决）。改动点：①新增 computeLateContactFeatures() 30 行 ②onWindow 里调用并推入独立 windowLog[] 数组（容量 2000，防 connLog 500 上限被冲）③session_log.csv 新增 pk_vs_t0_ms / t_rise_ms 两列（event=window 行有值，其他事件留空），窗口日志带 [CALC] 标签与固件 [CLASS] 比对，容忍 ±5ms。所有窗口（含敲拍）都计算。sw.js CACHE nexttennis-v34
                                              // B92：录像文件名改为「开始_结束」双时间戳（video_YYYYMMDD_HHMMSS-HHMMSS.webm）
@@ -1469,6 +1469,10 @@ function computeLateContactFeatures(win) {
   const tMs = (i) => i <= 137 ? (-1148.5 + 8 * i) * MICRO_DT
                   : i <= 347 ? (i - 186) * MICRO_DT
                   : (165.5 + 8 * (i - 348)) * MICRO_DT;
+  // B111：浮点索引版本，用于 V 点线性内插后的时间换算（三段映射与 tMs 1:1）
+  const tMsF = (x) => x <= 137 ? (-1148.5 + 8 * x) * MICRO_DT
+                  : x <= 347 ? (x - 186) * MICRO_DT
+                  : (165.5 + 8 * (x - 348)) * MICRO_DT;
 
   // 1) 全窗口 |gyro| 合成（固件 line 727-732）
   // 2026-11-06（B105）：data 布局是「通道优先」win[ch][i]（且已换算成物理量：陀螺 rad/s、加速度 g）。
@@ -1533,21 +1537,43 @@ function computeLateContactFeatures(win) {
       for (let j = lo; j < hi; j++) sum += proj_raw[j];
       proj[i] = sum / (hi - lo);
     }
-    for (let i = pk_idx; i > 0; i--) {
-      if (proj[i - 1] < 0 && proj[i] >= 0) { v_idx = i; break; }
+    // B111（2026-11-07）：V 点退化修复。旧判据只查 proj[i-1]<0 && proj[i]>=0，
+    // 峰值前一个样本为负即命中（v_idx=pk_idx，累加区间为空 → fwd_pos=0、fwd_ms≈0），
+    // 而兜底只在 null 时生效，0 不是 null → 被 0<0.20 判「击球过晚」，
+    // 「没有证据」被当成「有证据」（11-04+11-06 同人对照 64 个误报中 39 个=fwd_pos 0，占六成）。
+    // ① 交叉点加四项约束，不满足跳过继续往前找（不直接 break）：
+    for (let i = pk_idx; i > 2; i--) {
+      if (!(proj[i - 1] < 0 && proj[i] >= 0)) continue;
+      // ① 交叉后连续 3 个样本为正，排除单点毛刺
+      if (i + 2 > WIN_SAMPLES - 1) continue;
+      if (!(proj[i + 1] >= 0 && proj[i + 2] >= 0)) continue;
+      // ② 不与峰值重合
+      if (i > pk_idx - 3) continue;
+      // ③ 时序距离 20–400 ms
+      const dtMs = tMs(T0_IDX) - tMs(i);
+      if (dtMs < 20 || dtMs > 400) continue;
+      v_idx = i;
+      break;
     }
-    if (v_idx > 0 && v_idx <= E_END) {
+    if (v_idx > 0) {
       let a_t0 = 0, a_all = 0;
       for (let i = v_idx + 1; i <= E_END; i++) {
-        const d = proj[i] * (tMs(i) - tMs(i - 1));   // B110：带符号积分
+        const d = proj[i] * (tMs(i) - tMs(i - 1));   // B110：带符号积分（起点仍用整数 v_idx，不插值）
         if (i <= T0_IDX) a_t0 += d;
         a_all += d;
       }
       if (a_all > 1e-6) {
+        // ② 交叉点线性内插：V 点常落在 −50～−120 ms，跨宏/微段边界，8.3ms 分辨率不够。
+        //    只在同一区段内内插（跨段边界两侧 dt 不同，线性假设不成立）。
+        let vF = v_idx;                                     // 浮点索引
+        const sameSeg = (v_idx <= 137 && v_idx - 1 <= 137) || (v_idx >= 138 && v_idx - 1 >= 138);
+        if (sameSeg && proj[v_idx] !== proj[v_idx - 1]) {
+          vF = (v_idx - 1) + (0 - proj[v_idx - 1]) / (proj[v_idx] - proj[v_idx - 1]);
+        }
         fwd_pos = a_t0 / a_all;
-        fwd_ms = Math.round(tMs(T0_IDX) - tMs(v_idx));
+        fwd_ms = Math.round(tMsF(T0_IDX) - tMsF(vF));
       }
-    }
+    } else { fwd_pos = null; fwd_ms = null; }   // ③ 没找到有效 V 点 → null，走 pk_vs_t0 兜底；fwd_pos=0 不再表示「没找到」
   }
 
   // 7) 击球过晚（Late Contact）判决（仅提示，不做归因）
