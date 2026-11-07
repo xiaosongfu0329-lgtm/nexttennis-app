@@ -644,7 +644,12 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B116-20261107-1525";   // B116：摄像头能力上限 + 实测落帧诊断；B115：拍摄中全屏取景 + 叠加层，竖流反向旋转铺满
+const APP_BUILD = "APP-B117-20261107-1550";   // B117：App 录像回落 1080p30 + 码率按长边判档 + 优先 H.264；B116：能力/落帧诊断
+// B117：①App 内录像的定位＝块级对齐 + 形态标签（引拍/随挥三态、正反、失误），30fps 足够——击球点偏后是空间判据，
+// 配合传感器触球 t0 取最近帧/内插即可；60fps 只在需要算 |dθ/dt| 峰值的视频反推里必要，且那类素材不靠 App 录像。
+// ②帧率请求 60→30：30fps 曝光时间翻倍，室内更亮更干净。③码率判档改 max(w,h)：竖流 1080×1920 不再被误判成 4Mbps 档
+// （1080p30 → 8Mbps）。④MIME 优先 H.264（webm/h264 → mp4/avc1 → mp4，VP9 兜底），VP9 软编实测 30fps 只落 20.7fps。
+// standalone 逐字同步。sw.js CACHE nexttennis-v58
 // B116：只加诊断、不改采集参数与判决规则——①camOpen 成功后打印 getCapabilities() 的分辨率/帧率上限（设备到底给不给 60fps）；
 // ②录像开始用 requestVideoFrameCallback 计帧，停止时打印「落帧 N 帧 / T 秒 = X fps」，区分「相机只给 30fps」与「编码丢帧」。
 // 结论同时写进页面日志，真机在室外强光下录 20s 即可定参数。standalone 逐字同步。sw.js CACHE nexttennis-v57
@@ -5721,7 +5726,10 @@ function camLog(txt, err) {
 }
 function camPickMime() {
   if (!window.MediaRecorder) return "";
-  const cands = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm", "video/mp4"];
+  // 2026-11-07：优先 H.264 走硬件编码（VP9 软编 1080p 实测只落 20.7fps）；容器先 webm 再 mp4，
+  // 避免动到既有分析流程（pipeline 以 webm 为主、mp4 也能关联）。
+  const cands = ["video/webm;codecs=h264", "video/mp4;codecs=avc1.42E01E", "video/mp4",
+                 "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
   for (const c of cands) if (MediaRecorder.isTypeSupported(c)) return c;
   return "";
 }
@@ -5743,13 +5751,14 @@ async function camOpen() {
   try {
     // 2026-11-05：视频流只要画面（audio:false）—— 音频统一由 capAudioStart 常开录制，
     // 两路 getUserMedia 抢同一麦克风会互相挤掉（尤其蓝牙耳机）
-    // 2026-11-07：横屏采集、1080p、优先 60fps——姿态分析要"全身入画 + 触球前后可分辨"。
-    // 设备达不到就自动降级，实际值记进 camActual 与 meta，不弹窗、不要求人工处理。
+    // 2026-11-07：App 内录像只承担「块级对齐 + 形态标签」，30fps 足够——击球点偏后是空间判据，
+    // 配合传感器触球 t0 选帧/内插即可；60fps 只在需要算 |dθ/dt| 峰值的视频反推里才必要。
+    // 另外 30fps 曝光时间是 60fps 的两倍，室内画面更亮更干净，标签反而更好判。
     camStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: { facingMode: { ideal: "environment" },
                width: { ideal: 1920 }, height: { ideal: 1080 },
-               frameRate: { ideal: 60 }, aspectRatio: { ideal: 16 / 9 } },
+               frameRate: { ideal: 30 }, aspectRatio: { ideal: 16 / 9 } },
     });
   } catch (e) {
     camLog("摄像头开启失败：" + (e && e.message ? e.message : e), true); return false;
@@ -5820,8 +5829,10 @@ async function camStartRec() {
   if (!mime) { camLog("本浏览器不支持 MediaRecorder", true); return false; }
   camChunks = [];
   camAutoPaused = false;     // 新一段录像：清掉捡球暂停标记
-  // 2026-11-07：码率跟随实际参数——1080p60 用 12 Mbps（低于 8 Mbps 运动模糊），720p30 维持 4 Mbps
-  const camBr = camActual.fps >= 50 ? 12000000 : (camActual.w >= 1920 ? 8000000 : 4000000);
+  // 2026-11-07：码率跟随实际参数——60fps 用 12 Mbps，1080p30 用 8 Mbps，其余 4 Mbps。
+  // 判档按长边 max(w,h)：竖屏锁定下流是 1080×1920，用 w 会把 1080p 错判成低档。
+  const camLong = Math.max(camActual.w, camActual.h);
+  const camBr = camActual.fps >= 50 ? 12000000 : (camLong >= 1920 ? 8000000 : 4000000);
   camActual.br = camBr;
   camRec = new MediaRecorder(camStream, { mimeType: mime, videoBitsPerSecond: camBr });
   camRec.ondataavailable = e => { if (e.data && e.data.size) camChunks.push(e.data); };
@@ -5870,7 +5881,7 @@ async function camStartRec() {
     const s = Math.round((Date.now() - camRecStart) / 1000);
     camLog(`视频采集中 ${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`, false);
   }, 1000);
-  log(`采集页：视频已开始（${capFileName("video", mime.includes("mp4") ? "mp4" : "webm")}）`, "log-info");
+  log(`采集页：视频已开始（${capFileName("video", mime.includes("mp4") ? "mp4" : "webm")}｜${mime}｜${Math.round(camBr / 1e6)}Mbps）`, "log-info");
   return true;
 }
 
