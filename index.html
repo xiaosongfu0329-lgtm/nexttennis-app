@@ -187,6 +187,12 @@
   #camRecTag { position: absolute; top: 8px; left: 8px; font-size: 14px; font-weight: 700; color: #fff;
                background: rgba(248,81,73,.85); padding: 3px 10px; border-radius: 12px; display: none; }
   #camRecTag.on { display: block; animation: vpulse 1.1s infinite; }
+  /* 2026-11-08：开录提示敲拍——这一个动作同时进视频画面与传感器首窗，作逐拍对齐锚点 */
+  #capClap { position: absolute; left: 50%; top: 12%; transform: translateX(-50%);
+             max-width: 86%; text-align: center; font-size: 15px; font-weight: 700; color: #0d1117;
+             background: rgba(61,220,151,.92); padding: 6px 12px; border-radius: 999px;
+             display: none; pointer-events: none; z-index: 6; }
+  #capClap.on { display: block; }
   /* 移动端优化 */
   @media (max-width: 600px) {
     header { padding: 8px 10px; }
@@ -366,6 +372,7 @@
       <div id="camOff">手机请横置 · 点此开启摄像头</div>
       <div id="camRecTag">● 录像中</div>
       <div id="camGuide"><b>球员全身应占此框 40% 以上</b></div>
+      <div id="capClap">▶ 开录了 · 敲一下拍子（对齐视频与传感器）</div>
       <div class="c-camstat">
         <span id="cConn" class="badge idle">未连接</span>
         <span id="cDev" style="font-family:ui-monospace,monospace">—</span>
@@ -644,7 +651,15 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B117-20261107-1550";   // B117：App 录像回落 1080p30 + 码率按长边判档 + 优先 H.264；B116：能力/落帧诊断
+const APP_BUILD = "APP-B119-20261108-1700";   // B119：心跳对时（固件 millis ↔ 手机时钟）；B118：关 AGC + 开录敲拍提示
+// B119：①BLE 特征值新增「无响应写」，App 发 4B [0x53][token][0][0]，固件在 write 回调里记 millis
+// 并回 14B 系统帧 [0xA5][0xF2][seq][fw_ms u32][token u16][len][batt]；②App 用 NTP 式四时间戳算
+// offset/RTT（取最小 RTT 样本），连上打 8 次、之后每 5 分钟补 3 次；③窗口头 ts24 解 24bit 回绕后
+// 换算 t_capture_utc 写进 CSV/meta，偏差 >500ms 标 sync_qc=bad；④固件不支持时静默降级（不弹窗、
+// 不阻塞采集），仍走敲拍锚点/音频对齐。standalone 逐字同步。sw.js CACHE nexttennis-v60
+// B118：①三处录音约束 autoGainControl 改 false——AGC 会抬底噪、压平球击声瞬态，逐拍切分吃这个。
+// ②视频采集开始后 6s 内浮层提示「敲一下拍子」，敲拍同时进视频画面与传感器首窗，作为逐拍对齐硬锚点，
+// 不再只依赖球击声（蓝牙耳机麦克风很可能收不到瞬态）。结束采集即隐藏。standalone 逐字同步。sw.js CACHE nexttennis-v59
 // B117：①App 内录像的定位＝块级对齐 + 形态标签（引拍/随挥三态、正反、失误），30fps 足够——击球点偏后是空间判据，
 // 配合传感器触球 t0 取最近帧/内插即可；60fps 只在需要算 |dθ/dt| 峰值的视频反推里必要，且那类素材不靠 App 录像。
 // ②帧率请求 60→30：30fps 曝光时间翻倍，室内更亮更干净。③码率判档改 max(w,h)：竖流 1080×1920 不再被误判成 4Mbps 档
@@ -702,6 +717,8 @@ const PROTO = {
   // flags: bit[1:0]=chunk_type(0起/1中/2末), bit[3:2]=impact_class(0 NORMAL/1 FRAME/2 FOREIGN)
   // 系统包(心跳/电池)沿用旧头：[magic u8=0xA5][flags u8][seq u16=0xFFFE][ts u32][off u16][len u16][batt u16]
   SYS_MAGIC: 0xA5,
+  SYNC_FLAG: 0xF2,   // [B119] 系统帧 flags=0xF2 → 对时回包（其余 flags 仍按电池帧解析）
+  SYNC_REQ: 0x53,    // [B119] App 写 4B 请求首字节
   CHUNK_HDR: 12,
   // 原始 int16 → 物理单位换算
   SCALE_A:   0.000488,                 // g/LSB    @ ±16g
@@ -740,6 +757,7 @@ function crc16ccitt(bytes) {
 class BleStreamParser {
   constructor(onWindow) {
     this.onWindow = onWindow;   // callback(meta, data12x396)
+    this.onSync = null;         // [B119] callback(token, fwMs, t3)：对时回包
     this._buf = new Map();      // seq -> { bytes, createdAt, total, fw, filled, crcFail, quickClass, seen }
     this._lastSeq = -1;
     this._delivered = new Set(); // 已完整交付过的 seq：迟到的重复分片直接忽略
@@ -756,6 +774,11 @@ class BleStreamParser {
     // 系统包（心跳/电池）：byte0=0xA5，seq(u16)@2 = 0xFFFE，不进入窗口重组
     if (dv.getUint8(0) === PROTO.SYS_MAGIC) {
       if (buf.byteLength >= 14 && dv.getUint16(2, true) >= 0xFFF0) {
+        // [B119] 对时回包：fw millis@4 (u32)，token@8 (u16)
+        if (dv.getUint8(1) === PROTO.SYNC_FLAG) {
+          if (this.onSync) this.onSync(dv.getUint16(8, true), dv.getUint32(4, true), Date.now());
+          return;
+        }
         const battMv = dv.getUint16(12, true);
         const battEl = document.getElementById("devBatt");
         if (battEl) {
@@ -1379,6 +1402,16 @@ class MockDevice {
     this._tick();
   }
   stop() { this.running = false; }
+  // [B119] 对时 ping：模拟固件回 14B 系统帧（fw millis 取 uptime，含一次模拟往返延迟）
+  onWrite(b) {
+    if (!this.running || !b || b[0] !== PROTO.SYNC_REQ) return;
+    const r = new Uint8Array(14);
+    const dv = new DataView(r.buffer);
+    r[0] = PROTO.SYS_MAGIC; r[1] = PROTO.SYNC_FLAG; r[2] = 0xF1; r[3] = 0xFF;
+    dv.setUint32(4, Math.round(performance.now()) & 0xFFFFFFFF, true);   // 固件 millis
+    dv.setUint16(8, b[1], true);                                         // token 回显
+    setTimeout(() => this.onChunk(r.buffer), 40);   // 模拟一次 BLE 往返
+  }
   _tick() {
     if (!this.running) return;
     this._emitImpact();
@@ -1420,7 +1453,7 @@ class MockDevice {
     const payloadPerChunk = PROTO.WINDOW.chunkPayload;
     const totalChunks = PROTO.WINDOW.chunks;
     const seq = this.seq++ & 0xFF;                    // seq 为 u8
-    const mockTs = Math.round(performance.now()) & 0xFFFFFF;   // [B56] 模拟固件 uptime 时间戳
+    const mockTs = (Math.round(performance.now()) - 600) & 0xFFFFFF;   // [B119] 触发时刻比交付早 ~600ms（后段 0.5s+组窗）
     for (let ci = 0; ci < totalChunks; ci++) {
       const off = ci * payloadPerChunk;
       const len = Math.min(payloadPerChunk, bytes.length - off);
@@ -1687,6 +1720,11 @@ function onWindow(meta, data) {
   meta.packetLoss = parser.consumeSeq(meta.rawSeq);   // 丢包检测必须用固件 raw seq
   meta.seq = seqNext(meta.rawSeq);                    // B95：导出用的 seq 由 App 重编号，永不归零
   meta.receivedAt = new Date();   // 本地到达时刻（HH:MM:SS，供会话列表/导出）
+  // [B119] 心跳对时：fw ts24 解回绕 + offset → 本窗绝对时间；未对时留空，回退到音频/锚点
+  {
+    const sy = hwSync.mapWindow(meta.fwMs, meta.receivedAt);
+    if (sy) { meta.fwMs32 = sy.fw32; meta.tCaptureUtcMs = sy.utcMs; meta.syncQc = sy.qc; }
+  }
   // B109：GAP 事件（固件 seq 不连续）—— 独立于 link_qc，不算到单窗，只写日志
   if (meta.packetLoss) {
     gapEvents++;
@@ -3655,9 +3693,11 @@ window.__ntStatus = function (json) {
       $("devMtu").textContent = s.mtu ? `MTU ${s.mtu}` : "BLE 5.3 DLE";
       connLogAdd({ event: "conn", device: s.name, sessionTag: sessionTag(), note: "native" });
       log(`原生壳已连接 ${s.name}（MTU ${s.mtu || "?"}）`, "log-pass");
+      if (!hwSync.started) hwSync.beginSession();   // [B119] 原生链路就绪，开始对时
     } else if (s.state === "disconnected") {
       setConn("已断开", "warn");
       log("原生壳链路断开，正在自动重连…", "log-warn");
+      hwSync.stop();   // [B119] 断链期间不再发 ping；重连后由 connected 分支重新 beginSession
     } else if (s.state === "error") {
       setConn("连接失败", "fail");
       log(`原生壳: ${s.msg || "未知错误"}`, "log-fail");
@@ -3669,6 +3709,160 @@ window.__ntLog = function (msg) { log(msg, "log-info"); };
 // B109：原生壳逐球录音与「录音中」指示已全量移除；整场连续录音由 capOn/capAudio 模块负责
 window.__ntVoiceStart = function (seq, maxMs) {};   // 空壳：原生壳可能仍调用，避免报错
 window.__ntVoice = function (seq, b64, durMs, silent, at) {};  // 空壳：原生壳可能仍回调，避免报错
+
+// ---------- 心跳对时：固件 millis ↔ 手机时钟 ----------
+// 协议：App 无响应写 4B [0x53][token][0][0] → 固件在收到那一刻记 millis，回 14B 系统帧：
+//   [0xA5][0xF2][0xF1 0xFF][fw_ms u32][token u16][len u16][batt u16]
+// 四时间戳：t0=手机发出 / t3=手机收到 / tD=固件记录（收发同一时刻）
+//   offset = (t0+t3)/2 - tD   →   t_capture = fw_ms + offset
+//   RTT    = t3 - t0          →   只取 RTT 最小的样本，抵消排队/重传偏差
+// 固件没有写特征值或没回包 → 静默降级：sync_ok=false，仍走敲拍锚点/音频对齐，不弹窗不阻塞采集。
+const hwSync = {
+  supported: null,     // null=未探测 / true=可用 / false=不支持（只提示一次）
+  ok: false,
+  offsetMs: 0,         // 手机 epoch - 固件 millis
+  rttMin: 0,
+  driftPpm: 0,
+  samples: [],         // 最近 24 个样本 {t0,t3,fwMs,rtt,mid}
+  started: false,
+  _token: 0, _pending: new Map(), _fail: 0, _timer: null, _reTimer: null,
+  _last24: null, _base24: 0, _logOff: null, _at: 0,
+
+  beginSession() {
+    this.stop();
+    this.supported = null; this.ok = false; this.offsetMs = 0; this.rttMin = 0;
+    this.driftPpm = 0; this.samples = []; this._pending.clear();
+    this._last24 = null; this._base24 = 0; this._fail = 0; this._logOff = null;
+    this.started = true;
+    this._burst(8);   // 连上先打 8 次，取最干净的一批
+    // 晶振 ~±20ppm ≈ 72ms/h：每 5 分钟补 3 次，整场漂移压在几毫秒
+    this._reTimer = setInterval(() => { if (this.ok) this._burst(3); }, 5 * 60 * 1000);
+  },
+
+  stop() {
+    this.started = false;
+    if (this._timer) { clearTimeout(this._timer); this._timer = null; }
+    if (this._reTimer) { clearInterval(this._reTimer); this._reTimer = null; }
+  },
+
+  _burst(n) {
+    let i = 0;
+    if (this._timer) clearTimeout(this._timer);
+    const step = () => {
+      if (!this.started || i >= n) return;
+      i++;
+      this._ping();
+      this._timer = setTimeout(step, 120);   // 间隔 120ms：避开单次连接事件的排队
+    };
+    step();
+  },
+
+  _send(bytes) {
+    if (NATIVE && NATIVE.syncWrite) {
+      let s = "";
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      try { NATIVE.syncWrite(btoa(s)); return true; } catch (e) { return false; }
+    }
+    if (mockDev && mockDev.onWrite) { mockDev.onWrite(bytes); return true; }
+    if (btChar && btChar.properties) {
+      try {
+        if (btChar.properties.writeWithoutResponse) { btChar.writeValueWithoutResponse(bytes); return true; }
+        if (btChar.properties.write) { btChar.writeValue(bytes); return true; }
+      } catch (e) { return false; }
+    }
+    return false;
+  },
+
+  _ping() {
+    const token = this._token = (this._token + 1) & 0xFF;
+    const t0 = Date.now();
+    if (!this._send(new Uint8Array([PROTO.SYNC_REQ, token, 0, 0]))) {
+      this._fail++;
+      if (this.supported !== true && this._fail >= 2) this._degrade();
+      return;
+    }
+    this._pending.set(token, t0);
+    if (this._pending.size > 32) this._pending.delete(this._pending.keys().next().value);
+  },
+
+  onReply(token, fwMs, t3) {
+    const t0 = this._pending.get(token);
+    if (!t0) return;
+    this._pending.delete(token);
+    const rtt = t3 - t0;
+    if (rtt < 0 || rtt > 3000) return;   // 明显异常的样本不参与
+    this.supported = true; this._fail = 0;
+    this.samples.push({ t0, t3, fwMs, rtt, mid: (t0 + t3) / 2 });
+    if (this.samples.length > 24) this.samples.shift();
+    this._fit();
+  },
+
+  _fit() {
+    const best = this.samples.slice().sort((a, b) => a.rtt - b.rtt).slice(0, 6);
+    const s0 = best[0];
+    this.rttMin = s0.rtt;
+    let off = (s0.t0 + s0.t3) / 2 - s0.fwMs;
+    let drift = 0;
+    const xs = best.map(s => s.mid), span = Math.max(...xs) - Math.min(...xs);
+    if (span > 60000 && best.length >= 3) {
+      // 样本跨度 >60s 才拟合漂移（否则斜率全是噪声）：offset(t) = a + drift·t
+      const ys = best.map(s => s.mid - s.fwMs);
+      const n = xs.length;
+      const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+      let num = 0, den = 0;
+      for (let i = 0; i < n; i++) { num += (xs[i] - mx) * (ys[i] - my); den += (xs[i] - mx) ** 2; }
+      if (den > 0) { drift = num / den; off = (my - drift * mx) + drift * xs[n - 1]; }
+    }
+    this.offsetMs = off;
+    this.driftPpm = drift * 1e6;
+    this.ok = true;
+    this._at = Date.now();
+    if (this._logOff === null || Math.abs(off - this._logOff) > 30) {
+      this._logOff = off;
+      log(`心跳对时：固件时钟已对齐（RTT 最小 ${Math.round(this.rttMin)}ms，`
+          + `漂移 ${this.driftPpm.toFixed(1)}ppm）`, "log-pass");
+    }
+  },
+
+  _degrade() {
+    if (this.supported === false) return;
+    this.supported = false; this.ok = false;
+    this.stop();
+    log("固件未回应对时请求：本场改用敲拍锚点/音频对齐（采集不受影响）", "log-info");
+  },
+
+  // 窗口 ts24（低 24 位，4.66h 回绕）→ 绝对时间；未对时返回 null
+  mapWindow(fwMs24, recvAt) {
+    if (!this.ok || !fwMs24) return null;
+    if (this._last24 !== null && fwMs24 < this._last24 && (this._last24 - fwMs24) > 0x800000)
+      this._base24 += 0x1000000;          // 同一场内的 4.66h 回绕
+    this._last24 = fwMs24;
+    let fw32 = this._base24 + fwMs24;
+    let utcMs = Math.round(fw32 + this.offsetMs);
+    // 首窗自锚 / 设备重启 / 连续开机跨圈：偏差超过 1 分钟就按到达时刻重定圈数
+    // （只能纠正 4.66h 的整数倍，offset 本身的误差仍会被 sync_qc 抓出来）
+    if (recvAt && Math.abs((recvAt.getTime() - 600) - utcMs) > 60000) {
+      const exp = recvAt.getTime() - 600 - this.offsetMs;
+      this._base24 = Math.round((exp - fwMs24) / 0x1000000) * 0x1000000;
+      fw32 = this._base24 + fwMs24;
+      utcMs = Math.round(fw32 + this.offsetMs);
+    }
+    // 窗口数据结束在 T0+0.5s，加组窗/传输 ≈100ms；偏差超 ±500ms 说明对时不可信
+    const qc = recvAt && Math.abs((recvAt.getTime() - 600) - utcMs) > 500 ? "bad" : "ok";
+    return { fw32, utcMs, qc };
+  },
+
+  // 导出进 meta.capture.sync
+  snapshot() {
+    return { supported: this.supported, ok: this.ok,
+             offset_ms: this.ok ? Math.round(this.offsetMs) : null,
+             rtt_min_ms: this.ok ? Math.round(this.rttMin) : null,
+             drift_ppm: this.ok ? +this.driftPpm.toFixed(1) : null,
+             samples: this.samples.length,
+             at: this.ok && this._at ? new Date(this._at).toISOString() : null };
+  },
+};
+parser.onSync = (token, fwMs, t3) => hwSync.onReply(token, fwMs, t3);
 
 // ---------- Web Bluetooth 连接（冲击窗口协议） ----------
 // 通知处理抽成具名函数：首次连接与断连自动重连共用（2026-11-01 需求通知 R3）
@@ -3689,6 +3883,7 @@ async function openImpactGatt(dev) {
   btChar = await svc.getCharacteristic(PROTO.IMPACT.charUUID);
   btChar.addEventListener("characteristicvaluechanged", onImpactNotify);   // 先监听后订阅（经验教训）
   await btChar.startNotifications();
+  hwSync.beginSession();   // [B119] 链路就绪后开始对时（固件不支持则静默降级）
 }
 
 async function connectImpact() {
@@ -3800,6 +3995,7 @@ function connectMock() {
   $("devMtu").textContent = "模拟分片 232B";
   connLogAdd({ event: "conn", device: "Mock", sessionTag: sessionTag(), note: "mock" });
   log("Mock 设备已启动，每 1.2~2.5s 产生一次冲击窗口", "log-info");
+  hwSync.beginSession();   // [B119] Mock 也会回对时包，用于离线验证对时链路
 }
 
 function onDisconnect(e) {
@@ -3832,6 +4028,7 @@ function onDisconnect(e) {
 let cleaningUp = null;   // 幂等清理：重复调用复用同一次等待
 function cleanupBt() {
   if (cleaningUp) return cleaningUp;
+  hwSync.stop();   // [B119] 链路已断，停止对时轮询（下次连接会 beginSession 重来）
   const chr = btChar, dev = btDevice;
   btChar = null; btServer = null; btDevice = null;
   if (mockDev) { mockDev.stop(); mockDev = null; }
@@ -4194,7 +4391,7 @@ async function voiceWakeLock(on) {
 
 // 开启自动录音前先拿一次麦克风权限：否则第一球到达时才弹授权框，会漏掉这句
 async function voicePrimeMic() {
-  const baseAudio = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
+  const baseAudio = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
   const pick = await voiceResolvePreferredDevice();
   let audio;
   if (pick.resolved && pick.deviceId) {
@@ -4409,7 +4606,7 @@ async function capAudioStart() {
     await voiceMarkFail({ name: "SecurityError", message: "缺少 mediaDevices（非 https 或浏览器不支持）" });
     return false;
   }
-  const baseAudio = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
+  const baseAudio = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
   const pick = await voiceResolvePreferredDevice();
   let stream = null;
   try {
@@ -4608,7 +4805,7 @@ async function capAudioInterrupt(reason) {
 
 // 用默认输入重开一段（不弹耳机确认；失败返回 false）
 async function capAudioRestart() {
-  const base = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
+  const base = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
   let stream = null;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: base }); }
   catch (e) {
@@ -4769,9 +4966,23 @@ async function capStart(mode) {
   capPaint(); colRefresh();
   log(`采集开始：${mode === "video" ? "视频采集（含整场录音）" : "纯录音采集（摄像头关闭）"}｜`
       + `统一文件名 ${capTag}｜麦克风=${capAudioMic || "默认输入"}`, "log-pass");
+  if (mode === "video") {
+    capClapHint();
+    log("开录提示：请在 6 秒内敲一下拍子（该敲拍会作为视频与传感器的对齐锚点）", "log-info");
+  }
+}
+
+function capClapHint() {
+  // 2026-11-08：开录后短暂提示敲拍——敲拍同时进视频画面与传感器首窗，给逐拍对齐一个硬锚点
+  const el = $("capClap");
+  if (!el) return;
+  el.classList.add("on");
+  clearTimeout(capClapHint._t);
+  capClapHint._t = setTimeout(() => el.classList.remove("on"), 6000);
 }
 
 async function capStop(doPack = true) {
+  const _clap = $("capClap"); if (_clap) _clap.classList.remove("on");
   if (!capOn) { log("当前未在采集", "log-warn"); if (doPack) await packExport(); return; }
   const mode = capOn;
   capOn = null;                    // 先关：后续窗口不再打点
@@ -4990,7 +5201,7 @@ $("exportCsvBtn").addEventListener("click", () => {
 // CSV 表头与行构建（单窗口 / 会话导出共用；impact_type 为固件板判）
 // stroke_type：固件已停发该字段（Step4 移交 App），改为 App W2 零校准判决写入（FH→FOREHAND / BH→BACKHAND），
 // 仅 NORMAL_HIT(0) 且判决有效时填写；列名不变、不写 note，不影响块名解析。
-const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,vti,vti_level,fw_ms,pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict,link_qc,link_note\n";
+const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,vti,vti_level,fw_ms,pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict,link_qc,link_note,t_capture_utc,sync_qc\n";
 function buildCsvRows(m) {
   const impactType = m.meta.quickClass != null
     ? ["NORMAL_HIT", "FRAME_HIT", "FOREIGN_IMPACT"][m.meta.quickClass] : "";
@@ -5006,6 +5217,9 @@ function buildCsvRows(m) {
   // B109：link_qc 追加列（独立于固件 qc，不混入 note 字段）
   const lqc = m.meta.link_qc || "";
   const lnoteEsc = `"${String(m.meta.link_note || "").replace(/"/g, '""')}"`;
+  // [B119] 心跳对时：fw 触发时刻换算成绝对时间（未对时空值，sync_qc 标 bad 表示对时不可信）
+  const uc = m.meta.tCaptureUtcMs ? new Date(m.meta.tCaptureUtcMs).toISOString() : "";
+  const sq = m.meta.syncQc || "";
   // 会话状态 / VTI 快照：导出后可按 sess_state 剔除捡球窗，VTI 列用于按当日会话重锚门限
   const ss = m.meta.sessState === "pause" ? "pause" : "train";
   const vv = m.meta.vti || {};
@@ -5023,7 +5237,7 @@ function buildCsvRows(m) {
   for (let i = 0; i < PROTO.WINDOW.samples; i++) {
     rows += `${m.meta.seq},${m.meta.timestamp},${i},`;
     for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) rows += m.data[ch][i].toFixed(6) + ",";
-    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${vtiVal},${vtiLvl},${m.meta.fwMs || 0},${lateTail},${lqc},${lnoteEsc}\n`;
+    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${vtiVal},${vtiLvl},${m.meta.fwMs || 0},${lateTail},${lqc},${lnoteEsc},${uc},${sq}\n`;
   }
   return rows;
 }
@@ -5255,6 +5469,8 @@ async function packExport() {
                         ? { w: camActual.w, h: camActual.h, fps: camActual.fps,
                             bitrate: camActual.br || 0,
                             orientation: camActual.w >= camActual.h ? "landscape" : "portrait" } : null,
+                 // B119：心跳对时结果（offset=手机epoch-固件millis；RTT 取最小样本）
+                 sync: hwSync.snapshot(),
                  // B95 P0-1：音频真正起止（打点换算成音频内位置必须用这两个时刻）
                  audio_start_ts: aStart ? new Date(aStart).toISOString() : null,
                  audio_end_ts: aEnd ? new Date(aEnd).toISOString() : null,
