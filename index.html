@@ -651,7 +651,13 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B119-20261108-1700";   // B119：心跳对时（固件 millis ↔ 手机时钟）；B118：关 AGC + 开录敲拍提示
+const APP_BUILD = "APP-B120-20261109-1200";   // B120：录像时间基准落盘（暂停事件/墙钟跳变/VFR 标记）；B119：心跳对时
+// B120：采集时只「记录」不「判定」——录像开始/结束绝对时刻、自动暂停段（捡球）、
+// 墙钟跳变事件、源流是否 VFR，全部写进 meta.timebase，供下游做逐拍对齐。
+// 起因：连续录像+固件同步已消除大部分对齐难点，但有三件事只有采集当时才知道：
+// ① 捡球自动暂停会让「视频内秒数」与墙钟非线性（暂停时长不进文件）；
+// ② 长时间录像中途被 NTP 校正/手动改时间，墙钟会跳，事后无法完整还原；
+// ③ 相机源流是否 VFR 只有录制端能确认（下游只能猜）。
 // B119：①BLE 特征值新增「无响应写」，App 发 4B [0x53][token][0][0]，固件在 write 回调里记 millis
 // 并回 14B 系统帧 [0xA5][0xF2][seq][fw_ms u32][token u16][len][batt]；②App 用 NTP 式四时间戳算
 // offset/RTT（取最小 RTT 样本），连上打 8 次、之后每 5 分钟补 3 次；③窗口头 ts24 解 24bit 回绕后
@@ -1635,8 +1641,8 @@ function computeLateContactFeatures(win) {
   //    ② 积分带符号（删 max(0,·) 截断）——「带符号投影」本就是定义口径，
   //       截断会把随挥段的正偏移全计入分母，系统性压低 fwd_pos（被挤 0.053 vs 参考实现 0.236）；
   //    ③ 随挥止固定 E_END=347。
-  //    校正后 11-04 标定（62 被挤 / 70 Yangka正常 / 126 教练）：
-  //    被挤 0.217[0.04,0.44] / 41ms · Yangka正常 0.383 / 109ms · 教练 0.487[0.41,0.70] / 80ms
+  //    校正后 11-04 标定（62 被挤 / 70 Yangky正常 / 126 教练）：
+  //    被挤 0.217[0.04,0.44] / 41ms · Yangky正常 0.383 / 109ms · 教练 0.487[0.41,0.70] / 80ms
   const axis = [0, 0, 0];
   for (let i = Math.max(0, pk_idx - 4); i <= Math.min(WIN_SAMPLES - 1, pk_idx + 4); i++) {
     axis[0] += win[3][i]; axis[1] += win[4][i]; axis[2] += win[5][i];
@@ -1698,7 +1704,7 @@ function computeLateContactFeatures(win) {
   // 7) 击球过晚（Late Contact）判决（仅提示，不做归因）
   //    B110 门限重标定（旧 0.30/0.45 是按带偏差实现的值域定的，正常球误报 66%）。
   //    修正实现上 11-04 实测：过晚 pos<0.20 或 ms<45 → 被挤召回 67%、教练误报 10%；
-  //    稍晚带 [0.20,0.30) → 教练再 5%。Yangka 52% 误报属标注口径问题（待 B 方案复核）。
+  //    稍晚带 [0.20,0.30) → 教练再 5%。Yangky 52% 误报属标注口径问题（待 B 方案复核）。
   let verdict = "正常", hint = "";
   if (fwd_pos != null) {
     if (fwd_pos < 0.20 || fwd_ms < 45) { verdict = "击球过晚"; hint = "早架拍、早启动"; }
@@ -3372,10 +3378,12 @@ function setSessionState(st) {
       if (st === "pause" && camRec.state === "recording") {
         camRec.pause();
         camAutoPaused = true;
+        camMetaPause("pause");           // B120：记下暂停的绝对时刻与视频内位置
         camLog("捡球中：录像已自动暂停", false);
       } else if (st === "train" && camAutoPaused && camRec.state === "paused") {
         camRec.resume();
         camAutoPaused = false;
+        camMetaPause("resume");          // B120：记下续录时刻与暂停时长
         camLog("回到训练中：录像自动续录", false);
       }
       $("camRecTag").textContent = (st === "pause" && camAutoPaused) ? "● 已暂停（捡球）" : "● 录像中";
@@ -3864,6 +3872,38 @@ const hwSync = {
 };
 parser.onSync = (token, fwMs, t3) => hwSync.onReply(token, fwMs, t3);
 
+// ---------- B120：墙钟跳变监测 ----------
+// 长时间录像中若手机被 NTP 校正（或手动改时间），Date.now() 会跳，而录像时间戳、
+// 传感器对时 offset 都以它为基准——跳变会让「视频秒数 ↔ 绝对时刻」整体错位。
+// performance.now() 单调不减，两者差值一旦突变就是墙钟跳变；这个信息只有当场能记录，
+// 事后只能从窗口间隔异常去猜（且猜不全）。因此这里只记录，不做任何校正动作。
+const clockWatch = {
+  timer: null, skew: 0, events: [],
+  start() {
+    this.stop();
+    this.events = [];
+    this.skew = Date.now() - performance.now();
+    this.timer = setInterval(() => this.sample(), 5000);
+  },
+  stop() { if (this.timer) { clearInterval(this.timer); this.timer = null; } },
+  sample() {
+    const skew = Date.now() - performance.now();
+    const d = skew - this.skew;
+    // >150ms 才算跳变：正常定时器抖动 <20ms，NTP 校正通常 100ms~数秒
+    if (Math.abs(d) > 150) {
+      this.events.push({ at: new Date().toISOString(), jump_ms: Math.round(d),
+                         from_skew: Math.round(this.skew), to_skew: Math.round(skew) });
+      log(`墙钟跳变 ${Math.round(d)}ms（NTP 校正或手动改时间），已记录到 meta`, "log-warn");
+    }
+    this.skew = skew;
+    if (this.events.length > 50) this.events.shift();
+  },
+  snapshot() {
+    return { monitor: "Date.now-performance.now", step_ms: 5000,
+             jumps: this.events.slice(), jump_count: this.events.length };
+  },
+};
+
 // ---------- Web Bluetooth 连接（冲击窗口协议） ----------
 // 通知处理抽成具名函数：首次连接与断连自动重连共用（2026-11-01 需求通知 R3）
 function onImpactNotify(e) {
@@ -4084,6 +4124,7 @@ $("connectBtn").addEventListener("click", async () => {
   seqReset();                     // B95：新会话 tag，seq 从 0 重新开始（单调递增由 seqNext 保证）
   csvOpenUncap();                 // B96：新连接的第一段（未采集，tag=<sessionTag>）
   capTag = ""; capStartTs = 0; capVideoName = ""; capVideoSizeMb = 0; capVideos = [];   // 新连接不带上一场的采集身份
+  capVideoMetas = [];             // B120：录像时间基准同按连接清空
   currentWindow = null;
   goodStreak = 0;                 // 连击计数按连接重置
   setSessionState("train");       // 会话状态按连接重置（默认训练中）
@@ -5471,6 +5512,14 @@ async function packExport() {
                             orientation: camActual.w >= camActual.h ? "landscape" : "portrait" } : null,
                  // B119：心跳对时结果（offset=手机epoch-固件millis；RTT 取最小样本）
                  sync: hwSync.snapshot(),
+                 // B120：录像时间基准。逐拍对齐以这里为准；缺这一段时下游只能按文件名猜。
+                 timebase: { schema_version: 2,
+                   semantics: { video_name_time: "session_start",  // 本 App 录像：文件名用 capTag（采集开始时刻）；11-04 前手机相机的历史文件是「结束时刻」
+                                csv_time: "sensor_start",
+                                capture_utc: "fw_trigger",      // CSV 的 t_capture_utc 是固件触发时刻，不是到达时刻
+                                paused_media: "excluded",       // 暂停期间不进视频文件，media_ms 已扣除
+                                anchor: "pauses[].video_pos_ms 是「视频内秒数」的换算锚点" },
+                   videos: capVideoMetas },
                  // B95 P0-1：音频真正起止（打点换算成音频内位置必须用这两个时刻）
                  audio_start_ts: aStart ? new Date(aStart).toISOString() : null,
                  audio_end_ts: aEnd ? new Date(aEnd).toISOString() : null,
@@ -5871,6 +5920,29 @@ if (urlMode && ["mock", "impact", "step1"].includes(urlMode)) {
 // App 内直接录像省掉独立相机：手机固定在三脚架、本页保持前台；录像只做块级对齐，
 // 逐拍同步仍靠事后音频/锚点匹配。MediaRecorder 按 3s 分片，长录像不驻留内存峰值。
 let camStream = null, camRec = null, camChunks = [], camRecStart = 0, camTimer = null, camLock = null;
+// B120：本段录像的时间基准。只记录事实（起止、暂停、帧间隔、墙钟跳变），不做任何判定。
+// 下游靠它把「视频内秒数」换算成绝对时刻；捡球自动暂停会让两者非线性，必须显式记下来。
+let camMetaCur = null;
+let capVideoMetas = [];      // 一次连接里每段录像一条，随 meta.json 导出
+
+// 暂停/续录打点：视频文件里不包含暂停期间的时间，所以「视频内秒数」≠ 墙钟差，
+// 必须用 video_pos_ms（已扣掉此前所有暂停）作为换算锚点。
+function camMetaPause(kind) {
+  if (!camMetaCur) return;
+  const now = Date.now();
+  const pos = Math.max(0, now - camMetaCur.start_ms - camMetaCur.paused_ms);
+  if (kind === "pause") {
+    if (camMetaCur.pause_open) return;
+    camMetaCur.pause_open = now;
+    camMetaCur.pauses.push({ pause_abs: new Date(now).toISOString(), video_pos_ms: pos });
+  } else if (camMetaCur.pause_open) {
+    const d = now - camMetaCur.pause_open;
+    camMetaCur.paused_ms += d;
+    const p = camMetaCur.pauses[camMetaCur.pauses.length - 1];
+    if (p) { p.resume_abs = new Date(now).toISOString(); p.pause_ms = d; }
+    camMetaCur.pause_open = 0;
+  }
+}
 // 2026-11-07：实际生效的画面参数（设备可能不给 1080p/60fps，如实记录，不要求用户处理）
 let camActual = { w: 0, h: 0, fps: 0, br: 0 };
 let camAutoPaused = false;   // 捡球自动暂停录像的标记（回训练中才自动续录）
@@ -5911,9 +5983,13 @@ window.addEventListener("orientationchange", () => setTimeout(layoutCamVideo, 25
 // 2026-11-07：诊断——统计预览流真正送到的帧（requestVideoFrameCallback），
 // 用来区分「相机本来就只给 30fps」和「相机给了 60fps 但编码丢了一半」。
 let camFrameOn = false, camFrameN = 0, camFrameT0 = 0, camFrameT1 = 0;
+// B120：帧间隔统计。源流若是 VFR（可变帧率），下游不能用「帧号÷帧率」定位，
+// 必须按每帧 pts 换算——这个判断录制端能直接给出，事后只能靠猜。
+let camDt = { n: 0, sum: 0, min: 0, max: 0, big: 0, prev: 0 };
 function camFrameWatchStart() {
   const v = $("camVideo");
   camFrameOn = false; camFrameN = 0; camFrameT0 = 0; camFrameT1 = 0;
+  camDt = { n: 0, sum: 0, min: 0, max: 0, big: 0, prev: 0 };
   if (!v || !v.requestVideoFrameCallback) return false;
   camFrameOn = true;
   const tick = (now, meta) => {
@@ -5922,6 +5998,17 @@ function camFrameWatchStart() {
     const t = (meta && meta.presentationTime) ? meta.presentationTime : now;
     if (!camFrameT0) camFrameT0 = t;
     camFrameT1 = t;
+    if (camDt.prev) {
+      const d = t - camDt.prev;
+      // 只统计正常帧间隔：暂停/切后台回来会有几秒的空档，那是暂停不是帧率波动
+      if (d > 0 && d < 2000) {
+        camDt.n++; camDt.sum += d;
+        if (!camDt.min || d < camDt.min) camDt.min = d;
+        if (d > camDt.max) camDt.max = d;
+        if (d > 150) camDt.big++;
+      }
+    }
+    camDt.prev = t;
     v.requestVideoFrameCallback(tick);
   };
   v.requestVideoFrameCallback(tick);
@@ -5931,7 +6018,13 @@ function camFrameWatchStop() {
   if (!camFrameOn) return null;
   camFrameOn = false;
   const sec = (camFrameT1 - camFrameT0) / 1000;
-  return { frames: camFrameN, sec: +sec.toFixed(1), fps: sec > 0 ? +(camFrameN / sec).toFixed(1) : 0 };
+  const mean = camDt.n ? camDt.sum / camDt.n : 0;
+  // VFR 判据：最大间隔 > 1.5×均值，或 >150ms 的间隔占比超过 2%
+  const vfr = !!(camDt.n > 30 && ((camDt.max > mean * 1.5) || (camDt.big / camDt.n > 0.02)));
+  return { frames: camFrameN, sec: +sec.toFixed(1), fps: sec > 0 ? +(camFrameN / sec).toFixed(1) : 0,
+           dt_ms: { n: camDt.n, mean: +mean.toFixed(1), min: +camDt.min.toFixed(1),
+                    max: +camDt.max.toFixed(1), over_150ms: camDt.big },
+           source_vfr: vfr };
 }
 
 function camLog(txt, err) {
@@ -6015,6 +6108,8 @@ async function camOpen() {
 // 纯录音采集：释放摄像头、隐藏画面（不动已经在录的音频）
 function camRelease() {
   camFrameWatchStop();
+  clockWatch.stop();               // B120：切纯录音后不再监测墙钟
+  camMetaCur = null;               // 这一段不作为正常录像，时间基准一并作废
   if (camRec && camRec.state !== "inactive") {
     camRec.onstop = null;            // 不当作一次正常录像：不下载、不写 manifest
     try { camRec.stop(); } catch (e) {}
@@ -6050,6 +6145,15 @@ async function camStartRec() {
   const camLong = Math.max(camActual.w, camActual.h);
   const camBr = camActual.fps >= 50 ? 12000000 : (camLong >= 1920 ? 8000000 : 4000000);
   camActual.br = camBr;
+  // B120：录像开始时落一份时间基准。requested/actual 分开记，设备降规格时下游能看出来。
+  camMetaCur = { schema_version: 2,
+                 start_ms: Date.now(), start_abs: new Date().toISOString(),
+                 start_perf_ms: Math.round(performance.now()),
+                 mime, bitrate: camBr,
+                 requested: { w: 1920, h: 1080, fps: 30 },
+                 actual: { w: camActual.w, h: camActual.h, fps: camActual.fps },
+                 pauses: [], paused_ms: 0, pause_open: 0 };
+  clockWatch.start();
   camRec = new MediaRecorder(camStream, { mimeType: mime, videoBitsPerSecond: camBr });
   camRec.ondataavailable = e => { if (e.data && e.data.size) camChunks.push(e.data); };
   camRec.onerror = e => camLog("录像出错：" + (e.error ? e.error.name : "unknown"), true);
@@ -6072,6 +6176,30 @@ async function camStartRec() {
     capVideoName = name;
     capVideoSizeMb = +(blob.size / 1048576).toFixed(1);
     capVideos.push({ name, sizeMb: capVideoSizeMb, at: new Date(capStartTs).toISOString() });
+    // B120：收尾时间基准。media_ms = 墙钟时长 − 暂停总时长，它就是视频文件应有的时长；
+    // 若与 fs.sec 差 >1s，说明编码起止有延迟或丢帧，下游据此判断能否按线性换算。
+    if (camMetaCur) {
+      clockWatch.stop();
+      if (camMetaCur.pause_open) camMetaPause("resume");   // 停在暂停中：补记续录时刻
+      const endMs = Date.now();
+      const wallMs = endMs - camMetaCur.start_ms;
+      const mediaMs = Math.max(0, wallMs - camMetaCur.paused_ms);
+      capVideoMetas.push({
+        ...camMetaCur,
+        name, size_mb: capVideoSizeMb,
+        end_ms: endMs, end_abs: new Date(endMs).toISOString(),
+        wall_ms: wallMs, media_ms: mediaMs, paused_ms: camMetaCur.paused_ms,
+        pause_count: camMetaCur.pauses.length,
+        measured_fps: fs ? fs.fps : null,
+        frames: fs ? fs.frames : null,
+        dt_ms: fs ? fs.dt_ms : null,
+        source_vfr: fs ? fs.source_vfr : null,
+        clock: clockWatch.snapshot(),
+        sync: hwSync.snapshot(),
+        note: "video_pos_ms 已扣除此前全部暂停，是「视频内秒数」的换算锚点",
+      });
+      camMetaCur = null;
+    }
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = name;
@@ -6080,9 +6208,16 @@ async function camStartRec() {
     camLog(`视频已保存 ${name}（${capVideoSizeMb} MB）`, false);
     log(`采集页：视频已保存 ${name}`, "log-info");
     if (fs) {
+      const tm = capVideoMetas.length ? capVideoMetas[capVideoMetas.length - 1] : null;
       const fm = `录像实测：落帧 ${fs.frames} 帧 / ${fs.sec}s = ${fs.fps}fps（相机 ${camActual.w}×${camActual.h}@${camActual.fps}fps，码率档 ${Math.round(camBr / 1e6)}Mbps）`;
       log(fm, "log-info");
-      camLog(`${fm}｜已存 ${capVideoSizeMb} MB`, false);
+      // B120：把「墙钟 vs 视频内时长」直接摆出来——两者不等时，逐拍对齐必须走暂停锚点
+      const tb = tm ? `｜墙钟 ${(tm.wall_ms / 1000).toFixed(1)}s − 暂停 ${(tm.paused_ms / 1000).toFixed(1)}s = 视频 ${(tm.media_ms / 1000).toFixed(1)}s（暂停 ${tm.pause_count} 次）`
+                    : "";
+      const warn = ((tm && tm.clock && tm.clock.jump_count) ? `｜${tm.clock.jump_count} 次墙钟跳变` : "")
+                 + ((tm && tm.source_vfr) ? "｜源流 VFR" : "");
+      camLog(`${fm}${tb}${warn ? "｜已记录 " + warn.replace(/^｜/, "") : ""}｜已存 ${capVideoSizeMb} MB`, false);
+      if (warn) log("采集页：本段时间基准异常" + warn + "，已写入 meta.timebase", "log-warn");
     }
     if (camStopResolve) { const r = camStopResolve; camStopResolve = null; r({ name, sizeMb: capVideoSizeMb }); }
   };
