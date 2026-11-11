@@ -651,7 +651,7 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B120-20261109-1200";   // B120：录像时间基准落盘（暂停事件/墙钟跳变/VFR 标记）；B119：心跳对时
+const APP_BUILD = "APP-B121-20261111-1200";   // B121：视频采集竖屏修复——①capStart 等全屏/锁横屏真正生效（≤1s）再取流，原先是 fire-and-forget；②camGetStream 取流后校验方向，竖屏就释放、等横屏重取一次；③camOpen 复用旧流前复核方向（上一场竖屏流在视口已横屏时重取）；④camActual.portrait 标记 + 仍竖屏时明确提示「视频会侧躺，请关闭系统方向锁定」；⑤camMetaCur 增加 source_orientation 字段（append，不改既有字段）。不改命名/列顺序/分析流程。11-10 实测：165917、170549 两场成片 405×720 竖屏，171722 起全部 1280×720。sw.js CACHE nexttennis-v62。B120：录像时间基准落盘；B119：心跳对时
 // B120：采集时只「记录」不「判定」——录像开始/结束绝对时刻、自动暂停段（捡球）、
 // 墙钟跳变事件、源流是否 VFR，全部写进 meta.timebase，供下游做逐拍对齐。
 // 起因：连续录像+固件同步已消除大部分对齐难点，但有三件事只有采集当时才知道：
@@ -4939,17 +4939,21 @@ async function capStart(mode) {
   if (capOn) { log("已在采集中，先点「■ 结束采集」", "log-warn"); return; }
   // 2026-11-07：视频采集尽量先进全屏并锁横屏——真横屏后相机流与页面天然一致；
   // 必须在点击手势里同步发起，失败就静默退回 CSS 整页旋转（B114/B115 兜底）。
+  // B121：全屏/锁定都是异步的，必须等真的转横再往下走。否则 getUserMedia 按物理竖屏
+  // 返回 1080×1920，而 CSS/预览旋转不影响录制流，成片侧躺 90°（11-10 前两场即此因）。
   if (mode === "video") {
     try {
       if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
-        document.documentElement.requestFullscreen().then(() => {
-          try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(() => {}); } catch (_) {}
-          setTimeout(layoutCamVideo, 300);
-        }).catch(() => {});
+        await document.documentElement.requestFullscreen().catch(() => {});
       }
     } catch (_) {}
+    try { if (screen.orientation && screen.orientation.lock) await screen.orientation.lock("landscape").catch(() => {}); } catch (_) {}
   }
   camLog("正在准备采集…", false);
+  if (mode === "video") {
+    await waitLandscape(1000);   // B121：最多等 1s，超时则按当前方向继续（camOpen 还会重取一次）
+    layoutCamVideo();
+  }
   await voicePrimeMic().catch(() => {});          // 先拿权限、刷新设备 label，才能判断耳机
   capHeadsetOK = false;
   if (!(await capCheckHeadset())) {
@@ -6042,6 +6046,27 @@ function camPickMime() {
   for (const c of cands) if (MediaRecorder.isTypeSupported(c)) return c;
   return "";
 }
+// B121：等待视口真的变成横屏。全屏与 screen.orientation.lock 都是异步的，
+// 发完立刻 getUserMedia 会按物理竖屏拿到 1080×1920；而 CSS 只旋转预览，
+// 录制流是原始方向，成片就会侧躺 90°（11-10 前两场即此因）。
+// 返回 true=已横屏，false=超时仍竖屏（系统方向锁未解除等）。
+function waitLandscape(ms = 1000) {
+  return new Promise(resolve => {
+    const isPortrait = () => matchMedia("(orientation: portrait)").matches;
+    if (!isPortrait()) { resolve(true); return; }
+    let timer = null, done = false;
+    const cleanup = () => {
+      window.removeEventListener("orientationchange", onCh);
+      window.removeEventListener("resize", onCh);
+      if (timer) clearTimeout(timer);
+    };
+    const end = (ok) => { if (done) return; done = true; cleanup(); resolve(ok); };
+    const onCh = () => { if (!isPortrait()) setTimeout(() => end(true), 80); };
+    window.addEventListener("orientationchange", onCh);
+    window.addEventListener("resize", onCh);
+    timer = setTimeout(() => end(!isPortrait()), ms);
+  });
+}
 async function camWake(on) {
   try {
     if (on) {
@@ -6052,8 +6077,36 @@ async function camWake(on) {
     } else if (camLock) { await camLock.release(); camLock = null; }
   } catch (_) {}
 }
+// B121：取摄像头流并校验方向。第一次拿到竖屏流时释放、等横屏后重取一次；
+// 仍竖屏则原样返回，由下游在 meta 里标记 source_orientation 并提示，不阻断采集。
+async function camGetStream(attempt) {
+  const s = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: { ideal: "environment" },
+             width: { ideal: 1920 }, height: { ideal: 1080 },
+             frameRate: { ideal: 30 }, aspectRatio: { ideal: 16 / 9 } },
+  });
+  if (attempt === 0) {
+    const st = s.getVideoTracks()[0];
+    const g = st && st.getSettings ? st.getSettings() : {};
+    if (g.width && g.height && g.height > g.width) {
+      log(`摄像头流为竖屏 ${g.width}×${g.height}，等待横屏后重取`, "log-warn");
+      s.getTracks().forEach(t => t.stop());
+      await waitLandscape(1200);
+      return camGetStream(1);
+    }
+  }
+  return s;
+}
 async function camOpen() {
-  if (camStream) return true;
+  // B121：复用已有流前先复核方向——上一场拿到的是竖屏流、而现在视口已横屏时重取，
+  // 避免一次会话里第一场录坏后面全部沿用（capStop 不释放流）。
+  if (camStream) {
+    if (!(camActual.portrait && !matchMedia("(orientation: portrait)").matches)) return true;
+    log("摄像头流方向已变，重新取流", "log-info");
+    camStream.getTracks().forEach(t => t.stop());
+    camStream = null;
+  }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     camLog("当前浏览器不支持摄像头（需 https 或 localhost）", true); return false;
   }
@@ -6063,12 +6116,7 @@ async function camOpen() {
     // 2026-11-07：App 内录像只承担「块级对齐 + 形态标签」，30fps 足够——击球点偏后是空间判据，
     // 配合传感器触球 t0 选帧/内插即可；60fps 只在需要算 |dθ/dt| 峰值的视频反推里才必要。
     // 另外 30fps 曝光时间是 60fps 的两倍，室内画面更亮更干净，标签反而更好判。
-    camStream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { facingMode: { ideal: "environment" },
-               width: { ideal: 1920 }, height: { ideal: 1080 },
-               frameRate: { ideal: 30 }, aspectRatio: { ideal: 16 / 9 } },
-    });
+    camStream = await camGetStream(0);
   } catch (e) {
     camLog("摄像头开启失败：" + (e && e.message ? e.message : e), true); return false;
   }
@@ -6081,6 +6129,13 @@ async function camOpen() {
     const st = camStream.getVideoTracks()[0].getSettings ? camStream.getVideoTracks()[0].getSettings() : {};
     camActual = { w: st.width || v.videoWidth || 0, h: st.height || v.videoHeight || 0,
                   fps: Math.round(st.frameRate || 0), br: 0 };
+    camActual.portrait = camActual.h > camActual.w;   // B121：竖屏流标记
+    if (camActual.portrait) {
+      // 重取后仍竖屏：多半是系统方向锁定没解除。不阻断采集，但必须让人知道成片会侧躺。
+      camLog(`摄像头仍是竖屏 ${camActual.w}×${camActual.h}：视频会侧躺 90°。`
+           + `请关闭系统「方向锁定」后重开采集`, true);
+      log(`摄像头流仍为竖屏 ${camActual.w}×${camActual.h}（已等待并重取一次）`, "log-warn");
+    }
     if (camActual.w && camActual.h) {
       $("camWrap").style.aspectRatio = camActual.w + " / " + camActual.h;
     }
@@ -6152,6 +6207,7 @@ async function camStartRec() {
                  mime, bitrate: camBr,
                  requested: { w: 1920, h: 1080, fps: 30 },
                  actual: { w: camActual.w, h: camActual.h, fps: camActual.fps },
+                 source_orientation: camActual.portrait ? "portrait" : "landscape",   // B121：成片原始方向，portrait=播放时需转 90°
                  pauses: [], paused_ms: 0, pause_open: 0 };
   clockWatch.start();
   camRec = new MediaRecorder(camStream, { mimeType: mime, videoBitsPerSecond: camBr });
