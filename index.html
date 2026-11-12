@@ -338,7 +338,11 @@
     <div class="diag-row"><span class="k">引拍时机</span>
       <span id="nfTiming"><span class="badge idle">—</span></span>
       <span class="num" id="nfTimingNum">—</span></div>
-    <!-- 打框/拍面/流畅度/刷球四项无门限，压成一行摘要保证首页一屏；明细见技术页 -->
+    <!-- 拍面控制：姿态解算 tilt 角跨击球点（−10→+80ms）的变化；门限来自教练 98 拍 p10~p90 -->
+    <div class="diag-row"><span class="k">拍面</span>
+      <span id="nfFaceFlip"><span class="badge idle">—</span></span>
+      <span class="num" id="nfFaceFlipNum">—</span></div>
+    <!-- 打框/流畅度/刷球三项无门限，压成一行摘要保证首页一屏；明细见技术页 -->
     <div class="diag-row"><span class="k">其它</span>
       <span id="nfOther"><span class="badge idle">—</span></span>
       <span class="num" id="nfOtherNum">—</span></div>
@@ -2827,6 +2831,11 @@ const NF = {
   WLP_PRE_LO_MS: -400, WLP_PRE_HI_MS: 0, // 前挥峰值搜索范围（宏观+微观拼接）
   PRE_SHORT_S: 0.25,                 // 被挤到初判：pre_dur_s 门限
   WLP_RATIO_THR: 0.7,                // 被挤到初判：ω_lp_ratio 门限
+  // --- 拍面控制（2026-11-12 标定：教练 98 拍对拉 Δtilt 分布 p10~p90）---
+  FACE_T10_MS: -10,                  // 判决窗口起点：击球前 10ms
+  FACE_P80_MS: +80,                  // 判决窗口终点：击球后 80ms
+  FACE_OPEN_MAX:  +26.6,             // 拍面打开过度上限（Δtilt > 此值 → OPEN_OVER）
+  FACE_CLOSE_MIN: -35.5,             // 拍面关闭过度下限（Δtilt < 此值 → CLOSE_OVER）
 };
 
 // 通用零相位滤波：scipy.signal.filtfilt(method='pad', padtype='odd') 同口径（任意 b/a）
@@ -2903,6 +2912,72 @@ function nfIdsIn(lo, hi, t0t) {
   for (let i = 0; i <= PROTO.WINDOW.MICRO_END; i++) {
     const rel = windowTimeMs(i) - t0t;
     if (rel >= lo && rel <= hi) out.push(i);
+  }
+  return out;
+}
+
+// ---- 拍面姿态解算（与 analysis/face_flip_check.py 1:1）----
+// idx0 用 Roll/Pitch 对齐重力，之后只积分三轴陀螺；每帧把传感器 +Y（拍面法向）旋到世界坐标系取 z 分量的反正弦 = 拍面仰角(°)
+function nfQFromRollPitch(rollDeg, pitchDeg) {
+  const r = rollDeg * Math.PI / 180, p = pitchDeg * Math.PI / 180;
+  const cr = Math.cos(r / 2), sr = Math.sin(r / 2);
+  const cp = Math.cos(p / 2), sp = Math.sin(p / 2);
+  return [cr * cp, sr * cp, cr * sp, -sr * sp];  // w,x,y,z
+}
+function nfQMul(a, b) {
+  const [w1, x1, y1, z1] = a, [w2, x2, y2, z2] = b;
+  return [
+    w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+    w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+    w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+    w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+  ];
+}
+function nfQRot(q, v) {
+  const [w, x, y, z] = q;
+  const qv = [x, y, z];
+  const cx = [
+    qv[1] * v[2] - qv[2] * v[1],
+    qv[2] * v[0] - qv[0] * v[2],
+    qv[0] * v[1] - qv[1] * v[0],
+  ];
+  const ccx = [
+    qv[1] * cx[2] - qv[2] * cx[1],
+    qv[2] * cx[0] - qv[0] * cx[2],
+    qv[0] * cx[1] - qv[1] * cx[0],
+  ];
+  return [v[0] + 2 * w * cx[0] + 2 * ccx[0],
+          v[1] + 2 * w * cx[1] + 2 * ccx[1],
+          v[2] + 2 * w * cx[2] + 2 * ccx[2]];
+}
+// data: 12×396 (ch3=Gx, ch4=Gy, ch5=Gz dps; ch6=Roll°, ch7=Pitch°); 返回每点 face_tilt(°)
+function nfFaceTilt(data) {
+  const N = data[0].length;
+  const t = windowTimeMs;   // closure 内可直接调用（本文件全局定义）
+  const q = nfQFromRollPitch(data[6][0], data[7][0]);
+  const out = new Float64Array(N);
+  const R2D = 180 / Math.PI;
+  for (let i = 0; i < N; i++) {
+    if (i > 0) {
+      const dt = (t(i) - t(i - 1)) / 1000.0;
+      const wx = data[3][i - 1], wy = data[4][i - 1], wz = data[5][i - 1];
+      const wn = Math.hypot(wx, wy, wz);
+      if (wn > 1e-9) {
+        const ang = wn * dt;
+        const s = Math.sin(ang / 2) / wn;
+        const qinc = [Math.cos(ang / 2), wx * s, wy * s, wz * s];
+        // w,x,y,z 四元数乘法（用现成函数）
+        const [w1, x1, y1, z1] = q, [w2, x2, y2, z2] = qinc;
+        const w3 = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2;
+        const x3 = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2;
+        const y3 = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2;
+        const z3 = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2;
+        q[0] = w3; q[1] = x3; q[2] = y3; q[3] = z3;
+      }
+    }
+    const nz = nfQRot(q, [0, 1, 0])[2];
+    const c = nz < -1 ? -1 : (nz > 1 ? 1 : nz);
+    out[i] = Math.asin(c) * R2D;
   }
   return out;
 }
@@ -3010,7 +3085,7 @@ function nfCompute(data, t0, form) {
     if (b.i0 >= b.kExt) accDurS = t[b.i0] - t[b.kExt];
   }
 
-  // 7) 翻拍/拍面稳定：前挥段 |ω·û| ÷ |ω| 的均值与离散
+  // 7) 翻拍/拍面稳定：前挥段 |ω·û| ÷ |ω| 的均值与离散（旧指标，保留作技术页参考）
   let parMean = NaN, parStd = NaN;
   if (u && preIds.length) {
     const vals = [];
@@ -3022,6 +3097,38 @@ function nfCompute(data, t0, form) {
       const mu = vals.reduce((a, b) => a + b, 0) / vals.length;
       parMean = mu;
       parStd = Math.sqrt(vals.reduce((a, b) => a + (b - mu) ** 2, 0) / vals.length);
+    }
+  }
+
+  // 8) 拍面控制（判决用）：姿态解算 tilt 角跨击球点 FACE_T10_MS → FACE_P80_MS 的变化
+  //    门限 = 教练 98 拍 clean Δtilt 分布的 p10 (−35.5°) 与 p90 (+26.6°)
+  let tilt_t10 = NaN, tilt_p80 = NaN, d_tilt_judge = NaN;
+  let face_flip_judge = "—", face_flip_score = 0;
+  {
+    const ft = nfFaceTilt(data);
+    const findIdxAt = (msOffset) => {
+      let best = 0, bestD = Infinity;
+      for (let i = 0; i < N; i++) {
+        const d = Math.abs((windowTimeMs(i) - t0t) - msOffset);
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      return best;
+    };
+    const i1 = findIdxAt(NF.FACE_T10_MS);
+    const i2 = findIdxAt(NF.FACE_P80_MS);
+    tilt_t10 = ft[i1];
+    tilt_p80 = ft[i2];
+    d_tilt_judge = tilt_p80 - tilt_t10;
+    const dt = d_tilt_judge;
+    if (dt > NF.FACE_OPEN_MAX) {
+      face_flip_judge = "OPEN_OVER";       // 拍面打开过度（翻拍，球向上飞）
+      face_flip_score = +(dt - NF.FACE_OPEN_MAX).toFixed(1);
+    } else if (dt < NF.FACE_CLOSE_MIN) {
+      face_flip_judge = "CLOSE_OVER";      // 拍面关闭过度（球向下砸网）
+      face_flip_score = +(NF.FACE_CLOSE_MIN - dt).toFixed(1);
+    } else {
+      face_flip_judge = "OK";
+      face_flip_score = 0;
     }
   }
 
@@ -3045,6 +3152,7 @@ function nfCompute(data, t0, form) {
     flowDip, flowJerk,
     preDurS, accDurS,
     parMean, parStd,
+    tilt_t10, tilt_p80, d_tilt_judge, face_flip_judge, face_flip_score,
     squeezedVerdict: squeezed, timingVerdict: timing, timingWhy,
   };
 }
@@ -3076,7 +3184,7 @@ function nfRender(w) {
       + `低通角速度占比=${n2(f.wlpRatio)} · 低通峰值相对触球=${n2(f.tPeakLpMs)}ms → 旧初判 <b>${f.squeezedVerdict}</b>`,
     `<b>打框特征</b>（标定中，不判决）—— 高频冲击能量=${n2(f.hfRms)}（触球后 5~30ms 三轴二阶差分 RMS）`,
     `<b>引拍时机</b>（个人基线相对量，属 Late Contact 上游；逐球不重复报）—— ${f.timingVerdict}（${f.timingWhy}）`,
-    `<b>翻拍 / 拍面稳定</b>（标定中）—— 旋内轴占比=${n2(f.parMean)} ± ${n2(f.parStd)}（前挥段 平行轴角速度/总角速度）`,
+    `<b>拍面控制（翻拍面）</b> —— Δtilt(${NF.FACE_T10_MS}→${NF.FACE_P80_MS}ms)=${f.d_tilt_judge != null ? f.d_tilt_judge.toFixed(1) : "—"}° · 判决 <b>${f.face_flip_judge}</b>（门限 [${NF.FACE_CLOSE_MIN}, ${NF.FACE_OPEN_MAX}]° · 超区间距离 ${f.face_flip_score != null ? f.face_flip_score.toFixed(1) : 0}°）`,
     `<b>挥拍流畅度</b>（标定中）—— 凹陷比=${n2(f.flowDip)} · 顿挫=${n2(f.flowJerk)}（宏观段前挥 10Hz 低通）`,
     `<b>刷球占比</b>（观察值，已降档不进激励）—— 刷球比=${n2(f.brushRatio)}（垂直轴角速度=${n2(f.wPerp)} dps / 总角速度=${n2(f.wTot)} dps）`,
   ].join("\n");
@@ -3084,41 +3192,54 @@ function nfRender(w) {
   nfRows(f, w && w.meta && w.meta.late);
 }
 
-// 首页诊断卡里的新增识别项行（与引拍/随挥同格式）；初判只标「疑似/正常」，不归因
-// 打框 / 拍面 / 流畅度 / 刷球 四项无门限，压成一行「其它」保证首页一屏（明细在技术页）
+// 首页诊断卡里的新增识别项行（与引拍/随挥同格式）
+// 拍面控制（翻拍面）是独立门限项，单独成行；打框/流畅度/刷球三项无门限仍压一行「其它」
 // late 必须由调用方传入（B103 修：原实现直接引用未声明的 w，运行时会抛 ReferenceError）
 function nfRows(f, late) {
   const B = (id, cls, txt) => { const e = $(id); if (e) e.innerHTML = `<span class="badge ${cls}">${txt}</span>`; };
   const N = (id, txt) => { const e = $(id); if (e) e.textContent = txt; };
-  const HEAD = ["nfSqz", "nfTiming", "nfOther"];
-  const NUMS = ["nfSqzNum", "nfTimingNum", "nfOtherNum"];
-  if (!f) {
-    HEAD.forEach(id => B(id, "idle", "—"));
-    NUMS.forEach(id => N(id, "—"));
-    return;
-  }
+  // 三组 row 一次性 reset（避免旧帧残留）
+  for (const id of ["nfSqz","nfFaceFlip","nfOther","nfTiming"]) B(id, "idle", "—");
+  for (const id of ["nfSqzNum","nfFaceFlipNum","nfOtherNum","nfTimingNum"]) N(id, "—");
+  if (!f) return;
   const n2 = v => (Number.isFinite(v) ? v.toFixed(2) : "—");
-  const n3 = v => (Number.isFinite(v) ? v.toFixed(3) : "—");
+
+  // --- 拍面控制（翻拍面）独立行 ---
+  let flipLabel, flipCls;
+  switch (f.face_flip_judge) {
+    case "OPEN_OVER":  flipLabel = "打开过度"; flipCls = "alarm"; break;
+    case "CLOSE_OVER": flipLabel = "关闭过度"; flipCls = "warn"; break;
+    case "OK":         flipLabel = "拍面稳";   flipCls = "pass";  break;
+    default:           flipLabel = "—";        flipCls = "idle";
+  }
+  B("nfFaceFlip", flipCls, flipLabel);
+  if (Number.isFinite(f.d_tilt_judge)) {
+    const sig = f.d_tilt_judge >= 0 ? "+" : "";
+    let note = `Δtilt(${NF.FACE_T10_MS}→${NF.FACE_P80_MS}ms)=${sig}${f.d_tilt_judge.toFixed(1)}°`;
+    if (f.face_flip_judge !== "OK") note += `（超区间 ${f.face_flip_score.toFixed(1)}°）`;
+    else note += `（教练正常区间 [${NF.FACE_CLOSE_MIN}, ${NF.FACE_OPEN_MAX}]°）`;
+    N("nfFaceFlipNum", note + (f.face_flip_judge === "OK" ? " ⭐" : ""));
+  } else {
+    N("nfFaceFlipNum", "姿态解算异常");
+  }
+
   // 被挤到（时间型）：APP-B100——触球在前挥弧中的位置 + 前挥时长（2026-11-06 标定口径）
   if (late) {
     const lv = late.verdict || "正常";
     B("nfSqz", lv === "正常" ? "pass" : "warn", lv);
-    // B106：中文名——峰值时刻（负=触球前）/ 起速时长 / 触球位置 / 前挥时长
     N("nfSqzNum", `峰值时刻 ${late.pk_vs_t0_ms >= 0 ? "+" : ""}${late.pk_vs_t0_ms}ms`
       + ` · 起速 ${late.t_rise_ms}ms · `
       + (late.fwd_pos != null
           ? `触球位置 ${late.fwd_pos.toFixed(2)} · 前挥时长 ${late.fwd_ms}ms`
           : `触球位置 未算出`)
       + (late.hint ? ` · ${late.hint}` : "")
-      + (lv === "正常" ? " ⭐" : ""));   // B108：结果正常/好，末尾给一颗星鼓励
+      + (lv === "正常" ? " ⭐" : ""));
   } else {
     const sqz = f.squeezedVerdict === "击球稍晚";
     B("nfSqz", sqz ? "warn" : "pass", f.squeezedVerdict);
-    N("nfSqzNum", `pre ${n3(f.preDurS)}s · acc ${n3(f.accDurS)}s · ω_lp ${n2(f.wlpRatio)} · 峰差 ${n2(f.tPeakLpMs)}ms`);
+    N("nfSqzNum", `pre ${f.preDurS != null ? f.preDurS.toFixed(3) : "—"}s · acc ${f.accDurS != null ? f.accDurS.toFixed(3) : "—"}s · ω_lp ${n2(f.wlpRatio)} · 峰差 ${n2(f.tPeakLpMs)}ms`);
   }
-  // 引拍时机：K3 个人基线相对量（ratio=引拍时长/整条弧时长 相对自己 P50 的偏移）
-  // 与 Late Contact 同源但不同层：引拍时机＝上游节奏分配（相对自己），Late Contact＝触球点位置（绝对/几何）。
-  // 按「每球只报根本原因」约定：Late Contact 已判出时不再重复报引拍时机。
+  // 引拍时机：K3 个人基线相对量；Late Contact 已判出时不重复
   const lateAbn = !!(late && late.verdict && late.verdict !== "正常");
   const tm = f.timingVerdict;
   if (lateAbn) {
@@ -3126,12 +3247,10 @@ function nfRows(f, late) {
     N("nfTimingNum", "已由「击球过晚」覆盖（引拍时机是其上游，不重复提示）");
   } else {
     B("nfTiming", tm === "正常" ? "pass" : (tm === "—" ? "idle" : "warn"), tm);
-    N("nfTimingNum", f.timingWhy + (tm === "正常" ? " ⭐" : ""));   // B108：正常给星
+    N("nfTimingNum", f.timingWhy + (tm === "正常" ? " ⭐" : ""));
   }
-  // 其它三项：无标定门限，只报值（打框已独立成行，由 VTI 判决；20261106）
-  B("nfOther", "idle", "标定中");
-  N("nfOtherNum", `拍面 ${n2(f.parMean)}±${n2(f.parStd)}`
-    + ` · 流畅 ${n2(f.flowDip)}/${n2(f.flowJerk)} · 刷球 ${n2(f.brushRatio)}`);
+  // 其它：打框 / 流畅度 / 刷球（无门限，只报值）—— 拍面已独立成行
+  N("nfOtherNum", `打框 ${n2(f.hfRms)}RMS · 流畅 ${n2(f.flowDip)}/${n2(f.flowJerk)} · 刷球 ${n2(f.brushRatio)}`);
 }
 
 // ---------- 正反手硬判决（零校准！） ----------

@@ -89,7 +89,24 @@
     "stability": {"name": "动作一致性（稳定性）", "tier": "rel", "agg": "session", "gate": "用 IQR/med，不用 CV（双峰分布下 CV 被尾部污染）", "measured": "20261030：引拍弧长 IQR/med=40.6%、引拍时长 IQR/med=13.9%（其 CV=78.2% 属双峰假象）", "status": "live"},
     "brush_index": {"name": "刷球指数", "tier": "rel", "agg": "session", "gate": "块内 CV ≤25%（跨块 CV 含真实变异，不作噪声底）", "measured": "20261030 块内 CV 中位 59.2% / P90 67.5%，未过线 → 降档为「类型 + 挥速趋势」两级鼓励", "status": "dowgraded"},
     "prep_timing": {"name": "引拍时机（早/晚）", "tier": "qual", "agg": "stroke", "gate": "≥80%", "measured": "—", "status": "P1"},
-    "racket_face": {"name": "翻拍 / 拍面稳定", "tier": "qual", "agg": "stroke", "gate": "≥80%", "measured": "—", "status": "P1"},
+    "racket_face": {
+      "name": "翻拍 / 拍面稳定",
+      "tier": "qual",
+      "agg": "stroke",
+      "gate": "教练对拉 clean 样本分布 p10~p90 作为 80% 严格区间",
+      "threshold": {
+        "open_max":  26.6,
+        "close_min": -35.5,
+        "window_ms": [-10, 80]
+      },
+      "metric": "Δtilt = face_tilt(+80ms) - face_tilt(-10ms)，姿态解算后拍面法向仰角跨击球点窗口的变化",
+      "distribution_coach_clean": {"n": 98, "p10": -35.5, "p50": -6.2, "p90": 26.6, "span_deg": 62.1},
+      "rule": "Δtilt > +26.6° → OPEN_OVER（打开过度，球向上飞）；Δtilt < -35.5° → CLOSE_OVER（关闭过度，球向下砸网）；其余 → OK",
+      "score_rule": "score = 超出区间的距离（°），区间内为 0",
+      "source": "20261104 教练两场对拉 clean 98 拍（正手 54 + 反手 44）Δtilt 分布 p10~p90；剔除发球（Δtilt 中位 -46°，81% 超 30°）、qc_dropped、付晓松打墙软击球",
+      "measured": "帆帆 clean 127 拍 30% 超区间（vs 教练自身 18% 基线噪声，+12pp）；帆帆反手 16/17 超限样本里 15 个是打开过度，与现场观察「反手拍面没压住、球往上飞」完全一致",
+      "status": "live"
+    },
     "spin_type": {"name": "旋转类型（上旋/平击/切削）", "tier": "qual", "agg": "stroke", "gate": "≥80%", "measured": "—", "status": "P2"},
     "hesitation": {"name": "犹豫 / 减速击球", "tier": "fuzzy", "agg": "session", "gate": "误报受控 + 同人前后方向一致", "measured": "—", "status": "P2", "kill": "方向一致率<70% 下线"},
     "cp_phase": {"name": "击球点早晚", "tier": "rel", "agg": "player", "gate": "逐拍已证伪（r=0.03）；仅 player-level 风格基线", "measured": "std=0.062 成立", "status": "dowgraded"},
