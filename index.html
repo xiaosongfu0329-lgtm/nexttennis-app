@@ -310,6 +310,9 @@
     </select>
     <button id="connectBtn" class="primary">连接设备</button>
     <button id="disconnectBtn" disabled>断开</button>
+    <label class="chip" title="台架落球测试：落球触拍仅 14~20km/h，会被「<40km/h 低速丢弃」整窗吞掉；勾选后所有窗口都记录并导出" style="display:flex;align-items:center;gap:4px;cursor:pointer">
+      <input type="checkbox" id="dropTestChk" style="margin:0">落球测试
+    </label>
     <span id="connStatus" class="badge idle">未连接</span>
   </div>
 </header>
@@ -1649,6 +1652,25 @@ function csvOpenUncap() {
 let labeledCount = 0;
 // 会话状态：VTI 三重门限第 1 重。训练中才做震动提醒；捡球/暂停时静默（操作态过滤捡球弹响）
 let sessionState = "train";    // train | pause
+
+// ---------- 台架落球专用模式（2026-11-15）----------
+// 1.0~1.5m 自由落球触拍速度只有 14~20km/h，会被 onWindow 的「<40km/h 低速丢弃」整窗吞掉，
+// sessionWindows / csvSegs 全空 → 「导出本次全部 CSV」是 0 行。开启后只关这一道低速门，
+// 暂停门（拾球/暂停）保留；配套固件 PWR_BLE_NAME 以 _DT 结尾时自动开启。
+let dropTestMode = false;
+try { dropTestMode = localStorage.getItem("nt_drop_test") === "1"; } catch (_) {}
+function setDropTestMode(on, why) {
+  dropTestMode = !!on;
+  try { localStorage.setItem("nt_drop_test", dropTestMode ? "1" : "0"); } catch (_) {}
+  const el = $("dropTestChk"); if (el) el.checked = dropTestMode;
+  if (why) log(`落球测试模式${dropTestMode ? "已开启（低速丢弃关闭）" : "已关闭（恢复 <40km/h 丢弃）"}｜${why}`,
+               dropTestMode ? "log-warn" : "log-info");
+}
+// 设备名 _DT 后缀（落球专用固件）→ 自动开；正常板 → 自动关，避免生产采集误关低速门
+function autoDropTestByName(name) {
+  const dt = /_DT$/i.test(name || "");
+  if (dt !== dropTestMode) setDropTestMode(dt, "设备名 " + (name || "—"));
+}
 let goodStreak = 0;            // 连续有效击球计数（连击 / 达成音效与话术）
 
 // ---------- 技术演示视图 toggle ----------
@@ -1853,7 +1875,7 @@ function onWindow(meta, data) {
   let gatedWhy = "";
   if (sessionState !== "train") {
     gatedWhy = "pause";
-  } else {
+  } else if (!dropTestMode) {   // 落球测试：触拍仅 14~20km/h，跳过 <40km/h 低速丢弃
     try {
       const sg = estimateSpeed(data);
       if (sg && Number.isFinite(sg.kmh) && sg.kmh < 40) gatedWhy = "slow:" + sg.kmh.toFixed(0);
@@ -4063,6 +4085,7 @@ window.__ntStatus = function (json) {
     else if (s.state === "connected") {
       setConn("已连接", "pass");
       $("devName").textContent = s.name || "Tennis_Sensor";
+      autoDropTestByName(s.name);
       $("devMode").textContent = "冲击窗口协议（原生壳）";
       $("devMtu").textContent = s.mtu ? `MTU ${s.mtu}` : "BLE 5.3 DLE";
       connLogAdd({ event: "conn", device: s.name, sessionTag: sessionTag(), note: "native" });
@@ -4312,6 +4335,7 @@ async function connectImpact() {
       filters: [{ namePrefix: PROTO.IMPACT.namePrefix }],
       optionalServices: [PROTO.IMPACT.serviceUUID],
     });
+    autoDropTestByName(btDevice.name);
     btDevice.addEventListener("gattserverdisconnected", onDisconnect);
     // 连接重试：链路刚释放时首次 connect 仍可能被 Chrome 拒绝，退避后重试 2 次
     for (let attempt = 0; ; attempt++) {
@@ -4512,6 +4536,10 @@ $("modeSel").addEventListener("change", () => {
   try { if (NATIVE) NATIVE.disconnect(); } catch (e) {}
   cleanupBt();
 });
+
+// 落球测试模式：恢复上次勾选状态 + 手动切换（连接 _DT 设备时也会自动开启）
+setDropTestMode(dropTestMode);
+$("dropTestChk").addEventListener("change", () => setDropTestMode($("dropTestChk").checked, "手动"));
 
 // ---------- 会话状态按钮（训练中 / 捡球暂停）----------
 $("sessTrain").addEventListener("click", () => setSessionState("train"));
