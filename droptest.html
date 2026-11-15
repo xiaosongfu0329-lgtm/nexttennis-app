@@ -754,6 +754,9 @@
 //      sw.js CACHE nexttennis-v63。
 // [落球测试版] 关闭 <40 km/h 低速丢弃开关（仅供甜点/球框交替实验使用，生产版无此项）
 const DROP_TEST = true;
+// [落球测试版] 扰动门：高g冲击峰值低于此值视为"无真实撞击"（移动球拍、捡球等），不记录。
+//   实测：真实落球 high-g 峰 >= 7.5g，扰动 <= 3.6g；取 5g 留出余量。
+const DROP_MIN_IMPACT_G = 5.0;
 const APP_BUILD = "APP-B124-20261115-DROPTEST";   // B124：手腕负荷剔除「主动旋前」（见下方 B124 说明）。B123：回顾页「挥拍爆发 · 甩鞭评分」。B122：回顾页「手腕损伤预警」（逐拍 uni50，只统计正手，今日累计）；B121：视频采集竖屏修复——①capStart 等全屏/锁横屏真正生效（≤1s）再取流，原先是 fire-and-forget；②camGetStream 取流后校验方向，竖屏就释放、等横屏重取一次；③camOpen 复用旧流前复核方向（上一场竖屏流在视口已横屏时重取）；④camActual.portrait 标记 + 仍竖屏时明确提示「视频会侧躺，请关闭系统方向锁定」；⑤camMetaCur 增加 source_orientation 字段（append，不改既有字段）。不改命名/列顺序/分析流程。11-10 实测：165917、170549 两场成片 405×720 竖屏，171722 起全部 1280×720。sw.js CACHE nexttennis-v62。B120：录像时间基准落盘；B119：心跳对时
 // B123：回顾页新增「挥拍爆发 · 甩鞭评分」——把 tools/whip_scoring.py 的口径 1:1 移植为 computeWhipScore()：
 // 只取「启动 → 触球前 10ms」(idx0..176)，先截断再做 5 点平滑与真实时间求导，峰值角加速度 ÷ 教练锚点 ×100；
@@ -1868,6 +1871,24 @@ function onWindow(meta, data) {
     }
     $("reasmStat").textContent = parser.reasmStat;
     return;
+  }
+  // [落球测试版] 扰动门：无真实撞击的窗口（移动球拍、捡球、误触发）不记录。
+  //   高g冲击峰 < DROP_MIN_IMPACT_G 即丢弃；真实落球实测 >= 7.5g，扰动 <= 3.6g。
+  if (DROP_TEST) {
+    const hx = data[9], hy = data[10], hz = data[11];
+    let hPeak = 0;
+    for (let i = 0; i < PROTO.WINDOW.samples; i++) {
+      const m = Math.hypot(hx[i], hy[i], hz[i]);
+      if (m > hPeak) hPeak = m;
+    }
+    if (hPeak < DROP_MIN_IMPACT_G) {
+      if (Date.now() - lastDropLogT > 5000) {
+        lastDropLogT = Date.now();
+        log(`丢弃扰动窗 seq=${meta.seq}：高g峰 ${hPeak.toFixed(1)}g < ${DROP_MIN_IMPACT_G}g（非真实撞击）`, "log-info");
+      }
+      $("reasmStat").textContent = parser.reasmStat;
+      return;
+    }
   }
   res = qc.check(data, meta);
   const w = { meta, data, qc: res };
@@ -5447,7 +5468,7 @@ $("exportCsvBtn").addEventListener("click", () => {
 // CSV 表头与行构建（单窗口 / 会话导出共用；impact_type 为固件板判）
 // stroke_type：固件已停发该字段（Step4 移交 App），改为 App W2 零校准判决写入（FH→FOREHAND / BH→BACKHAND），
 // 仅 NORMAL_HIT(0) 且判决有效时填写；列名不变、不写 note，不影响块名解析。
-const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,frame_deg,frame_hit,fw_ms,pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict,link_qc,link_note,t_capture_utc,sync_qc\n";
+const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,frame_deg,frame_hit,fw_ms,pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict,link_qc,link_note,t_capture_utc,sync_qc,spec_flat,spec_crest,spec_s120\n";
 function buildCsvRows(m) {
   const impactType = m.meta.quickClass != null
     ? ["NORMAL_HIT", "FRAME_HIT", "FOREIGN_IMPACT"][m.meta.quickClass] : "";
@@ -5479,11 +5500,86 @@ function buildCsvRows(m) {
       + `${lt.fwd_pos != null ? lt.fwd_pos.toFixed(3) : ""},`
       + `${lt.fwd_ms != null ? lt.fwd_ms : ""},${lt.verdict || ""}`
     : ",,,,";
+  // [落球测试版] 频谱形状影子特征：仅导出、不判决、不显示。
+  //   spec_flat  = 谱平坦度（几何均值/算术均值），球框 > 甜区
+  //   spec_crest = 峰值因子（峰值/RMS），甜区 > 球框
+  //   spec_s120  = 100-150Hz 能量占比（线网模态），甜区 > 球框
+  //   三者均为力度无关的形状特征，用于甜区/球框识别验证。
+  let specFlat = "", specCrest = "", specS120 = "";
+  try {
+    const hx = m.data[9], hy = m.data[10], hz = m.data[11];
+    const N = PROTO.WINDOW.samples;
+    let t0 = 0, hMax = 0;
+    for (let i = 0; i < N; i++) {
+      const v = Math.hypot(hx[i], hy[i], hz[i]);
+      if (v > hMax) { hMax = v; t0 = i; }
+    }
+    const nuse = 160;
+    let i0 = t0, i1 = Math.min(N, t0 + nuse);
+    const seg = new Float32Array(nuse);
+    for (let i = i0; i < i1; i++) seg[i - i0] = Math.hypot(hx[i], hy[i], hz[i]);
+    // 去均值 + 汉宁窗
+    let mean = 0;
+    for (let i = 0; i < nuse; i++) mean += seg[i];
+    mean /= nuse;
+    const win = new Float32Array(nuse);
+    for (let i = 0; i < nuse; i++) {
+      seg[i] -= mean;
+      win[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (nuse - 1)));
+    }
+    // FFT（实序列用 NFFT=2048 零填充）
+    const NFFT = 2048;
+    const re = new Float64Array(NFFT), im = new Float64Array(NFFT);
+    for (let i = 0; i < nuse; i++) { re[i] = seg[i] * win[i]; }
+    // 迭代 FFT
+    const _fft = (a, b) => {
+      const n = a.length;
+      if (n <= 1) return;
+      const m = n >> 1;
+      const ar = new Float64Array(m), ai = new Float64Array(m);
+      const br = new Float64Array(m), bi = new Float64Array(m);
+      for (let i = 0; i < m; i++) { ar[i] = a[2*i]; ai[i] = b[2*i]; br[i] = a[2*i+1]; bi[i] = b[2*i+1]; }
+      _fft(ar, ai); _fft(br, bi);
+      for (let k = 0; k < m; k++) {
+        const ang = -2 * Math.PI * k / n;
+        const wr = Math.cos(ang), wi = Math.sin(ang);
+        const xr = br[k] * wr - bi[k] * wi;
+        const xi = br[k] * wi + bi[k] * wr;
+        a[k] = ar[k] + xr; b[k] = ai[k] + xi;
+        a[k + m] = ar[k] - xr; b[k + m] = ai[k] - xi;
+      }
+    };
+    _fft(re, im);
+    const FS = 960.0;
+    const spec = new Float64Array(NFFT / 2 + 1);
+    for (let k = 0; k <= NFFT / 2; k++) spec[k] = Math.hypot(re[k], im[k]);
+    let spMax = 0;
+    for (let k = 0; k < spec.length; k++) if (spec[k] > spMax) spMax = spec[k];
+    if (spMax < 1e-12) throw new Error("zero spectrum");
+    // 80-470 Hz 带
+    const fb = 80 * NFFT / FS, fe = 470 * NFFT / FS;
+    let sumAmp = 0, sumLog = 0, sumSq = 0, s120 = 0, cnt = 0;
+    const f120l = 100 * NFFT / FS, f120h = 150 * NFFT / FS;
+    for (let k = Math.ceil(fb); k <= Math.floor(fe); k++) {
+      const v = spec[k] / spMax;
+      sumAmp += v;
+      sumLog += Math.log(v + 1e-12);
+      sumSq += v * v;
+      if (k >= f120l && k <= f120h) s120 += v;
+      cnt++;
+    }
+    const arith = sumAmp / cnt;
+    const geo = Math.exp(sumLog / cnt);
+    const rms = Math.sqrt(sumSq / cnt);
+    specFlat = (geo / (arith + 1e-12)).toFixed(4);
+    specCrest = (1 / (rms + 1e-12)).toFixed(3);
+    specS120 = (s120 / (sumAmp + 1e-12)).toFixed(4);
+  } catch (e) {}
   let rows = "";
   for (let i = 0; i < PROTO.WINDOW.samples; i++) {
     rows += `${m.meta.seq},${m.meta.timestamp},${i},`;
     for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) rows += m.data[ch][i].toFixed(6) + ",";
-    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${frameDeg},${frameHit},${m.meta.fwMs || 0},${lateTail},${lqc},${lnoteEsc},${uc},${sq}\n`;
+    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${frameDeg},${frameHit},${m.meta.fwMs || 0},${lateTail},${lqc},${lnoteEsc},${uc},${sq},${specFlat},${specCrest},${specS120}\n`;
   }
   return rows;
 }
