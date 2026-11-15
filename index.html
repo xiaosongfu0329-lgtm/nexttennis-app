@@ -150,6 +150,31 @@
   .share-wrap { margin-top: 8px; }
   .share-wrap img { display: none; width: 100%; border-radius: 10px; border: 1px solid var(--border); }
   .share-wrap img.on { display: block; }
+  /* ---------- 回顾页：手腕损伤预警（2026-11-12） ---------- */
+  .wrist-card { cursor: pointer; }
+  .wrist-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+  .wrist-cell { background: rgba(255,255,255,.03); border: 1px solid var(--border);
+                border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .wrist-cell .k { font-size: 11px; color: var(--muted); }
+  .wrist-cell .v { font-size: 20px; font-weight: 700; margin-top: 2px;
+                   font-family: ui-monospace, "Cascadia Code", monospace; overflow-wrap: anywhere; }
+  .wrist-cell .v small { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 3px; }
+  .wrist-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .wrist-bar .go { margin-left: auto; color: var(--accent); white-space: nowrap; }
+  .advice-mask { display: none; position: fixed; inset: 0; z-index: 9999; padding: 16px;
+                 background: rgba(0,0,0,.62); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .advice-mask.on { display: block; }
+  .advice-card { max-width: 560px; margin: 32px auto; background: var(--panel);
+                 border: 1px solid var(--border); border-radius: 12px; padding: 16px 16px 14px; }
+  .advice-card h3 { margin: 0 0 4px; font-size: 16px; }
+  .advice-card .sub { margin: 0 0 6px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .advice-card .now { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px;
+                      background: rgba(88,166,255,.10); border: 1px solid rgba(88,166,255,.28);
+                      font-size: 13px; line-height: 1.55; }
+  .advice-card h4 { margin: 14px 0 6px; font-size: 13px; color: var(--accent); }
+  .advice-card ol, .advice-card ul { margin: 0; padding-left: 20px; font-size: 13.5px; line-height: 1.62; }
+  .advice-card li { margin-bottom: 6px; }
+  .advice-card .close { width: 100%; margin-top: 16px; }
   /* ---------- 采集页（现场大字操作台，2026-11-01 用户要求；2026-11-02 压成一屏） ---------- */
   .c-num { font-size: 64px; font-weight: 700; color: var(--accent); line-height: 1.05;
            text-align: center; font-family: ui-monospace, "Cascadia Code", monospace; }
@@ -533,6 +558,33 @@
     <div class="tip" id="rvCompare" style="color:var(--muted)">—</div>
   </div>
 
+  <!-- 甩鞭评分（2026-11-12）：末段爆发强度绝对分，100 = 教练组中位数；单拍波动大，展示取中位数 -->
+  <div class="panel">
+    <h2>挥拍爆发 · 甩鞭评分</h2>
+    <div class="wrist-grid">
+      <div class="wrist-cell"><div class="k">正手</div><div class="v" id="rvWhipFh">—</div></div>
+      <div class="wrist-cell"><div class="k">反手</div><div class="v" id="rvWhipBh">—</div></div>
+    </div>
+    <div class="wrist-bar"><span id="rvWhipNote">打几球后自动评估</span></div>
+  </div>
+
+  <!-- 手腕损伤预警（2026-11-12）：正手 + 峰值≥400°/s 的可评估球，点卡片看专家建议 -->
+  <div class="panel wrist-card" id="rvWristCard" role="button" tabindex="0"
+       aria-label="手腕损伤预警，点击查看专家建议">
+    <h2>手腕损伤预警 · 今日</h2>
+    <div class="wrist-grid">
+      <div class="wrist-cell"><div class="k">超门限击球</div><div class="v" id="rvWristOver">—</div></div>
+      <div class="wrist-cell"><div class="k">占可评估正手</div><div class="v" id="rvWristPct">—</div></div>
+      <div class="wrist-cell"><div class="k">uni50 合计</div><div class="v" id="rvWristSum">—</div></div>
+      <div class="wrist-cell"><div class="k">黄+红占比</div><div class="v" id="rvWristYr">—</div></div>
+    </div>
+    <div class="wrist-bar">
+      <span id="rvWristBand" class="badge idle">—</span>
+      <span id="rvWristNote">打几球后自动评估</span>
+      <span class="go">专家建议 ›</span>
+    </div>
+  </div>
+
   <div class="panel">
     <h2>分享卡片</h2>
     <p class="hint">只和自己比：卡片上不出现排名、不出现别的孩子。生成后点「保存图片」；手机上若没有自动下载，长按图片保存到相册。</p>
@@ -601,6 +653,42 @@
   </div>
 </section>
 
+<!-- 手腕损伤预警 · 专家建议弹层（2026-11-12） -->
+<div class="advice-mask" id="adviceMask" role="dialog" aria-modal="true" aria-label="手腕损伤专家建议">
+  <div class="advice-card">
+    <h3>手腕损伤预警 · 专家建议</h3>
+    <p class="sub">判据看的是击球后 90ms 内手腕被「顶住」的时长（uni50），不是力量大小，也不和别人比。</p>
+    <p class="sub">门槛按中等强度对拉标定：发力更重的击球（如教练喂球、大力抽球）会被动响应更久，普遍上移一档，黄档不等于受伤。发球/高压/杀球在窗口内有主动旋前，已自动剔除、不计入统计。</p>
+    <div class="now" id="adviceNow">—</div>
+
+    <h4>为什么会这样</h4>
+    <p class="sub">被挤到 / 引拍不足 → 击球点落到身体侧后方 → 球拍没法靠转体带动 → 只能用手腕临时去「拧」→ 肌肉来不及接住，韧带被长时间顶在关节极限。</p>
+
+    <h4>优先做（按顺序）</h4>
+    <ol>
+      <li><b>先解决「被挤到」</b>：来球深、弹跳高时主动后退半步，让击球点保持在身体侧前方约一臂距离，而不是原地伸手去够。</li>
+      <li><b>再解决引拍时机</b>：对方击球瞬间就开始转肩拉拍，用口令「落地即拉拍」建立节奏，不等球过网再动。</li>
+      <li><b>最后才是手腕细节</b>：拍面角度、握拍松紧属于精细化调整，前两项没解决前收益有限。</li>
+    </ol>
+
+    <h4>训练处方</h4>
+    <ul>
+      <li><b>充分引拍</b>：拍头拉到身体侧后方，非持拍手指向来球，不做「半截引拍」。</li>
+      <li><b>避免被挤到</b>：击球点偏后是这批球的主因——球不快但被顶得久，靠手腕硬扛。</li>
+      <li><b>控制拍面</b>：击球前固定拍面角度，击球过程中不主动翻腕，让冲击沿拍面法向传递。</li>
+      <li><b>转体带动</b>：蹬地 → 转髋 → 转肩 → 手臂 → 手腕，手腕只做微调，不做主动发力。</li>
+      <li><b>握拍适度</b>：非击球期放松（4–5 分力），击球瞬间收紧到 7 分力，不要全程死握。</li>
+      <li><b>控制喂球强度</b>：黄+红占比持续高于 50% 时，降低喂球速度/深度或缩短单次训练时长，给韧带和骨骺板恢复窗口。</li>
+      <li><b>器械检查</b>：握把别过粗、拍重别偏大、拍线别过紧——握不牢会让拍头在手里微转，直接放大扭转。</li>
+    </ul>
+
+    <h4>怎么算变好</h4>
+    <p class="sub">每两周复测：看<b>超门限拍数</b>和<b>uni50 合计</b>是否下降。最先应该变化的是「中低峰值 + 长滞留」那一批球，而不是最快的球。</p>
+
+    <button class="chip close" id="adviceClose">知道了</button>
+  </div>
+</div>
+
 <!-- 形态门限初值（与 app/data/form_thresholds_v1.json 同内容；file:// 直开时 fetch 不可用，用此内嵌块） -->
 <script type="application/json" id="formThresholdsJson">
 {
@@ -655,7 +743,24 @@
 // B99：Late Contact 单位换算修正——窗口为三段非均匀采样（macro 120Hz=8.33ms/idx、micro 960Hz=1.0417ms/idx），
 //      原 (idx差×5) 在 micro 段高估约 4.8 倍；改为 tMs() 精确映射，与 Python ia.t_ms / 固件 B60 1:1。sw.js CACHE nexttennis-v40
 //      （B98 说明见下行）
-const APP_BUILD = "APP-B121-20261111-1200";   // B121：视频采集竖屏修复——①capStart 等全屏/锁横屏真正生效（≤1s）再取流，原先是 fire-and-forget；②camGetStream 取流后校验方向，竖屏就释放、等横屏重取一次；③camOpen 复用旧流前复核方向（上一场竖屏流在视口已横屏时重取）；④camActual.portrait 标记 + 仍竖屏时明确提示「视频会侧躺，请关闭系统方向锁定」；⑤camMetaCur 增加 source_orientation 字段（append，不改既有字段）。不改命名/列顺序/分析流程。11-10 实测：165917、170549 两场成片 405×720 竖屏，171722 起全部 1280×720。sw.js CACHE nexttennis-v62。B120：录像时间基准落盘；B119：心跳对时
+// B122：回顾页新增「手腕损伤预警 · 今日」——逐拍算 uni50（击球后 90ms 内 |Gz|≥50%峰值且同号的累计时长，
+//      峰值≥400°/s 才算打实），只统计正手；今日累计超门限（≥30ms）拍数、占可评估击球比例、uni50 合计、
+//      黄+红占比；点卡片弹「专家建议」（早引拍 / 充分引拍 / 避免被挤到 / 控制拍面 / 转体带动 / 握拍适度等）。
+//      判据只按各自峰值归一化，不跨人比较。顺带清掉 reviewRender 里指向已删除面板的 8 处空引用（原会抛异常）。
+//      sw.js CACHE nexttennis-v63。
+const APP_BUILD = "APP-B124-20261113-0900";   // B124：手腕负荷剔除「主动旋前」（见下方 B124 说明）。B123：回顾页「挥拍爆发 · 甩鞭评分」。B122：回顾页「手腕损伤预警」（逐拍 uni50，只统计正手，今日累计）；B121：视频采集竖屏修复——①capStart 等全屏/锁横屏真正生效（≤1s）再取流，原先是 fire-and-forget；②camGetStream 取流后校验方向，竖屏就释放、等横屏重取一次；③camOpen 复用旧流前复核方向（上一场竖屏流在视口已横屏时重取）；④camActual.portrait 标记 + 仍竖屏时明确提示「视频会侧躺，请关闭系统方向锁定」；⑤camMetaCur 增加 source_orientation 字段（append，不改既有字段）。不改命名/列顺序/分析流程。11-10 实测：165917、170549 两场成片 405×720 竖屏，171722 起全部 1280×720。sw.js CACHE nexttennis-v62。B120：录像时间基准落盘；B119：心跳对时
+// B123：回顾页新增「挥拍爆发 · 甩鞭评分」——把 tools/whip_scoring.py 的口径 1:1 移植为 computeWhipScore()：
+// 只取「启动 → 触球前 10ms」(idx0..176)，先截断再做 5 点平滑与真实时间求导，峰值角加速度 ÷ 教练锚点 ×100；
+// 正手锚点 1487 / 反手锚点 2076 rad/s^2 分开（双手反手负荷不同尺度），挥速 <10 rad/s 视为未发力不评分。
+// 逐拍写 meta.whip，回顾页按正/反手取中位数（单拍波动大）。分数只衡量末段爆发，不含落点/稳定性/击球时机。
+// B124：手腕负荷剔除「主动旋前」。11-04 教练发球段（16:50/16:54，32 拍）跑出 84% 红灯，但波形不是冲击脉冲：
+// 峰值时刻 +42.7ms（对拉 +3.1ms）、上升时间 36.5ms（7.3ms）、峰值对齐半高宽 ≈40ms（≈8ms）、窗口内净转 -83° 单向
+// （对拉 +3°，正负抵消）。说明 90ms 窗口里装的是发球自身的前臂旋前，"无主动动作"前提不成立。
+// 处理：wristLoadCompute 增加 rise/duty，rise>25ms 且 半峰以上占比>0.35 → active=true、evaluable=false，
+// 逐拍写 meta.wrist.active；reviewSummarize 计入 wristSkip，回顾页备注「已剔除 N 拍发球/主动挥拍」。
+// 实测：挡住 72% 发球，常规对拉误伤 5.5%（182 拍中 10 拍）。分析脚本 analysis/_coach_1104_serve_check.py
+// / _coach_1104_shape.py / _coach_1104_active_rule.py / _coach_1104_effect.py。sw.js CACHE nexttennis-v65。
+// sw.js CACHE nexttennis-v64
 // B120：采集时只「记录」不「判定」——录像开始/结束绝对时刻、自动暂停段（捡球）、
 // 墙钟跳变事件、源流是否 VFR，全部写进 meta.timebase，供下游做逐拍对齐。
 // 起因：连续录像+固件同步已消除大部分对齐难点，但有三件事只有采集当时才知道：
@@ -1872,6 +1977,22 @@ function onWindow(meta, data) {
     log(`[CALC] Late Contact 计算异常: ${e.message}`, "log-warn");
   }
 
+  // ---- 手腕损伤预警：90ms 冲击窗内 Gz 峰宽（逐球记录，回顾页汇总；不弹窗不打断）----
+  try {
+    meta.wrist = wristLoadCompute(data, meta.t0Index);
+  } catch (e) {
+    meta.wrist = null;
+    log(`[WRIST] 手腕负荷计算异常: ${e.message}`, "log-warn");
+  }
+
+  // ---- 甩鞭评分：末段爆发强度绝对分（逐球记录，回顾页按正/反手取中位数；不弹窗不打断）----
+  try {
+    meta.whip = computeWhipScore(data, side);
+  } catch (e) {
+    meta.whip = null;
+    log(`[WHIP] 甩鞭评分计算异常: ${e.message}`, "log-warn");
+  }
+
   currentWindow = w;
   sessionWindows.push(w);        // 含 FAIL 窗口，全部留存到本次会话结束
   if (!csvOpenSeg) csvOpenUncap();     // B96：段记录（导出按段切 CSV，不混场）
@@ -2836,6 +2957,15 @@ const NF = {
   FACE_P80_MS: +80,                  // 判决窗口终点：击球后 80ms
   FACE_OPEN_MAX:  +26.6,             // 拍面打开过度上限（Δtilt > 此值 → OPEN_OVER）
   FACE_CLOSE_MIN: -35.5,             // 拍面关闭过度下限（Δtilt < 此值 → CLOSE_OVER）
+  // --- 手腕损伤预警（2026-11-12 标定：帆帆 107 拍，峰值≥400°/s 共 87 拍）---
+  WRIST_T10_MS: -10, WRIST_P80_MS: 80, // 冲击评估窗（与拍面控制同窗）
+  WRIST_SMOOTH_MS: 3,                // ±3ms 时间窗滑动平均（与 analysis 脚本同口径）
+  WRIST_PK_MIN: 400,                 // 峰值门槛（°/s）：低于此视为未打实，不评估
+  WRIST_YELLOW: 15, WRIST_RED: 30,   // uni50 三档：绿 <15 / 黄 15–30 / 红 ≥30（ms）
+  // 主动旋转识别（2026-11-13 标定：教练发球 32 拍 vs 对拉 182 拍）：
+  // 发球/大力挥拍在 90ms 窗口内已有前臂旋前，波形是「缓慢爬升 + 宽平台」而非冲击脉冲，
+  // 判定条件 rise>25ms 且 半峰以上时长占比>0.35 → 不评估（挡住 72% 发球，对拉误伤 5.5%）
+  WRIST_ACT_RISE: 25, WRIST_ACT_DUTY: 0.35,
 };
 
 // 通用零相位滤波：scipy.signal.filtfilt(method='pad', padtype='odd') 同口径（任意 b/a）
@@ -2980,6 +3110,123 @@ function nfFaceTilt(data) {
     out[i] = Math.asin(c) * R2D;
   }
   return out;
+}
+
+// ---- 手腕损伤预警：击球后 90ms 内 Gz 峰值宽度 uni50（与 analysis/_export_wrist_charts.py 1:1）----
+// 90ms 窗口内不存在主动随挥（随意运动力学延迟 >100ms），所有起伏都是冲击被动响应；
+// 宽峰 = 手腕被顶在关节极限的时长 = 韧带受载时间。绝对力矩因人而异，故按各自峰值归一化。
+// 例外：发球/高压/杀球在窗口内本就有主动旋前（教练发球段实测 84% 假红灯），由 active 标记剔除。
+function wristLoadCompute(data, t0Idx) {
+  const N = PROTO.WINDOW.samples, t0 = windowTimeMs(t0Idx);
+  const t = new Float64Array(N), gz = new Float64Array(N);
+  for (let i = 0; i < N; i++) { t[i] = windowTimeMs(i) - t0; gz[i] = data[5][i] * DIAG.RAD2DEG; }
+  // ±WRIST_SMOOTH_MS 时间窗滑动平均（时间窗而非点数窗：宏观/微观采样率不同）
+  const sm = new Float64Array(N);
+  let j0 = 0, j1 = 0;
+  for (let i = 0; i < N; i++) {
+    while (t[j0] < t[i] - NF.WRIST_SMOOTH_MS) j0++;
+    if (j1 < i) j1 = i;
+    while (j1 + 1 < N && t[j1 + 1] <= t[i] + NF.WRIST_SMOOTH_MS) j1++;
+    let acc = 0;
+    for (let k = j0; k <= j1; k++) acc += gz[k];
+    sm[i] = acc / (j1 - j0 + 1);
+  }
+  const win = [];
+  for (let i = 0; i < N; i++) if (t[i] >= NF.WRIST_T10_MS && t[i] <= NF.WRIST_P80_MS) win.push(i);
+  if (win.length < 10) return null;
+  let pki = win[0];
+  for (const i of win) if (Math.abs(sm[i]) > Math.abs(sm[pki])) pki = i;
+  const pk = Math.abs(sm[pki]);
+  if (pk < 1e-6) return null;
+  const sg = sm[pki] > 0 ? 1 : -1;
+  // 半峰以上 且 与峰值同号 的累计时长（单向持续才拉向韧带同一侧）
+  let uni50 = 0;
+  for (let k = 1; k < win.length; k++) {
+    const a = win[k - 1], b = win[k];
+    if (Math.abs(sm[a]) >= 0.5 * pk && Math.abs(sm[b]) >= 0.5 * pk
+        && sm[a] * sg > 0 && sm[b] * sg > 0) uni50 += t[b] - t[a];
+  }
+  const evaluable = pk >= NF.WRIST_PK_MIN;
+  const band = !evaluable ? "skip"
+    : (uni50 >= NF.WRIST_RED ? "red" : (uni50 >= NF.WRIST_YELLOW ? "yellow" : "green"));
+  // 主动旋转识别：峰值前缓慢爬升 + 半峰以上占据大半个窗口 → 窗口里装的是挥拍动作本身
+  const pkn = win.indexOf(pki);
+  let rise = t[pki] - t[win[0]];
+  for (let k = pkn - 1; k >= 0; k--) {
+    if (Math.abs(sm[win[k]]) < 0.1 * pk) { rise = t[pki] - t[win[k]]; break; }
+  }
+  let above = 0;
+  for (const i of win) if (Math.abs(sm[i]) >= 0.5 * pk) above++;
+  const active = rise > NF.WRIST_ACT_RISE && above / win.length > NF.WRIST_ACT_DUTY;
+  const ok = evaluable && !active;
+  return { pk: +pk.toFixed(0), uni50: +uni50.toFixed(1),
+           band: ok ? band : "skip", dir: sg > 0 ? "旋内" : "旋外",
+           evaluable: ok, active,
+           rise: +rise.toFixed(1), duty: +(above / win.length).toFixed(2) };
+}
+
+// ---- 甩鞭评分：末段爆发峰值角加速度 → 绝对分（tools/whip_scoring.py 1:1 移植）----
+// 口径：只取「启动 → 触球前 10ms」(idx0..176)，先截断再做平滑/微分，避免击球冲击与
+// 击球后振动泄漏进指标。单拍分 = 100 × 该拍峰值角加速度 ÷ 熟练者锚点；
+// 锚点 = 教练组峰值角加速度中位数：正手 1487（31 拍）/ 反手 2076（20 拍）rad/s^2。
+// 正反手尺度不同，锚点不能混用。分数只衡量末段爆发强度，不含落点、稳定性、击球时机。
+const WHIP = {
+  CUT: 177,                          // idx0..176 ≈ -10ms，先截断
+  BURST_LO: 138, BURST_HI: 177,      // 爆发区间 -50ms..-10ms
+  BASE_LO: 60, BASE_HI: 90,          // 引拍基线 -700ms..-450ms
+  MIN_PEAK_W: 10,                    // rad/s，挥速低于此视为未发力，不评分
+  ANCHOR: { FH: 1487, BH: 2076 },    // rad/s^2，教练组中位数 = 100 分
+  BANDS: [[70, "A"], [45, "B"], [30, "C"], [15, "D"]],   // 其余为 E
+};
+
+// 三段非均匀采样时间轴（ms，0 = 触球），与 Python time_axis_ms 完全一致
+function whipTimeMs(i) {
+  return i < 138 ? -1200 + i * 1000 / 120
+       : i < 348 ? -50 + (i - 138) * 1000 / 960
+       : 169 + (i - 348) * 1000 / 120;
+}
+
+function whipBand(score) {
+  for (const [lo, name] of WHIP.BANDS) if (score >= lo) return name;
+  return "E";
+}
+
+// data 为通道优先 12×396（陀螺 rad/s）。返回峰值/基线/挥速与分数；side 决定锚点。
+function computeWhipScore(data, side) {
+  const N = WHIP.CUT;
+  // 1) |gyro| 合成 + 5 点滑动平均（边缘复制，等价 np.pad(mode="edge") + 5 点盒式）
+  const raw = new Float64Array(N), g = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    const gx = data[3][i], gy = data[4][i], gz = data[5][i];
+    raw[i] = Math.sqrt(gx * gx + gy * gy + gz * gz);
+  }
+  for (let i = 0; i < N; i++) {
+    let acc = 0;
+    for (let k = -2; k <= 2; k++) acc += raw[Math.max(0, Math.min(N - 1, i + k))];
+    g[i] = acc / 5;
+  }
+  // 2) 对真实时间求导 rad/s^2：内部按前后间隔加权（不等距，np.gradient 同式），端点一阶差分
+  const t = new Float64Array(N), dw = new Float64Array(N);
+  for (let i = 0; i < N; i++) t[i] = whipTimeMs(i) / 1000;
+  for (let i = 1; i < N - 1; i++) {
+    const d1 = t[i + 1] - t[i], d2 = t[i] - t[i - 1];   // d1 前向间隔、d2 后向间隔
+    dw[i] = d2 / (d1 + d2) * (g[i + 1] - g[i]) / d1
+          + d1 / (d1 + d2) * (g[i] - g[i - 1]) / d2;
+  }
+  dw[0] = (g[1] - g[0]) / (t[1] - t[0]);
+  dw[N - 1] = (g[N - 1] - g[N - 2]) / (t[N - 1] - t[N - 2]);
+  // 3) 爆发峰值 / 引拍基线 / 挥速下限
+  let peakAng = -Infinity, peakW = 0;
+  for (let i = WHIP.BURST_LO; i < WHIP.BURST_HI; i++) if (dw[i] > peakAng) peakAng = dw[i];
+  for (let i = 0; i < N; i++) if (g[i] > peakW) peakW = g[i];
+  let baseSum = 0;
+  for (let i = WHIP.BASE_LO; i < WHIP.BASE_HI; i++) baseSum += Math.abs(dw[i]);
+  const baseAng = baseSum / (WHIP.BASE_HI - WHIP.BASE_LO);
+  const anchor = side === "反手" ? WHIP.ANCHOR.BH : WHIP.ANCHOR.FH;
+  const evaluable = peakW >= WHIP.MIN_PEAK_W;
+  const score = evaluable ? 100 * peakAng / anchor : null;
+  return { peak_ang: peakAng, base_ang: baseAng, peak_w: peakW,
+           anchor, evaluable, score, band: evaluable ? whipBand(score) : null };
 }
 
 // 全部新识别项特征（纯函数；技术页显示 + 事后对拍用）
@@ -5730,6 +5977,8 @@ function reviewSummarize() {
               balls: 0, fh: 0, bh: 0, maxSpeed: 0, speedSum: 0, speedN: 0,
               good: 0, streak: 0, bestStreak: 0, vtiWarn: 0, vtiAlarm: 0,
               lateSoft: 0, lateHard: 0,    // 击球稍晚 / 击球过晚
+              wristEval: 0, wristOver: 0, wristYellowRed: 0, wristSum: 0, wristSkip: 0, // 手腕负荷（仅正手可评估球；wristSkip=主动旋转已剔除）
+              whipFH: [], whipBH: [],   // 甩鞭绝对分（逐拍，锚点按正/反手分开）
               vtiHistFH: [], vtiHistBH: [] };  // 会话内 VTI 分布（用于安装松动基线）
   let run = 0;
   for (const w of sessionWindows) {
@@ -5757,6 +6006,19 @@ function reviewSummarize() {
     const late = w.meta.late;
     if (late && late.verdict === "击球过晚") s.lateHard++;
     else if (late && late.verdict === "击球稍晚") s.lateSoft++;
+    // 手腕负荷：只看正手（双手反手载荷被另一只手分担，不能同口径比）+ 峰值≥400°/s 的可评估球
+    const wr = w.meta.wrist;
+    if (wr && wr.active && sideKey === "FH") s.wristSkip++;
+    if (wr && wr.evaluable && sideKey === "FH") {
+      s.wristEval++;
+      s.wristSum += wr.uni50;
+      if (wr.uni50 >= NF.WRIST_RED) s.wristOver++;
+      if (wr.uni50 >= NF.WRIST_YELLOW) s.wristYellowRed++;
+    }
+    // 甩鞭：绝对分（100 = 教练组中位数），未发力的球（挥速 <10 rad/s）不计；正反手未判定的球不入账
+    const wh = w.meta.whip;
+    if (wh && wh.evaluable && isFinite(wh.score) && (side === "正手" || side === "反手"))
+      (side === "反手" ? s.whipBH : s.whipFH).push(wh.score);
     run++;
     if (run > s.bestStreak) s.bestStreak = run;
   }
@@ -5771,6 +6033,11 @@ function reviewSummarize() {
   s.looseP50 = Math.max(isFinite(p50FH)?p50FH:0, isFinite(p50BH)?p50BH:0);
   s.looseFH = isFinite(p50FH) && s.vtiHistFH.length >= 6 && p50FH > 200;
   s.looseBH = isFinite(p50BH) && s.vtiHistBH.length >= 6 && p50BH > 200;
+  // 甩鞭代表分：中位数（单拍波动大，均值会被个别球拉偏），档位随分数
+  s.whipFhMed = pct50(s.whipFH);
+  s.whipFhBand = isFinite(s.whipFhMed) ? whipBand(s.whipFhMed) : "";
+  s.whipBhMed = pct50(s.whipBH);
+  s.whipBhBand = isFinite(s.whipBhMed) ? whipBand(s.whipBhMed) : "";
   return s;
 }
 
@@ -5785,6 +6052,11 @@ function reviewCommit() {
     maxSpeed: +s.maxSpeed.toFixed(1), avgSpeed: +s.avgSpeed.toFixed(1),
     rate: +s.rate.toFixed(3), bestStreak: s.bestStreak,
     vtiWarn: s.vtiWarn, vtiAlarm: s.vtiAlarm,
+    wristEval: s.wristEval, wristOver: s.wristOver,
+    wristSum: +s.wristSum.toFixed(1), wristYr: s.wristYellowRed, wristSkip: s.wristSkip,
+    whipFh: isFinite(s.whipFhMed) ? +s.whipFhMed.toFixed(0) : null,
+    whipBh: isFinite(s.whipBhMed) ? +s.whipBhMed.toFixed(0) : null,
+    whipFhBand: s.whipFhBand || null, whipBhBand: s.whipBhBand || null,
     durMin: +s.durMin.toFixed(1),
     peakFrame: 0,   // 二期打框统计预留位（不改结构即可扩展）
   };
@@ -5877,23 +6149,50 @@ function reviewRender() {
   $("rvSide").textContent = (s.fh + s.bh) > 0 ? `${s.fh} / ${s.bh}` : "—";
   $("rvRate").textContent = s.balls ? Math.round(s.rate * 100) + "%" : "—";
   $("rvStreak").textContent = s.bestStreak ? s.bestStreak + " 球" : "—";
-  // 击球过晚概览（新增，20261106）
-  const lateTotal = s.lateSoft + s.lateHard;
-  $("rvLate").textContent = !s.balls ? "—" : (lateTotal ? `${lateTotal} 球` : "无");
-  // 损伤风险面板（新增，20261106）
-  $("rvFrameWarn").textContent = !s.balls ? "—" : (s.vtiWarn ? `${s.vtiWarn} 球` : "无");
-  $("rvFrameAlarm").textContent = !s.balls ? "—" : (s.vtiAlarm ? `${s.vtiAlarm} 球` : "无");
-  $("rvLateSoft").textContent = !s.balls ? "—" : (s.lateSoft ? `${s.lateSoft} 球` : "无");
-  $("rvLateHard").textContent = !s.balls ? "—" : (s.lateHard ? `${s.lateHard} 球` : "无");
-  const looseTxt = !s.balls ? "—"
-    : (s.looseFH || s.looseBH ? `⚠️ 偏高（P50=${s.looseP50.toFixed(0)}）`
-    : (s.vtiHistFH.length + s.vtiHistBH.length < 6 ? "样本不足"
-    : `正常（P50=${s.looseP50.toFixed(0)}）`));
-  $("rvLoose").textContent = looseTxt;
-  const riskSum = s.vtiWarn + s.vtiAlarm + s.lateSoft + s.lateHard;
-  $("rvRiskSum").textContent = !s.balls ? "—" : (riskSum ? `${riskSum} 球（${(riskSum/s.balls*100).toFixed(0)}%）` : "0");
-  const advice = reviewRiskAdvice(s);
-  $("rvRiskAdvice").textContent = advice.text || "—";
+  // 手腕损伤预警（2026-11-12）：今日累计（同日多次训练合并；只含正手 + 峰值≥400°/s 的可评估球）
+  const todayKey = fmtDay(Date.now());
+  let wEval = 0, wOver = 0, wSum = 0, wYr = 0, wSkip = 0, dayBalls = 0;
+  for (const r of db.sessions) {
+    if (fmtDay(r.ts) !== todayKey) continue;
+    wEval += +r.wristEval || 0;
+    wOver += +r.wristOver || 0;
+    wSum  += +r.wristSum  || 0;
+    wYr   += +r.wristYr   || 0;
+    wSkip += +r.wristSkip || 0;
+    dayBalls += +r.balls || 0;
+  }
+  const avgU = wEval ? wSum / wEval : 0;
+  const pct = (a, b) => (b ? Math.round(a / b * 100) : 0);
+  $("rvWristOver").innerHTML = wEval ? `${wOver}<small>拍</small>` : "—";
+  $("rvWristPct").innerHTML = wEval ? `${pct(wOver, wEval)}<small>%</small>` : "—";
+  $("rvWristSum").innerHTML = wEval ? `${wSum.toFixed(0)}<small>ms</small>` : "—";
+  $("rvWristYr").innerHTML = wEval ? `${pct(wYr, wEval)}<small>%</small>` : "—";
+  let bandCls = "idle", bandTxt = "—", bandNote = "打几球后自动评估";
+  const skipNote = wSkip ? ` · 已剔除 ${wSkip} 拍发球/主动挥拍` : "";
+  if (wEval < 5) {
+    bandCls = "idle"; bandTxt = "样本不足"; bandNote = `可评估 ${wEval} 拍（需≥5 拍）${skipNote}`;
+  } else {
+    bandCls = wYr / wEval > 0.5 ? "fail" : "pass";
+    bandTxt = wYr / wEval > 0.5 ? "负荷过重" : "正常";
+    bandNote = `有效 ${dayBalls} 拍 · 可评估正手 ${wEval} · 均值 ${avgU.toFixed(1)}ms${skipNote}`;
+  }
+  $("rvWristBand").className = "badge " + bandCls;
+  $("rvWristBand").textContent = bandTxt;
+  $("rvWristNote").textContent = bandNote;
+  $("adviceNow").textContent = wEval
+    ? `今日 ${wEval} 拍可评估正手球：超门限 ${wOver} 拍（${pct(wOver, wEval)}%），`
+      + `uni50 合计 ${wSum.toFixed(0)}ms（平均 ${avgU.toFixed(1)}ms），黄+红 ${pct(wYr, wEval)}%。`
+      + (wSkip ? ` 另有 ${wSkip} 拍因呈主动旋前（发球/大力挥拍）已剔除，不计入负荷。` : "")
+    : "今天还没有可评估的正手击球（峰值≥400°/s 才算打实）。";
+
+  // 甩鞭评分（2026-11-12）：绝对分，100 = 教练组中位数；单拍波动大，展示取中位数
+  const whipCell = (v, b) => isFinite(v) ? `${v.toFixed(0)}<small>${b}</small>` : "—";
+  $("rvWhipFh").innerHTML = whipCell(s.whipFhMed, s.whipFhBand);
+  $("rvWhipBh").innerHTML = whipCell(s.whipBhMed, s.whipBhBand);
+  $("rvWhipNote").textContent = (s.whipFH.length + s.whipBH.length)
+    ? `正手 ${s.whipFH.length} 拍 / 反手 ${s.whipBH.length} 拍 · 100 分＝教练组中位数；只算末段爆发，不含落点与稳定性`
+    : "打几球后自动评估（没发力的球不计）";
+
   $("rvComment").textContent = reviewCommentText(s);
 
   let cmp = `第 ${n} 次训练`;
@@ -6031,6 +6330,19 @@ $("rvClear").addEventListener("click", () => {
   reviewRender();
   log("已清空回顾历史", "log-info");
 });
+
+// ---------- 手腕损伤预警 → 专家建议弹层（2026-11-12）----------
+function adviceOpen() {
+  $("adviceMask").classList.add("on");
+  reviewRender();          // 打开时用最新数字刷新顶部摘要
+}
+function adviceClose() { $("adviceMask").classList.remove("on"); }
+$("rvWristCard").addEventListener("click", adviceOpen);
+$("rvWristCard").addEventListener("keydown", e => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); adviceOpen(); }
+});
+$("adviceClose").addEventListener("click", adviceClose);
+$("adviceMask").addEventListener("click", e => { if (e.target === $("adviceMask")) adviceClose(); });
 
 // ---------- URL ?mode= 快捷方式（PWA 桌面快捷方式传入）----------
 const urlMode = new URLSearchParams(location.search).get("mode");
