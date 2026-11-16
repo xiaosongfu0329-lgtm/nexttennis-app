@@ -756,38 +756,12 @@
   </details>
 </section>
 
-<!-- ================= 页3：设置（传感器↔球员 / 孩子资料 / 数据导出） ================= -->
+<!-- ================= 页3：设置（传感器↔球员 / 数据导出） ================= -->
 <section id="page3" class="page">
   <div class="panel" style="margin-top:0">
     <h2>传感器 ↔ 球员</h2>
     <div id="sensorList"></div>
-    <p class="hint">点任意一台传感器，填写该编号对应的球员姓名、身高、年龄、水平。</p>
-  </div>
-
-  <div class="panel" style="margin-top:0">
-    <h2>孩子资料（30 秒填完）</h2>
-    <div class="form-row">
-      <label for="pfHeight">身高（cm）</label>
-      <input id="pfHeight" type="number" inputmode="numeric" min="90" max="200" step="1" placeholder="如 135" />
-    </div>
-    <div class="form-row">
-      <label for="pfAge">年龄（岁）</label>
-      <input id="pfAge" type="number" inputmode="numeric" min="5" max="60" step="1" placeholder="如 9" />
-    </div>
-    <div class="form-row">
-      <label for="pfRacket">球拍（英寸）</label>
-      <select id="pfRacket">
-        <option value="">未设置（按 26 英寸）</option>
-        <option value="25">25 英寸</option>
-        <option value="26">26 英寸</option>
-        <option value="27">27 英寸</option>
-      </select>
-    </div>
-    <div class="actions" style="margin-top:8px">
-      <button id="pfSave" class="primary">保存</button>
-      <button id="pfAuto" class="chip">按身高推荐拍长</button>
-    </div>
-    <p class="hint" id="pfStat">未填写时按 26 英寸、无年龄分档处理（功能不受影响）。</p>
+    <p class="hint">点任意一台传感器，填写该编号对应的球员姓名、身高、年龄、NTRP 水平、球拍长度。连接该传感器时自动套用这些参数。</p>
   </div>
 
   <!-- 块名卡片已删除（2026-11-01 二次拍板）：块边界改由「敲拍窗口 + 同 seq 口述录音」承载，课后离线转写解析 -->
@@ -913,14 +887,27 @@
       <input id="pHeight" type="number" inputmode="numeric" min="90" max="210" step="1" placeholder="如 135" /></div>
     <div class="form-row"><label for="pAge">年龄（岁）</label>
       <input id="pAge" type="number" inputmode="numeric" min="4" max="80" step="1" placeholder="如 9" /></div>
-    <div class="form-row"><label for="pLevel">水平</label>
+    <div class="form-row"><label for="pLevel">水平 NTRP</label>
       <select id="pLevel">
         <option value="">未设置</option>
-        <option value="入门">入门</option>
-        <option value="初级">初级</option>
-        <option value="中级">中级</option>
-        <option value="高级">高级</option>
-        <option value="竞赛">竞赛</option>
+        <option value="1.0">1.0</option>
+        <option value="1.5">1.5</option>
+        <option value="2.0">2.0</option>
+        <option value="2.5">2.5</option>
+        <option value="3.0">3.0</option>
+        <option value="3.5">3.5</option>
+        <option value="4.0">4.0</option>
+        <option value="4.5">4.5</option>
+        <option value="5.0">5.0</option>
+        <option value="5.5">5.5</option>
+        <option value="6.0">6.0</option>
+      </select></div>
+    <div class="form-row"><label for="pRacket">球拍长度</label>
+      <select id="pRacket">
+        <option value="">未设置（按 26 英寸）</option>
+        <option value="25">25 英寸</option>
+        <option value="26">26 英寸</option>
+        <option value="27">27 英寸</option>
       </select></div>
     <div class="actions" style="margin-top:10px">
       <button id="pModalSave" class="primary">保存</button>
@@ -4720,24 +4707,42 @@ addEventListener("scroll", () => { const b = $("devMenu"); if (b) b.hidden = tru
 const SENSOR_KEY = "nt_sensor_profiles";
 let sensorProfiles = {};
 try { sensorProfiles = JSON.parse(localStorage.getItem(SENSOR_KEY) || "{}") || {}; } catch (_) { sensorProfiles = {}; }
+// B125：水平改为 NTRP 1.0~6.0，旧版文字水平（入门/初级…）一律清空，避免显示与下拉不一致
+const NTRP_OK = new Set(["1.0","1.5","2.0","2.5","3.0","3.5","4.0","4.5","5.0","5.5","6.0"]);
+let lvFixed = false;
+Object.values(sensorProfiles).forEach(p => {
+  if (p && p.level && !NTRP_OK.has(p.level)) { p.level = ""; lvFixed = true; }
+});
+if (lvFixed) { try { localStorage.setItem(SENSOR_KEY, JSON.stringify(sensorProfiles)); } catch (_) {} }
 function sensorProfilesSave() {
   try { localStorage.setItem(SENSOR_KEY, JSON.stringify(sensorProfiles)); } catch (_) {}
 }
 function sensorName(id) { return (sensorProfiles[id] && sensorProfiles[id].name) || ""; }
-// 设备名统一出口：编号 + 该编号的球员姓名
+// 设备名统一出口：编号 + 该编号的球员姓名；同时把该球员的身高/年龄/拍长套进门限参数
 function setDevName(name) {
   const el = $("devName");
   if (!el) return;
   const nm = String(name || "").trim();
   const p = sensorName(nm);
   el.textContent = p ? `${nm} · ${p}` : nm;
+  applySensorProfile(nm);
+}
+function applySensorProfile(id) {
+  const p = sensorProfiles[id];
+  if (!p) return;
+  if (p.height) FORM.profile.height = Number(p.height);
+  if (p.age) FORM.profile.age = Number(p.age);
+  if (p.racketIn) FORM.profile.racketIn = Number(p.racketIn);
+  try { localStorage.setItem(FORM_PROFILE_KEY, JSON.stringify(FORM.profile)); } catch (_) {}
+  formRenderThresholds();
 }
 function renderSensorList() {
   const box = $("sensorList");
   if (!box) return;
   box.innerHTML = DEV_LIST.map(id => {
     const p = sensorProfiles[id] || {};
-    const bits = [p.height ? p.height + " cm" : "", p.age ? p.age + " 岁" : "", p.level || ""]
+    const bits = [p.height ? p.height + " cm" : "", p.age ? p.age + " 岁" : "",
+                  p.level || "", p.racketIn ? p.racketIn + " 英寸" : ""]
       .filter(Boolean).join(" · ");
     return `<button type="button" class="sensor-item" data-sensor="${id}">`
       + `<span class="sid">${id}</span>`
@@ -4754,6 +4759,7 @@ function pModalOpen(id) {
   $("pHeight").value = p.height || "";
   $("pAge").value = p.age || "";
   $("pLevel").value = p.level || "";
+  $("pRacket").value = p.racketIn ? String(p.racketIn) : "";
   $("pModal").hidden = false;
   $("pName").focus();
 }
@@ -4768,11 +4774,12 @@ $("pModalSave").addEventListener("click", () => {
   const h = Number($("pHeight").value) || 0;
   const a = Number($("pAge").value) || 0;
   const lv = $("pLevel").value;
-  sensorProfiles[pModalId] = { name: nm, height: h, age: a, level: lv };
+  const rk = Number($("pRacket").value) || 0;
+  sensorProfiles[pModalId] = { name: nm, height: h, age: a, level: lv, racketIn: rk };
   sensorProfilesSave();
   $("pModal").hidden = true;
   renderSensorList();
-  // 已连的正是这台，芯片名字同步
+  // 已连的正是这台，芯片名字与门限参数同步
   const cur = ($("devName").textContent || "").trim();
   if (cur.includes(pModalId)) setDevName(pModalId);
 });
