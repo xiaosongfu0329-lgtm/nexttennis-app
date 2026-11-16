@@ -22,6 +22,7 @@
     --pass: #3fb950; --fail: #f85149; --warn: #d29922;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }   /* B125：conn-bar 带 display:flex，需压过 hidden 属性 */
   body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
          background: var(--bg); color: var(--text);
          padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
@@ -296,44 +297,177 @@
   @media (orientation: landscape) {
     body.capVideo #page6.active { position: relative; height: 100dvh; overflow: hidden; }
   }
+
+  /* ===== 2026-11-16 B125：左侧页边栏 + 首页判决改版 ===== */
+  body { display: grid; grid-template-columns: 42px minmax(0, 1fr);
+         grid-template-areas: "nav head" "nav main"; align-content: start; }
+  header { grid-area: head; }
+  .page { grid-area: main; }
+  nav.tabs { grid-area: nav; display: flex; flex-direction: column; justify-content: flex-end;
+             gap: 6px; padding: 10px 4px; border-bottom: 0; border-right: 1px solid var(--border);
+             position: sticky; top: 0; height: 100dvh; }
+  nav.tabs .tab { flex: none; width: 100%; min-height: 66px; border: 0; border-radius: 8px;
+                  padding: 10px 1px; font-size: 13px; font-weight: 700; line-height: 1.1;
+                  letter-spacing: 2px; color: #0d1117;
+                  writing-mode: vertical-rl; text-orientation: upright; }
+  nav.tabs .tab[data-page="page1"] { background: #22c55e; }
+  nav.tabs .tab[data-page="page6"] { background: #f5b301; }
+  nav.tabs .tab[data-page="page5"] { background: #58a6ff; }
+  nav.tabs .tab[data-page="page3"] { background: #e6edf3; }
+  nav.tabs .tab.active { outline: 2px solid #fff; outline-offset: -3px; }
+  @media (orientation: landscape) {
+    body.capPage { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "main"; }
+  }
+
+  .dev-row { display: flex; align-items: center; gap: 8px; }
+  .devchip { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1;
+             background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+             padding: 7px 10px; font-size: 13px; text-align: left; }
+  .devchip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .devchip .caret { margin-left: auto; color: var(--muted); font-size: 11px; }
+  .dev-sub { display: flex; gap: 12px; margin-top: 6px; font-size: 11px; color: var(--muted); }
+  .dev-sub .bat { font-family: ui-monospace, monospace; }
+  .conn-state { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .dot { width: 12px; height: 12px; border-radius: 50%; flex: none;
+         background: #4b5563; box-shadow: 0 0 0 3px rgba(75,85,99,.18); }
+  .dot.on { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.25), 0 0 10px rgba(34,197,94,.6); }
+  .dot.warn { background: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,.22); }
+  .dot.err { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,.22); }
+
+  .devmenu { position: fixed; z-index: 40; min-width: 240px; max-width: 88vw;
+             background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+             padding: 6px; box-shadow: 0 12px 30px rgba(0,0,0,.55); }
+  .devmenu[hidden] { display: none; }
+  .devmenu .h { font-size: 11px; color: var(--muted); padding: 6px 8px 4px; }
+  .devmenu button { display: flex; width: 100%; align-items: center; gap: 8px;
+                    background: transparent; border: 0; border-radius: 8px;
+                    padding: 10px 8px; font-size: 13px; text-align: left; }
+  .devmenu button:active { background: rgba(88,166,255,.15); }
+  .devmenu button .cur { margin-left: auto; font-size: 11px; color: #22c55e; }
+  .devmenu button .pname { color: var(--accent); font-weight: 600; }
+
+  /* 设置页：传感器 ↔ 球员 列表与填写弹窗 */
+  .sensor-item { display: flex; align-items: center; gap: 8px; width: 100%;
+                 background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+                 padding: 10px; margin-top: 6px; font-size: 13px; text-align: left; }
+  .sensor-item .sid { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
+  .sensor-item .sname { font-weight: 600; }
+  .sensor-item .smeta { margin-left: auto; font-size: 11px; color: var(--muted); }
+  .pmodal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center;
+            justify-content: center; background: rgba(0,0,0,.6); padding: 16px; }
+  .pmodal[hidden] { display: none !important; }
+  .pmodal-box { width: 100%; max-width: 360px; background: var(--panel);
+                border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  .pmodal-box h3 { margin: 0 0 10px; font-size: 15px; }
+
+  .speed-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .speed-main { flex: 0 0 62%; max-width: 62%; min-width: 0; }
+  .speed-side { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;
+                align-items: flex-end; gap: 6px; }
+  .speed-lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .speed-lbl .unit { margin-left: 4px; }
+  /* 球速：横向加宽的粗黑体，字号随屏宽走，基本占满卡片左侧 2/3 */
+  .speed-big { font-family: "Arial Black", "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+               font-weight: 900; font-size: clamp(64px, 25vw, 140px); line-height: .88;
+               letter-spacing: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .stroke-big { font-size: 17px; font-weight: 600; color: var(--accent); }
+  .stroke-big .badge { background: transparent; border: 0; padding: 0;
+                       font-size: 17px; font-weight: 600; color: var(--accent); }
+  /* 车速表式圆形仪表：0~200 km/h，270° 量程，红色指针 + 刻度 */
+  .gauge { position: relative; width: clamp(96px, 26vw, 160px); aspect-ratio: 1; flex: none; }
+  .gauge svg { width: 100%; height: 100%; display: block; }
+  .gauge .g-track { fill: none; stroke: #22303c; stroke-width: 9; }
+  .gauge .g-fill { fill: none; stroke: var(--accent); stroke-width: 9; stroke-linecap: round;
+                   transition: stroke-dasharray .35s ease; }
+  .gauge .g-needle { transition: transform .35s cubic-bezier(.3,1.4,.6,1); }
+  .gauge .g-val { position: absolute; inset: 0; display: flex; flex-direction: column;
+                  align-items: center; justify-content: flex-end; padding-bottom: 12px;
+                  font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .gauge .g-val small { font-size: 8px; font-weight: 400; color: var(--muted); }
+
+  .judge { display: flex; gap: 12px; align-items: flex-start; margin-top: 10px; }
+  .diag .tip:empty { display: none; }
+  .pos-list { flex: 1; min-width: 0; }
+  .pos-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+  .pos-row .k { width: 62px; flex: none; font-size: 13px; color: var(--muted); }
+  .stars { font-size: 15px; letter-spacing: 2px; white-space: nowrap; }
+  .stars .on { color: #f5b301; }
+  .stars .half { background: linear-gradient(90deg, #f5b301 50%, #3a4250 50%);
+                 -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .stars .off { color: #3a4250; }
+  .tells { display: flex; gap: 8px; flex: none; }
+  .tell { width: 58px; padding: 8px 2px; border-radius: 10px; text-align: center;
+          background: #0f141b; border: 1px solid var(--border); color: #5b6472; }
+  .tell .ico { display: flex; align-items: center; justify-content: center; height: 26px; }
+  .tell .ico svg { width: 26px; height: 26px; }
+  .tell .tx { display: block; font-size: 10px; margin-top: 3px; }
+  .tell.warn { color: #f59e0b; border-color: #f59e0b; box-shadow: 0 0 10px rgba(245,158,11,.45); }
+  .tell.bad { color: #ef4444; border-color: #ef4444; box-shadow: 0 0 12px rgba(239,68,68,.55); }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden;
+             clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
 </head>
 <body>
 
 <header>
   <h1>Nexttennis V101 · 击球数据台</h1>
-  <div class="conn-bar">
+  <!-- B125：原「设备选择 + 连接/断开按钮」收进隐藏区，仅供 JS 驱动；界面用左侧设备芯片 + 状态灯 -->
+  <div class="conn-bar" hidden>
     <select id="modeSel">
-      <option value="impact">真实设备 — 冲击窗口 (Tennis_Sensor_01/02/03)</option>
-      <option value="mock">Mock 设备（合成冲击数据）</option>
-      <option value="step1">Step1 桥接 — 实时流 (XIAO-IMU-416)</option>
+      <option value="impact">真实设备</option>
     </select>
     <button id="connectBtn" class="primary">连接设备</button>
-    <button id="disconnectBtn" disabled>断开</button>
+    <button id="disconnectBtn">断开</button>
     <span id="connStatus" class="badge idle">未连接</span>
   </div>
+  <div class="conn-state"><span id="connDot" class="dot"></span><span id="connDotTx">未连接</span></div>
 </header>
 
 <nav class="tabs">
   <button class="tab active" data-page="page1">打球</button>
   <button class="tab" data-page="page6">采集</button>
   <button class="tab" data-page="page5">技术</button>
-  <button class="tab" data-page="page4">回顾</button>
-  <button class="tab" data-page="page3">我的</button>
+  <button class="tab" data-page="page3">设置</button>
 </nav>
 
 <!-- ================= 页1：最重要的信息 ================= -->
 <section id="page1" class="page active">
-  <div class="infobar">
-    <span class="dev" id="devName">—</span>
-    <span id="t0off" style="white-space:nowrap">T0 偏移 —</span>
-    <span class="bat" id="devBatt">—</span>
-  </div>
-  <div class="statrow">
-    <div class="stat big"><div class="label">预估球速</div>
-      <div class="val"><span id="speedVal">—</span><span class="unit">km/h</span></div>
+  <!-- B125：设备窗口 + 球速合并为一张卡；点设备芯片弹出设备列表，点即连、再点即断 -->
+  <div class="panel">
+    <div class="dev-row">
+      <button id="devChip" class="devchip" type="button">
+        <span class="nm" id="devName">选择设备</span>
+        <span class="caret">▾</span>
+      </button>
     </div>
-    <div class="stat"><div class="label">正手 / 反手</div><div class="val" id="p1StrokeSpin">—</div></div>
+    <div class="speed-row">
+      <div class="speed-main">
+        <div class="speed-lbl">球速 <span class="unit">km/h</span></div>
+        <div class="speed-big"><span id="speedVal">—</span></div>
+      </div>
+      <div class="speed-side">
+        <div class="stroke-big" id="p1StrokeSpin">未知</div>
+        <div class="gauge">
+          <svg viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="g-track" cx="60" cy="60" r="52"
+                    stroke-dasharray="245 327" transform="rotate(135 60 60)"/>
+            <circle class="g-fill" id="gaugeArc" cx="60" cy="60" r="52"
+                    stroke-dasharray="0 327" transform="rotate(135 60 60)"/>
+            <g id="gaugeTicks"></g>
+            <g class="g-needle" id="gaugeNeedle">
+              <line x1="60" y1="60" x2="31.7" y2="88.3"
+                    stroke="#ef4444" stroke-width="3.4" stroke-linecap="round"/>
+              <circle cx="60" cy="60" r="5.2" fill="#ef4444"/>
+            </g>
+          </svg>
+          <div class="g-val"><span id="gaugeNum">0</span><small>km/h</small></div>
+        </div>
+      </div>
+    </div>
+    <div class="dev-sub">
+      <span id="t0off" style="white-space:nowrap">T0 偏移 —</span>
+      <span class="bat" id="devBatt">—</span>
+    </div>
   </div>
 
   <!-- 会话状态：训练中 / 捡球暂停（暂停时静默击球反馈，过滤捡球弹响） -->
@@ -346,37 +480,62 @@
 
   <!-- 块级标签已取消（2026-11-01 二次拍板）：块边界改为「敲拍 + 一句话口述」，App 内不再有任何块控件 -->
 
+  <!-- B125 判决卡：左侧正面项用星级（★/半星），右侧负面项仿仪表盘告警灯（图标+小字，黄/红） -->
   <div class="diag">
-    <div class="diag-row"><span class="k">引拍</span>
+    <div class="judge">
+      <div class="pos-list">
+        <div class="pos-row"><span class="k">引拍</span><span class="stars" id="stBack"></span></div>
+        <div class="pos-row"><span class="k">随挥</span><span class="stars" id="stFollow"></span></div>
+        <div class="pos-row"><span class="k">拍面控制</span><span class="stars" id="stFace"></span></div>
+        <div class="pos-row"><span class="k">引拍时机</span><span class="stars" id="stTiming"></span></div>
+      </div>
+      <div class="tells">
+        <div class="tell" id="tellFrame">
+          <span class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+              <g transform="rotate(-35 9 10)">
+                <ellipse cx="9" cy="10" rx="5.6" ry="7"/>
+                <path d="M9 3.4v13.2M3.6 10h10.8"/>
+              </g>
+              <circle cx="17.4" cy="5.6" r="2.6" fill="currentColor" stroke="none"/>
+            </svg>
+          </span>
+          <span class="tx">打框</span>
+        </div>
+        <div class="tell" id="tellSqz">
+          <span class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3.5 4.5v15M20.5 4.5v15"/>
+              <path d="M6.2 12h4.4M8.6 9.6 11 12 8.6 14.4"/>
+              <path d="M17.8 12h-4.4M15.4 9.6 13 12 15.4 14.4"/>
+            </svg>
+          </span>
+          <span class="tx">被挤到</span>
+        </div>
+      </div>
+    </div>
+    <!-- 原 badge 写入逻辑保持不变，收进隐藏区供星级/告警灯读取 -->
+    <div class="sr-only" id="judgeRaw">
       <span id="diagBack"><span class="badge idle">—</span></span>
-      <span class="num" id="diagBackNum">—</span></div>
-    <div class="diag-row"><span class="k">随挥</span>
       <span id="diagFollow"><span class="badge idle">—</span></span>
-      <span class="num" id="diagFollowNum">—</span></div>
-    <div class="diag-row"><span class="k">打框</span>
       <span id="frameBadge"><span class="badge idle">—</span></span>
-      <span class="num" id="frameNum">—</span></div>
-    <!-- 新增识别项（2026-11-01 用户要求，与引拍/随挥同格式同行列出；数值待标定） -->
-    <div class="diag-row"><span class="k">击球过晚</span>
       <span id="nfSqz"><span class="badge idle">—</span></span>
-      <span class="num" id="nfSqzNum">—</span></div>
-    <div class="diag-row"><span class="k">引拍时机</span>
       <span id="nfTiming"><span class="badge idle">—</span></span>
-      <span class="num" id="nfTimingNum">—</span></div>
-    <!-- 拍面控制：姿态解算 tilt 角跨击球点（−10→+80ms）的变化；门限来自教练 98 拍 p10~p90 -->
-    <div class="diag-row"><span class="k">拍面</span>
       <span id="nfFaceFlip"><span class="badge idle">—</span></span>
-      <span class="num" id="nfFaceFlipNum">—</span></div>
-    <!-- 打框/流畅度/刷球三项无门限，压成一行摘要保证首页一屏；明细见技术页 -->
-    <div class="diag-row"><span class="k">其它</span>
       <span id="nfOther"><span class="badge idle">—</span></span>
-      <span class="num" id="nfOtherNum">—</span></div>
+      <span id="diagBackNum">—</span>
+      <span id="diagFollowNum">—</span>
+      <span id="frameNum">—</span>
+      <span id="nfSqzNum">—</span>
+      <span id="nfTimingNum">—</span>
+      <span id="nfFaceFlipNum">—</span>
+      <span id="nfOtherNum">—</span>
+    </div>
     <div class="tip" id="diagTip">—</div>
   </div>
 
-  <div id="sessStat" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
-  <!-- 打标提示条（APP-B72）：只提示说什么，录音管线在「我的」页；正反手/引拍/随挥由 App 自判，不用报 -->
-  <div class="hint" id="tagHintBar" style="margin-top:4px">打标：每球后说一个词 —— 打框 · 过晚 · 好球 · 差球 · 随挥 · 引拍（自动录音，课后转写）</div>
+  <!-- B125：判决卡下方的「本次连接共 N 个窗口」「打标提示」等文字已按用户要求取消 -->
   <!-- 蓝牙耳机/麦克风连接状态（2026-11-01 用户要求上首页）：录音用耳机麦、播报走手机扬声器 -->
   <div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:4px;color:var(--muted)">
     <span id="micDot" style="color:var(--muted)">●</span>
@@ -390,6 +549,66 @@
 
   <!-- 2026-11-01 用户要求：新增识别项不再单独占一块，改为与引拍/随挥同格式的行，
        统一列在诊断卡里（上面 diag 区块），详细数值仍在技术页 nfBox -->
+
+  <!-- 2026-11-16 回顾页取消，本次训练汇总并入首页（B124）：
+       原来「回顾」页的统计卡片、甩鞭、手腕、分享卡片全部搬到这里，id 保持不变，
+       reviewRender() 无需改动即可继续写入。历史 PB / 清空历史移到「我的」页。 -->
+  <div class="panel">
+    <h2>本次训练</h2>
+    <div class="statrow">
+      <div class="stat big"><div class="label">最快球速</div>
+        <div class="val"><span id="rvMaxSpeed">—</span><span class="unit">km/h</span></div></div>
+      <div class="stat"><div class="label">有效击球</div><div class="val" id="rvBalls">—</div></div>
+    </div>
+    <div class="statrow">
+      <div class="stat"><div class="label">正手 / 反手</div><div class="val" id="rvSide">—</div></div>
+      <div class="stat"><div class="label">动作到位</div><div class="val" id="rvRate">—</div></div>
+    </div>
+    <div class="statrow">
+      <div class="stat"><div class="label">最长连击</div><div class="val" id="rvStreak">—</div></div>
+      <div class="stat"><div class="label">打框提醒</div><div class="val" id="rvFrame">—</div></div>
+    </div>
+    <div class="tip" id="rvComment">—</div>
+    <div class="tip" id="rvCompare" style="color:var(--muted)">—</div>
+  </div>
+
+  <!-- 甩鞭评分（2026-11-12）：末段爆发强度绝对分，100 = 教练组中位数；单拍波动大，展示取中位数 -->
+  <div class="panel">
+    <h2>挥拍爆发 · 甩鞭评分</h2>
+    <div class="wrist-grid">
+      <div class="wrist-cell"><div class="k">正手</div><div class="v" id="rvWhipFh">—</div></div>
+      <div class="wrist-cell"><div class="k">反手</div><div class="v" id="rvWhipBh">—</div></div>
+    </div>
+    <div class="wrist-bar"><span id="rvWhipNote">打几球后自动评估</span></div>
+  </div>
+
+  <!-- 手腕损伤预警（2026-11-12）：正手 + 峰值≥400°/s 的可评估球，点卡片看专家建议 -->
+  <div class="panel wrist-card" id="rvWristCard" role="button" tabindex="0"
+       aria-label="手腕损伤预警，点击查看专家建议">
+    <h2>手腕损伤预警 · 今日</h2>
+    <div class="wrist-grid">
+      <div class="wrist-cell"><div class="k">超门限击球</div><div class="v" id="rvWristOver">—</div></div>
+      <div class="wrist-cell"><div class="k">占可评估正手</div><div class="v" id="rvWristPct">—</div></div>
+      <div class="wrist-cell"><div class="k">uni50 合计</div><div class="v" id="rvWristSum">—</div></div>
+      <div class="wrist-cell"><div class="k">黄+红占比</div><div class="v" id="rvWristYr">—</div></div>
+    </div>
+    <div class="wrist-bar">
+      <span id="rvWristBand" class="badge idle">—</span>
+      <span id="rvWristNote">打几球后自动评估</span>
+      <span class="go">专家建议 ›</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>分享卡片</h2>
+    <p class="hint">只和自己比：卡片上不出现排名、不出现别的孩子。生成后点「保存图片」；手机上若没有自动下载，长按图片保存到相册。</p>
+    <div class="share-wrap"><img id="shareImg" alt="分享卡片" /></div>
+    <div class="voice-row" style="margin-top:8px">
+      <button id="shareMake" class="chip">生成卡片</button>
+      <button id="shareSave" class="chip">保存图片</button>
+      <span id="shareStat" class="hint">—</span>
+    </div>
+  </div>
 </section>
 
 <!-- ================= 页6：采集（现场大字操作台：摄像头 + 计数 + 提示，2026-11-01） ================= -->
@@ -537,69 +756,14 @@
   </details>
 </section>
 
-<!-- ================= 页4：家长回顾（家庭视图，纯结论，不做横向比较） ================= -->
-<section id="page4" class="page">
-  <div class="panel">
-    <h2>本次训练</h2>
-    <div class="statrow">
-      <div class="stat big"><div class="label">最快球速</div>
-        <div class="val"><span id="rvMaxSpeed">—</span><span class="unit">km/h</span></div></div>
-      <div class="stat"><div class="label">有效击球</div><div class="val" id="rvBalls">—</div></div>
-    </div>
-    <div class="statrow">
-      <div class="stat"><div class="label">正手 / 反手</div><div class="val" id="rvSide">—</div></div>
-      <div class="stat"><div class="label">动作到位</div><div class="val" id="rvRate">—</div></div>
-    </div>
-    <div class="statrow">
-      <div class="stat"><div class="label">最长连击</div><div class="val" id="rvStreak">—</div></div>
-      <div class="stat"><div class="label">打框提醒</div><div class="val" id="rvFrame">—</div></div>
-    </div>
-    <div class="tip" id="rvComment">—</div>
-    <div class="tip" id="rvCompare" style="color:var(--muted)">—</div>
-  </div>
-
-  <!-- 甩鞭评分（2026-11-12）：末段爆发强度绝对分，100 = 教练组中位数；单拍波动大，展示取中位数 -->
-  <div class="panel">
-    <h2>挥拍爆发 · 甩鞭评分</h2>
-    <div class="wrist-grid">
-      <div class="wrist-cell"><div class="k">正手</div><div class="v" id="rvWhipFh">—</div></div>
-      <div class="wrist-cell"><div class="k">反手</div><div class="v" id="rvWhipBh">—</div></div>
-    </div>
-    <div class="wrist-bar"><span id="rvWhipNote">打几球后自动评估</span></div>
-  </div>
-
-  <!-- 手腕损伤预警（2026-11-12）：正手 + 峰值≥400°/s 的可评估球，点卡片看专家建议 -->
-  <div class="panel wrist-card" id="rvWristCard" role="button" tabindex="0"
-       aria-label="手腕损伤预警，点击查看专家建议">
-    <h2>手腕损伤预警 · 今日</h2>
-    <div class="wrist-grid">
-      <div class="wrist-cell"><div class="k">超门限击球</div><div class="v" id="rvWristOver">—</div></div>
-      <div class="wrist-cell"><div class="k">占可评估正手</div><div class="v" id="rvWristPct">—</div></div>
-      <div class="wrist-cell"><div class="k">uni50 合计</div><div class="v" id="rvWristSum">—</div></div>
-      <div class="wrist-cell"><div class="k">黄+红占比</div><div class="v" id="rvWristYr">—</div></div>
-    </div>
-    <div class="wrist-bar">
-      <span id="rvWristBand" class="badge idle">—</span>
-      <span id="rvWristNote">打几球后自动评估</span>
-      <span class="go">专家建议 ›</span>
-    </div>
-  </div>
-
-  <div class="panel">
-    <h2>分享卡片</h2>
-    <p class="hint">只和自己比：卡片上不出现排名、不出现别的孩子。生成后点「保存图片」；手机上若没有自动下载，长按图片保存到相册。</p>
-    <div class="share-wrap"><img id="shareImg" alt="分享卡片" /></div>
-    <div class="voice-row" style="margin-top:8px">
-      <button id="shareMake" class="chip">生成卡片</button>
-      <button id="shareSave" class="chip">保存图片</button>
-      <button id="rvClear" class="chip">清空历史</button>
-      <span id="shareStat" class="hint">—</span>
-    </div>
-  </div>
-</section>
-
-<!-- ================= 页3：我的（孩子资料 / 块名 / 录音打标 / 导出） ================= -->
+<!-- ================= 页3：设置（传感器↔球员 / 孩子资料 / 数据导出） ================= -->
 <section id="page3" class="page">
+  <div class="panel" style="margin-top:0">
+    <h2>传感器 ↔ 球员</h2>
+    <div id="sensorList"></div>
+    <p class="hint">点任意一台传感器，填写该编号对应的球员姓名、身高、年龄、水平。</p>
+  </div>
+
   <div class="panel" style="margin-top:0">
     <h2>孩子资料（30 秒填完）</h2>
     <div class="form-row">
@@ -638,6 +802,7 @@
       <button id="exportJsonBtn">导出 JSON</button>
       <button id="exportSessionLogBtn">导出会话日志</button>
       <button id="voiceClearBtn">清空本地录音</button>
+      <button id="rvClear" class="chip">清空历史</button>
     </div>
     <div class="actions" style="margin-top:6px;align-items:center">
       <label class="chip" for="videoPick" style="cursor:pointer">选择本次视频…</label>
@@ -734,6 +899,35 @@
   "note": "null 字段 = 待回填；App 对 null 回退现有硬编码门限"
 }
 </script>
+
+<!-- B125：设备选择弹出菜单（点设备芯片弹出；点已连接项 = 断开） -->
+<div id="devMenu" class="devmenu" hidden></div>
+
+<!-- B125：传感器球员资料弹窗（设置页逐台填写） -->
+<div id="pModal" class="pmodal" hidden>
+  <div class="pmodal-box">
+    <h3 id="pModalTitle">球员资料</h3>
+    <div class="form-row"><label for="pName">姓名</label>
+      <input id="pName" type="text" maxlength="12" placeholder="如 小明" /></div>
+    <div class="form-row"><label for="pHeight">身高（cm）</label>
+      <input id="pHeight" type="number" inputmode="numeric" min="90" max="210" step="1" placeholder="如 135" /></div>
+    <div class="form-row"><label for="pAge">年龄（岁）</label>
+      <input id="pAge" type="number" inputmode="numeric" min="4" max="80" step="1" placeholder="如 9" /></div>
+    <div class="form-row"><label for="pLevel">水平</label>
+      <select id="pLevel">
+        <option value="">未设置</option>
+        <option value="入门">入门</option>
+        <option value="初级">初级</option>
+        <option value="中级">中级</option>
+        <option value="高级">高级</option>
+        <option value="竞赛">竞赛</option>
+      </select></div>
+    <div class="actions" style="margin-top:10px">
+      <button id="pModalSave" class="primary">保存</button>
+      <button id="pModalCancel" class="chip">取消</button>
+    </div>
+  </div>
+</div>
 
 <script>
 "use strict";
@@ -1675,8 +1869,48 @@ const connBadge = $("connStatus");
 function setConn(text, cls) {
   connBadge.textContent = text;
   connBadge.className = "badge " + cls;
+  syncConnDot();
   colRefresh();                     // 采集页连接状态同步（函数声明提升，连接时才调用）
 }
+// B125：右上状态灯 —— 绿=已连接，其余（未连接/断开/失败）一律灰
+function syncConnDot() {
+  const dot = $("connDot"), tx = $("connDotTx");
+  const on = /\bpass\b/.test(connBadge.className || "");
+  if (dot) dot.className = "dot" + (on ? " on" : "");
+  if (tx) tx.textContent = on ? "已连接" : connBadge.textContent;
+}
+// B125：车速表式球速仪表（0~200 km/h，270° 量程；r=52 → 周长≈327，量程弧长≈245）
+function setGauge(kmh) {
+  const arc = $("gaugeArc"), num = $("gaugeNum");
+  if (!arc || !num) return;
+  const v = Number.isFinite(kmh) ? Math.max(0, Math.min(200, kmh)) : 0;
+  arc.setAttribute("stroke-dasharray", `${(v / 200 * 245).toFixed(1)} 327`);
+  num.textContent = Number.isFinite(kmh) ? v.toFixed(0) : "0";
+  const nd = $("gaugeNeedle");
+  if (nd) nd.setAttribute("transform", `rotate(${(v / 200 * 270).toFixed(1)} 60 60)`);
+}
+// 刻度：0~200 每 25 一格（50 的整数倍为长刻度并标数字），角度与 270° 量程一致
+function buildGaugeTicks() {
+  const g = $("gaugeTicks");
+  if (!g) return;
+  let s = "";
+  for (let v = 0; v <= 200; v += 25) {
+    const major = v % 50 === 0;
+    const a = (135 + v / 200 * 270) * Math.PI / 180;
+    const c = Math.cos(a), sn = Math.sin(a);
+    const r1 = 46, r2 = major ? 39.5 : 42.5;
+    s += `<line x1="${(60 + c * r1).toFixed(1)}" y1="${(60 + sn * r1).toFixed(1)}"`
+      + ` x2="${(60 + c * r2).toFixed(1)}" y2="${(60 + sn * r2).toFixed(1)}"`
+      + ` stroke="${major ? "#8b949e" : "#39434f"}" stroke-width="${major ? 1.7 : 1}"/>`;
+    if (major) {
+      const lr = 31;
+      s += `<text x="${(60 + c * lr).toFixed(1)}" y="${(60 + sn * lr + 2.6).toFixed(1)}"`
+        + ` fill="#8b949e" font-size="7.5" text-anchor="middle">${v}</text>`;
+    }
+  }
+  g.innerHTML = s;
+}
+buildGaugeTicks();
 
 // =====================================================
 // computeLateContactFeatures — 复刻固件 B58/B60（击球点偏后识别）
@@ -2007,8 +2241,10 @@ function onWindow(meta, data) {
     spd = estimateSpeed(data);
     meta.speedKmh = spd.kmh;          // 存进 meta：回顾页/分享卡直接复用，无需重算
     $("speedVal").textContent = spd.kmh.toFixed(0);
+    setGauge(spd.kmh);
   } else if (frameHit) {
     $("speedVal").textContent = "—";  // 打框是否决项：本球不算球速
+    setGauge(null);
   }
   meta.milestone = updateStreak(res, meta);   // combo / achieve / null
   if (capOn) capMarkAdd(meta);                // 采集中：只打点（音频常开，不在此起停）
@@ -2072,6 +2308,7 @@ function updateSessStat() {
   const n = sessionWindows.length;
   const passN = sessionWindows.filter(w => isQcOk(w.qc.code, w.meta)).length;
   const el = $("sessStat");
+  if (!el) return;
   if (!n) { el.textContent = ""; return; }
   el.textContent = `本次连接共 ${n} 个窗口（PASS ${passN}，其余 ${n - passN}）`;
 }
@@ -2088,6 +2325,7 @@ $("winSel").addEventListener("change", () => {
   if (isQcOk(w.qc.code, w.meta)) {
     const spd = estimateSpeed(w.data);
     $("speedVal").textContent = spd.kmh.toFixed(0);
+    setGauge(spd.kmh);
   }
 });
 
@@ -3542,8 +3780,8 @@ function updateDiagnosis(w) {
     tbNum.textContent = "—"; ftNum.textContent = "—";
     tipEl.textContent = txt; tipEl.style.color = "";
   };
-  if (!w) { idle("—"); return; }
-  if (fh) { idle("打框：本球不评估动作项"); return; }
+  if (!w) { idle(""); return; }
+  if (fh) { idle(""); return; }   // B125：打框时不再提示「本球不评估动作项」
 
   // 2026-11-06（B109）：影子期关闭——引拍/随挥幅度直接给档位判决（不是绝对准确没关系，先激励起来）
   const VSHADOW = false;
@@ -3750,7 +3988,7 @@ function updateQcPanel(res) {
       p1.innerHTML = `<span class="badge ${fhbh.side === '正手' ? 'pass' : 'warn'}">${fhbh.side}</span>`
                    + (techModeOn ? `<span style="color:var(--muted);font-size:11px;margin-left:6px">W2=${fhbh.w2.toFixed(0)} · gy=${fhbh.gyMean.toFixed(0)}dps · Ay=${fhbh.ayMean.toFixed(2)}g · n=${fhbh.n}</span>` : '');
     } else {
-      p1.textContent = '—';
+      p1.textContent = '未知';
     }
   }
   $("qcSeq").textContent = res.code === QC.FAIL_PACKET_LOSS ? "断层" : "连续";
@@ -3948,7 +4186,7 @@ function scheduleReconnect(dev) {
         const gap = lastWinT ? Math.round((Date.now() - lastWinT) / 1000) : 0;
         setConn("已连接", "pass");
         connBadge.textContent = `已重连（空档 ${gap}s）`;
-        $("devName").textContent = dev.name;
+        setDevName(dev.name);
         connLogAdd({ event: "conn", device: dev.name, sessionTag: sessionTag(), note: `reconnect gap ${gap}s` });
         log(`已重连（空档 ${gap} 秒）——这段空档的球没有数据`, "log-pass");
         sessWake(true);
@@ -3984,7 +4222,7 @@ window.__ntStatus = function (json) {
     else if (s.state === "connecting") { setConn("连接中…", "idle"); }
     else if (s.state === "connected") {
       setConn("已连接", "pass");
-      $("devName").textContent = s.name || "Tennis_Sensor";
+      setDevName(s.name || "Tennis_Sensor");
       $("devMode").textContent = "冲击窗口协议（原生壳）";
       $("devMtu").textContent = s.mtu ? `MTU ${s.mtu}` : "BLE 5.3 DLE";
       connLogAdd({ event: "conn", device: s.name, sessionTag: sessionTag(), note: "native" });
@@ -4247,7 +4485,7 @@ async function connectImpact() {
       }
     }
     setConn("已连接", "pass");
-    $("devName").textContent = btDevice.name;
+    setDevName(btDevice.name);
     $("t0off").textContent = "T0 偏移 —"; $("t0off").style.color = "";
     $("devMode").textContent = "冲击窗口协议";
     $("devMtu").textContent = "BLE 5.3 DLE";
@@ -4278,7 +4516,7 @@ async function connectStep1() {
     btChar.addEventListener("characteristicvaluechanged", e => handleStep1Pkt(e.target.value.buffer));
     await btChar.startNotifications();
     setConn("已连接", "pass");
-    $("devName").textContent = btDevice.name;
+    setDevName(btDevice.name);
     $("t0off").textContent = "T0 偏移 —"; $("t0off").style.color = "";
     $("devMode").textContent = "Step1 实时流桥接";
     $("devMtu").textContent = "62B/pkt ~83Hz";
@@ -4317,7 +4555,7 @@ function connectMock() {
   mockDev = new MockDevice(chunk => parser.handleChunk(chunk));
   mockDev.start();
   setConn("已连接(Mock)", "pass");
-  $("devName").textContent = "Mock Impact Generator";
+  setDevName("Mock Impact Generator");
   $("t0off").textContent = "T0 偏移 —"; $("t0off").style.color = "";
   $("devMode").textContent = "合成冲击数据";
   $("devMtu").textContent = "模拟分片 232B";
@@ -4340,6 +4578,7 @@ function onDisconnect(e) {
   // R3 断连提醒：状态行变红 + 震动 + 短提示音（不用 TTS 长播报）
   connBadge.textContent = `蓝牙已断开（已 ${gapS === "" ? "?" : gapS} 秒无数据）`;
   connBadge.className = "badge fail";
+  syncConnDot();
   try { if (navigator.vibrate) navigator.vibrate(300); } catch (_) {}
   try { if (audio.ctx) audio.playCombo(); } catch (_) {}
   log(`设备已断开（距最后窗口 ${gapS === "" ? "?" : gapS}s，lastSeq=${lastSeq === "" ? "?" : lastSeq}）`, "log-warn");
@@ -4433,6 +4672,147 @@ $("modeSel").addEventListener("change", () => {
   try { if (NATIVE) NATIVE.disconnect(); } catch (e) {}
   cleanupBt();
 });
+
+// ---------- B125：设备芯片 + 弹出设备列表（点即连、再点即断） ----------
+// 设备固定为真实设备（冲击窗口协议），弹出列表即可连接的传感器编号
+const DEV_LIST = ["Tennis_Sensor_01", "Tennis_Sensor_02", "Tennis_Sensor_03"];
+function devMenuRender() {
+  const box = $("devMenu");
+  if (!box) return;
+  const on = /\bpass\b/.test(connBadge.className);
+  const cur = ($("devName").textContent || "").trim();
+  box.innerHTML = `<div class="h">可连接设备（点已连接项即断开）</div>`
+    + DEV_LIST.map(nm => `<button type="button" data-dev="${nm}">`
+        + `<span>${nm}</span>`
+        + (sensorName(nm) ? `<span class="pname">${sensorName(nm)}</span>` : "")
+        + (on && cur.includes(nm) ? `<span class="cur">已连接</span>` : "")
+      + `</button>`).join("");
+}
+function devMenuOpen() {
+  const box = $("devMenu"), chip = $("devChip");
+  if (!box || !chip) return;
+  devMenuRender();
+  box.hidden = false;
+  const r = chip.getBoundingClientRect();
+  box.style.left = Math.max(8, Math.min(r.left, innerWidth - box.offsetWidth - 8)) + "px";
+  box.style.top = (r.bottom + 6) + "px";
+}
+$("devChip").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const box = $("devMenu");
+  if (box.hidden) devMenuOpen(); else box.hidden = true;
+});
+$("devMenu").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-dev]");
+  if (!btn) return;
+  const nm = btn.dataset.dev;
+  $("devMenu").hidden = true;
+  const on = /\bpass\b/.test(connBadge.className);
+  const cur = ($("devName").textContent || "").trim();
+  if (on && cur.includes(nm)) { $("disconnectBtn").click(); return; }   // 再点同一台 = 断开
+  $("modeSel").value = "impact";
+  $("connectBtn").click();
+});
+document.addEventListener("click", () => { const b = $("devMenu"); if (b) b.hidden = true; });
+addEventListener("scroll", () => { const b = $("devMenu"); if (b) b.hidden = true; }, true);
+
+// ---------- B125：传感器 ↔ 球员资料（设置页逐台填写，localStorage 持久化） ----------
+const SENSOR_KEY = "nt_sensor_profiles";
+let sensorProfiles = {};
+try { sensorProfiles = JSON.parse(localStorage.getItem(SENSOR_KEY) || "{}") || {}; } catch (_) { sensorProfiles = {}; }
+function sensorProfilesSave() {
+  try { localStorage.setItem(SENSOR_KEY, JSON.stringify(sensorProfiles)); } catch (_) {}
+}
+function sensorName(id) { return (sensorProfiles[id] && sensorProfiles[id].name) || ""; }
+// 设备名统一出口：编号 + 该编号的球员姓名
+function setDevName(name) {
+  const el = $("devName");
+  if (!el) return;
+  const nm = String(name || "").trim();
+  const p = sensorName(nm);
+  el.textContent = p ? `${nm} · ${p}` : nm;
+}
+function renderSensorList() {
+  const box = $("sensorList");
+  if (!box) return;
+  box.innerHTML = DEV_LIST.map(id => {
+    const p = sensorProfiles[id] || {};
+    const bits = [p.height ? p.height + " cm" : "", p.age ? p.age + " 岁" : "", p.level || ""]
+      .filter(Boolean).join(" · ");
+    return `<button type="button" class="sensor-item" data-sensor="${id}">`
+      + `<span class="sid">${id}</span>`
+      + `<span class="sname">${p.name || "未命名"}</span>`
+      + `<span class="smeta">${bits || "点此填写"}</span></button>`;
+  }).join("");
+}
+let pModalId = "";
+function pModalOpen(id) {
+  pModalId = id;
+  const p = sensorProfiles[id] || {};
+  $("pModalTitle").textContent = `球员资料 · ${id}`;
+  $("pName").value = p.name || "";
+  $("pHeight").value = p.height || "";
+  $("pAge").value = p.age || "";
+  $("pLevel").value = p.level || "";
+  $("pModal").hidden = false;
+  $("pName").focus();
+}
+$("sensorList").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-sensor]");
+  if (btn) pModalOpen(btn.dataset.sensor);
+});
+$("pModalCancel").addEventListener("click", () => { $("pModal").hidden = true; });
+$("pModal").addEventListener("click", (e) => { if (e.target.id === "pModal") $("pModal").hidden = true; });
+$("pModalSave").addEventListener("click", () => {
+  const nm = $("pName").value.trim();
+  const h = Number($("pHeight").value) || 0;
+  const a = Number($("pAge").value) || 0;
+  const lv = $("pLevel").value;
+  sensorProfiles[pModalId] = { name: nm, height: h, age: a, level: lv };
+  sensorProfilesSave();
+  $("pModal").hidden = true;
+  renderSensorList();
+  // 已连的正是这台，芯片名字同步
+  const cur = ($("devName").textContent || "").trim();
+  if (cur.includes(pModalId)) setDevName(pModalId);
+});
+renderSensorList();
+
+// ---------- B125：正面项星级 + 负面项告警灯 ----------
+// 不动原有 badge 写入逻辑：badge 藏在 #judgeRaw，这里只读它的 class / 文案做二次呈现
+function badgeState(id) {
+  const host = $(id);
+  if (!host) return { cls: "idle", txt: "" };
+  const b = host.querySelector(".badge");
+  if (!b) return { cls: "idle", txt: (host.textContent || "").trim() };
+  const m = (b.className || "").match(/\b(pass|warn|fail|alarm|idle)\b/);
+  return { cls: m ? m[1] : "idle", txt: (b.textContent || "").trim() };
+}
+function starsHTML(v) {
+  let h = "";
+  for (let i = 1; i <= 5; i++) {
+    h += `<span class="${v >= i ? "on" : v >= i - 0.5 ? "half" : "off"}">★</span>`;
+  }
+  return h;
+}
+const STAR_V = { pass: 5, warn: 3.5, fail: 1.5, alarm: 1.5, idle: 0 };
+const STAR_MAP = { diagBack: "stBack", diagFollow: "stFollow", nfFaceFlip: "stFace", nfTiming: "stTiming" };
+function syncJudge() {
+  for (const [bid, sid] of Object.entries(STAR_MAP)) {
+    const el = $(sid);
+    if (el) el.innerHTML = starsHTML(STAR_V[badgeState(bid).cls] || 0);
+  }
+  const fr = badgeState("frameBadge"), sq = badgeState("nfSqz");
+  const tf = $("tellFrame"), ts = $("tellSqz");
+  if (tf) tf.className = "tell" + (fr.cls === "fail" ? " bad" : fr.cls === "warn" ? " warn" : "");
+  if (ts) ts.className = "tell" + (sq.cls === "fail" ? " bad" : sq.cls === "warn" ? " warn" : "");
+}
+if ($("judgeRaw")) {
+  new MutationObserver(syncJudge).observe($("judgeRaw"),
+    { subtree: true, childList: true, characterData: true, attributes: true });
+}
+syncJudge();
+syncConnDot();
 
 // ---------- 会话状态按钮（训练中 / 捡球暂停）----------
 $("sessTrain").addEventListener("click", () => setSessionState("train"));
@@ -6241,6 +6621,16 @@ $("rvClear").addEventListener("click", () => {
   log("已清空回顾历史", "log-info");
 });
 
+// B124：本次训练汇总已并入首页，需要边打边更新。
+// 只在「打球页可见」且「窗口数变化」时重算，避免空转和逐球重复写本地历史。
+let rvSeen = -1;
+setInterval(() => {
+  if (!$("page1").classList.contains("active")) return;
+  if (sessionWindows.length === rvSeen) return;
+  rvSeen = sessionWindows.length;
+  reviewRender();
+}, 2000);
+
 // ---------- 手腕损伤预警 → 专家建议弹层（2026-11-12）----------
 function adviceOpen() {
   $("adviceMask").classList.add("on");
@@ -6256,7 +6646,7 @@ $("adviceMask").addEventListener("click", e => { if (e.target === $("adviceMask"
 
 // ---------- URL ?mode= 快捷方式（PWA 桌面快捷方式传入）----------
 const urlMode = new URLSearchParams(location.search).get("mode");
-if (urlMode && ["mock", "impact", "step1"].includes(urlMode)) {
+if (urlMode && ["impact"].includes(urlMode)) {   // B125：设备固定真实设备，mock/step1 已取消
   $("modeSel").value = urlMode;
   log(`已通过快捷方式选择模式：${urlMode}`, "log-info");
 }
@@ -6736,7 +7126,7 @@ if ($("camFsBtn")) $("camFsBtn").addEventListener("click", async () => {
   } catch (e) { camLog(`全屏失败：${e.message}`, true); }
 });
 
-// ---------- 页签切换（页1 打球 / 页6 采集 / 页5 技术 / 页4 回顾 / 页3 我的）----------
+// ---------- 页签切换（页1 打球 / 页6 采集 / 页5 技术 / 页3 我的）----------
 const tabBtns = Array.from(document.querySelectorAll(".tab"));
 function switchPage(id) {
   document.body.classList.toggle("capPage", id === "page6");   // 采集页横屏时收起页头/页签
@@ -6747,8 +7137,8 @@ function switchPage(id) {
     setTimeout(() => view.resize(), 60);
     const l = $("log");
     if (l) l.scrollTop = l.scrollHeight;
-  } else if (id === "page4") {
-    reviewRender();           // 进页时把本次训练入账（幂等）并刷新回顾数据
+  } else if (id === "page1") {
+    reviewRender();           // 2026-11-16：本次训练汇总已并入首页，进页即刷新（幂等入账）
   } else if (id === "page6") {
     colRefresh();             // 采集页：大字计数/连接/录音状态
     capPaint();               // 2026-11-05：不再进页自动开摄像头（纯录音采集必须关摄像头）
