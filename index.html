@@ -1701,8 +1701,13 @@ class AudioFeedbackEngine {
 
   // 语音播报（不阻塞暴击音）
   speak(text) {
-    if (!("speechSynthesis" in window)) return;
     if (window.__ttsMuted) return;   // 录音模式：不播报，避免被麦克风录进去
+    // [B127] WebView 不实现 Web Speech 合成，原生壳走系统 TTS
+    const br = window.AndroidBle;
+    if (br && typeof br.speak === "function") {
+      try { br.speak(text); return; } catch (e) { /* 落到下面浏览器分支 */ }
+    }
+    if (!("speechSynthesis" in window)) return;
     try {
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
@@ -6490,13 +6495,44 @@ if (!window.isSecureContext || !navigator.mediaDevices) {
       + `接口=${navigator.mediaDevices ? "有" : "无"}；请用 https 地址打开`, "log-warn");
 }
 
-function download(filename, content, mime) {
-  const blob = new Blob([content], { type: mime });
+// [B127] 保存文件：原生壳里 WebView 不支持 <a download>，改走桥分块写入「下载」目录；
+// 浏览器里仍用 Blob + a[download]。返回 Promise<boolean>（是否已保存）。
+async function saveBlobFile(blob, filename, mime) {
+  const br = window.AndroidBle;
+  if (br && typeof br.saveStart === "function") {
+    try {
+      if (!br.saveStart(filename, mime || "application/octet-stream")) {
+        log(`保存失败：无法创建 ${filename}`, "log-warn");
+        return false;
+      }
+      const CHUNK = 512 * 1024;
+      for (let off = 0; off < blob.size; off += CHUNK) {
+        const buf = await blob.slice(off, off + CHUNK).arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        let s = "";
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        }
+        br.saveChunk(btoa(s));
+      }
+      const where = br.saveEnd();
+      log(`已保存 ${filename} → ${where || "下载目录"}`, "log-info");
+      return true;
+    } catch (e) {
+      log(`保存失败：${e.message}`, "log-warn");
+      return false;
+    }
+  }
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(a.href);
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  return true;
+}
+
+function download(filename, content, mime) {
+  return saveBlobFile(new Blob([content], { type: mime }), filename, mime);
 }
 
 $("exportJsonBtn").addEventListener("click", () => {
@@ -7202,14 +7238,12 @@ function shareSave() {
   const name = `nexttennis_${sessionTag()}.png`;
   shareCanvas.toBlob(b => {
     if (!b) { log("卡片导出失败", "log-fail"); return; }
-    const url = URL.createObjectURL(b);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-    $("shareStat").textContent = `已保存 ${name}；没找到文件就长按上方图片存到相册`;
-    log(`分享卡片已导出 ${name}`, "log-info");
+    saveBlobFile(b, name, "image/png").then(ok => {
+      $("shareStat").textContent = ok
+        ? `已保存 ${name}（系统「下载」目录）`
+        : `保存失败；可长按上方图片存到相册`;
+      if (ok) log(`分享卡片已导出 ${name}`, "log-info");
+    });
   }, "image/png");
 }
 
@@ -7591,11 +7625,7 @@ async function camStartRec() {
       });
       camMetaCur = null;
     }
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    saveBlobFile(blob, name, blob.type || "video/webm");
     camLog(`视频已保存 ${name}（${capVideoSizeMb} MB）`, false);
     log(`采集页：视频已保存 ${name}`, "log-info");
     if (fs) {
