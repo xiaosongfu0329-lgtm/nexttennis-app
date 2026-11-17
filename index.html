@@ -770,6 +770,10 @@
   <div class="panel">
     <h2>形态门限 v2（生效值 / 来源）</h2>
     <div id="formThrTech" class="thr-box">—</div>
+    <div class="actions" style="margin-top:6px">
+      <button id="k3ResetBtn">重置引拍基线（K3）</button>
+      <span class="hint" id="k3ResetStat" style="margin-left:8px">换拍/换人时重置，重新校准 10 球</span>
+    </div>
   </div>
 
   <!-- 运行日志：收进技术页底部折叠（APP-B72 界面重组，原独立页2） -->
@@ -970,7 +974,14 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B126-20261117-1200";   // B124：手腕负荷剔除「主动旋前」（见下方 B124 说明）。B123：回顾页「挥拍爆发 · 甩鞭评分」。B122：回顾页「手腕损伤预警」（逐拍 uni50，只统计正手，今日累计）；B121：视频采集竖屏修复——①capStart 等全屏/锁横屏真正生效（≤1s）再取流，原先是 fire-and-forget；②camGetStream 取流后校验方向，竖屏就释放、等横屏重取一次；③camOpen 复用旧流前复核方向（上一场竖屏流在视口已横屏时重取）；④camActual.portrait 标记 + 仍竖屏时明确提示「视频会侧躺，请关闭系统方向锁定」；⑤camMetaCur 增加 source_orientation 字段（append，不改既有字段）。不改命名/列顺序/分析流程。11-10 实测：165917、170549 两场成片 405×720 竖屏，171722 起全部 1280×720。sw.js CACHE nexttennis-v62。B120：录像时间基准落盘；B119：心跳对时
+const APP_BUILD = "APP-Step5-B127-20261117-1458";   // B127：随挥档位启用（方案 A）+ K3 引拍基线跨会话持久化（方案 B，见下方说明）。
+// B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
+//   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
+//   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
+//   ②方案 B——K3 引拍占比基线跨会话持久化：localStorage nt_k3_base_v1（k3Buf+k3 分侧），每有效击球落盘，
+//   新会话不再清零；技术页「形态门限 v2」面板新增「重置引拍基线（K3）」按钮（换拍/换人手动清零）。
+//   standalone/droptest 逐字同步。sw.js CACHE nexttennis-v71。
+// B124：手腕负荷剔除「主动旋前」（见下方 B124 说明）。B123：回顾页「挥拍爆发 · 甩鞭评分」。B122：回顾页「手腕损伤预警」（逐拍 uni50，只统计正手，今日累计）；B121：视频采集竖屏修复——①capStart 等全屏/锁横屏真正生效（≤1s）再取流，原先是 fire-and-forget；②camGetStream 取流后校验方向，竖屏就释放、等横屏重取一次；③camOpen 复用旧流前复核方向（上一场竖屏流在视口已横屏时重取）；④camActual.portrait 标记 + 仍竖屏时明确提示「视频会侧躺，请关闭系统方向锁定」；⑤camMetaCur 增加 source_orientation 字段（append，不改既有字段）。不改命名/列顺序/分析流程。11-10 实测：165917、170549 两场成片 405×720 竖屏，171722 起全部 1280×720。sw.js CACHE nexttennis-v62。B120：录像时间基准落盘；B119：心跳对时
 // B123：回顾页新增「挥拍爆发 · 甩鞭评分」——把 tools/whip_scoring.py 的口径 1:1 移植为 computeWhipScore()：
 // 只取「启动 → 触球前 10ms」(idx0..176)，先截断再做 5 点平滑与真实时间求导，峰值角加速度 ÷ 教练锚点 ×100；
 // 正手锚点 1487 / 反手锚点 2076 rad/s^2 分开（双手反手负荷不同尺度），挥速 <10 rad/s 视为未发力不评分。
@@ -2976,8 +2987,9 @@ function volCheckCue(side, seq, preTier, postTier) {
 // 幅度通道：现有 tb_score / ft_score 判据原样保留，换算函数待下次采集标定。
 // =====================================================================
 const FORM_PROFILE_KEY = "nt_profile_v1";
+const K3_PROFILE_KEY = "nt_k3_base_v1";   // K3 个人引拍占比基线（跨会话持久化，方案 B 2026-11-17）
 const FORM_K3_ALPHA = 0.2;      // K3 running P50 的 EMA 系数（任务书 §2.3）
-const FORM_K3_MIN_N = 10;       // 冷启动：每会话前 10 球只更新 P50、不参与判决（任务书 §2.3）
+const FORM_K3_MIN_N = 10;       // 冷启动：累计前 10 球只更新 P50、不参与判决（基线持久化后跨会话累计）
 const FORM_K3_REL_TOL = 0.6;    // 相对个人 P50 偏移超过 60% 视为「引拍偏赶」
 const FORM_BASE_INCH = 26;      // 拍长基准（26" → 系数 1.0）
 
@@ -2987,12 +2999,38 @@ const FORM = {
   profile: { height: null, age: null, racketIn: null },
   // K3 基线按击球侧分开维护：正手引拍时长约是反手的 3 倍（20261029 实测 0.50s vs 0.15s），
   // 混用一条基线会让反手 ratio 恒低于门限 → 全体误判「引拍不足」
-  k3Buf: { "正手": [], "反手": [] },   // 近 20 球引拍占比（rolling，分侧）
-  k3: { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } },
+  k3Buf: { "正手": [], "反手": [] },   // 近 20 球引拍占比（rolling，分侧，跨会话持久化）
+  k3: { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } },   // 跨会话持久化，技术页可手动重置
   // volState：触发逻辑状态（2026-11-02 新幅度指标影子期，volCheckCue 消费）
   volState: { "正手": { smallCount: 0, lastSeq: -1, cueSeq: -999 },
               "反手": { smallCount: 0, lastSeq: -1, cueSeq: -999 } },
 };
+
+// ---- K3 基线持久化（localStorage，方案 B）：换拍/换人时用技术页「重置基线」按钮手动清零 ----
+function k3LoadBase() {
+  try {
+    const p = JSON.parse(localStorage.getItem(K3_PROFILE_KEY) || "null");
+    if (!p || typeof p !== "object") return;
+    for (const s of ["正手", "反手"]) {
+      const buf = p.k3Buf && p.k3Buf[s], st = p.k3 && p.k3[s];
+      if (Array.isArray(buf)) {
+        FORM.k3Buf[s] = buf.filter(x => typeof x === "number" && isFinite(x)).slice(-20);
+      }
+      if (st && typeof st === "object") {
+        const p50 = Number(st.p50), n = Number(st.n) | 0;
+        FORM.k3[s] = {
+          p50: isFinite(p50) && p50 > 0 ? p50 : null,
+          n: n > 0 ? n : 0,
+        };
+      }
+    }
+  } catch (_) {}
+}
+function k3SaveBase() {
+  try { localStorage.setItem(K3_PROFILE_KEY, JSON.stringify({ k3Buf: FORM.k3Buf, k3: FORM.k3 })); }
+  catch (_) {}
+}
+k3LoadBase();
 
 // 拍长系数 K4（未设置按 26" → 1.0，保证默认零改动）
 function formK4() {
@@ -3113,6 +3151,7 @@ function formCompute(data, side) {
     const med = diagQuantile(buf.slice(), 0.5);
     st.p50 = st.p50 == null ? med : st.p50 + FORM_K3_ALPHA * (med - st.p50);
     st.n++;
+    k3SaveBase();   // 方案 B：K3 基线跨会话持久化，每次有效击球后落盘
   }
   const k3 = k3Key ? FORM.k3[k3Key] : { p50: null, n: 0 };
   return {
@@ -3205,7 +3244,7 @@ function formRenderThresholds() {
     `引拍时长: ${th.dur ? `P10=${f3(th.dur.p10)}s P50=${f3(th.dur.p50)}s P90=${f3(th.dur.p90)}s` : "—"} — ${th.durSrc}`,
     `随挥时长: ${th.ftDur ? `P10=${f3(th.ftDur.p10)}s P50=${f3(th.ftDur.p50)}s` : "—"} — ${th.ftDurSrc}`,
     `K2 前臂比例: ${th.forearm != null ? th.forearm : "—"} — ${th.forearmSrc}`,
-    `K3 个人引拍占比 P50: 正手 ${f3(FORM.k3["正手"].p50)} (n=${FORM.k3["正手"].n}) · 反手 ${f3(FORM.k3["反手"].p50)} (n=${FORM.k3["反手"].n}) — 分侧维护，EMA α=${FORM_K3_ALPHA}，偏移门限 ${(FORM_K3_REL_TOL * 100).toFixed(0)}%`,
+    `K3 个人引拍占比 P50: 正手 ${f3(FORM.k3["正手"].p50)} (n=${FORM.k3["正手"].n}) · 反手 ${f3(FORM.k3["反手"].p50)} (n=${FORM.k3["反手"].n}) — 分侧维护·跨会话持久化，EMA α=${FORM_K3_ALPHA}，偏移门限 ${(FORM_K3_REL_TOL * 100).toFixed(0)}%`,
   ];
   // 实测对照：本会话传感器侧 pre_dur 中位 vs 视频 P50×scale（口径比异常时提示核对）
   const obs = [];
@@ -4786,9 +4825,8 @@ $("connectBtn").addEventListener("click", async () => {
   try { localStorage.setItem("nt_collect_base", "0"); } catch (_) {}
   shareCanvas = null;      // 上一次的分享卡片不再复用
   if ($("shareImg")) { $("shareImg").classList.remove("on"); $("shareImg").removeAttribute("src"); }
-  // K3 个人基线按会话冷启动（换拍/换人/换天不继承旧基线）
-  FORM.k3Buf = { "正手": [], "反手": [] };
-  FORM.k3 = { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } };
+  // K3 个人基线已跨会话持久化（方案 B 2026-11-17）：新会话不再清零；
+  // 换拍/换人/基线漂移时用技术页「重置引拍基线（K3）」按钮手动清零
   sessionStartTs = Date.now();
   seqReset();                     // B95：新会话 tag，seq 从 0 重新开始（单调递增由 seqNext 保证）
   csvOpenUncap();                 // B96：新连接的第一段（未采集，tag=<sessionTag>）
@@ -7751,6 +7789,15 @@ if ($("pfSave")) $("pfSave").addEventListener("click", () => {
   log("已保存孩子资料（身高/年龄/拍长），门限已按 K4 归一化", "log-info");
 });
 if ($("pfAuto")) $("pfAuto").addEventListener("click", formSuggestRacket);
+if ($("k3ResetBtn")) $("k3ResetBtn").addEventListener("click", () => {
+  FORM.k3Buf = { "正手": [], "反手": [] };
+  FORM.k3 = { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } };
+  k3SaveBase();
+  formRenderThresholds();
+  const stat = $("k3ResetStat");
+  if (stat) stat.textContent = `已重置（${new Date().toLocaleTimeString()}），重新校准 ${FORM_K3_MIN_N} 球`;
+  log("K3 引拍基线已重置（正反手清零，重新校准 10 球）", "log-info");
+});
 formRenderThresholds();
 if (NATIVE) {
   log("原生壳：BLE 由前台服务直连（锁屏/切后台不断链）", "log-info");

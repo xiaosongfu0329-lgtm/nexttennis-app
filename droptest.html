@@ -530,6 +530,10 @@
   <div class="panel">
     <h2>形态门限 v2（生效值 / 来源）</h2>
     <div id="formThrTech" class="thr-box">—</div>
+    <div class="actions" style="margin-top:6px">
+      <button id="k3ResetBtn">重置引拍基线（K3）</button>
+      <span class="hint" id="k3ResetStat" style="margin-left:8px">换拍/换人时重置，重新校准 10 球</span>
+    </div>
   </div>
 
   <!-- 运行日志：收进技术页底部折叠（APP-B72 界面重组，原独立页2） -->
@@ -757,7 +761,7 @@ const DROP_TEST = true;
 // [落球测试版] 扰动门：高g冲击峰值低于此值视为"无真实撞击"（移动球拍、捡球等），不记录。
 //   实测：真实落球 high-g 峰 >= 7.5g，扰动 <= 3.6g；取 5g 留出余量。
 const DROP_MIN_IMPACT_G = 5.0;
-const APP_BUILD = "APP-B124-20261115-DROPTEST";   // B124：手腕负荷剔除「主动旋前」（见下方 B124 说明）。B123：回顾页「挥拍爆发 · 甩鞭评分」。B122：回顾页「手腕损伤预警」（逐拍 uni50，只统计正手，今日累计）；B121：视频采集竖屏修复——①capStart 等全屏/锁横屏真正生效（≤1s）再取流，原先是 fire-and-forget；②camGetStream 取流后校验方向，竖屏就释放、等横屏重取一次；③camOpen 复用旧流前复核方向（上一场竖屏流在视口已横屏时重取）；④camActual.portrait 标记 + 仍竖屏时明确提示「视频会侧躺，请关闭系统方向锁定」；⑤camMetaCur 增加 source_orientation 字段（append，不改既有字段）。不改命名/列顺序/分析流程。11-10 实测：165917、170549 两场成片 405×720 竖屏，171722 起全部 1280×720。sw.js CACHE nexttennis-v62。B120：录像时间基准落盘；B119：心跳对时
+const APP_BUILD = "APP-B127-20261117-DROPTEST";   // B127：随挥档位启用（方案 A：post_tier 个人基线判决）+ K3 引拍基线跨会话持久化（方案 B：nt_k3_base_v1，技术页重置按钮）。B124：手腕负荷剔除「主动旋前」（见下方 B124 说明）。B123：回顾页「挥拍爆发 · 甩鞭评分」。B122：回顾页「手腕损伤预警」（逐拍 uni50，只统计正手，今日累计）；B121：视频采集竖屏修复——①capStart 等全屏/锁横屏真正生效（≤1s）再取流，原先是 fire-and-forget；②camGetStream 取流后校验方向，竖屏就释放、等横屏重取一次；③camOpen 复用旧流前复核方向（上一场竖屏流在视口已横屏时重取）；④camActual.portrait 标记 + 仍竖屏时明确提示「视频会侧躺，请关闭系统方向锁定」；⑤camMetaCur 增加 source_orientation 字段（append，不改既有字段）。不改命名/列顺序/分析流程。11-10 实测：165917、170549 两场成片 405×720 竖屏，171722 起全部 1280×720。sw.js CACHE nexttennis-v62。B120：录像时间基准落盘；B119：心跳对时
 // B123：回顾页新增「挥拍爆发 · 甩鞭评分」——把 tools/whip_scoring.py 的口径 1:1 移植为 computeWhipScore()：
 // 只取「启动 → 触球前 10ms」(idx0..176)，先截断再做 5 点平滑与真实时间求导，峰值角加速度 ÷ 教练锚点 ×100；
 // 正手锚点 1487 / 反手锚点 2076 rad/s^2 分开（双手反手负荷不同尺度），挥速 <10 rad/s 视为未发力不评分。
@@ -1968,12 +1972,12 @@ function onWindow(meta, data) {
     meta.vol = volCompute(data, meta.t0Index);
     meta.volTier = volTier(side, meta.vol, meta.sessState === "pause");
     volBaseUpdate(side, meta.vol, meta.sessState === "pause");
-    meta.volCue = volCheckCue(side, meta.seq, meta.volTier.pre_tier);
+    meta.volCue = volCheckCue(side, meta.seq, meta.volTier.pre_tier, meta.volTier.post_tier);
   } else {
     meta.vol = { skipped: "anchor_window", reason: "session_first_window_ignored_for_vol" };
     meta.volTier = { pre_tier: "skip", post_tier: "skip", confidence: "low", base_src: null };
   }
-  log(`[vol] ${isAnchor ? '锚点窗跳过' : ('pre=' + (meta.vol.pre_deg ? meta.vol.pre_deg.toFixed(1)+'°' : '—') + ' post=' + (meta.vol.post_deg ? meta.vol.post_deg.toFixed(1)+'°' : '—') + ' ratio=' + (meta.vol.ratio ? meta.vol.ratio.toFixed(2) : '—') + ' rev=' + meta.vol.revIdx + ' conf=' + meta.vol.confidence + ' baseN=' + ((volLoadBase()[side] || []).length) + ' src=' + meta.volTier.base_src)}`, "log-info");
+  log(`[vol] ${isAnchor ? '锚点窗跳过' : ('pre=' + (meta.vol.pre_deg ? meta.vol.pre_deg.toFixed(1)+'°' : '—') + ' post=' + (meta.vol.post_deg ? meta.vol.post_deg.toFixed(1)+'°' : '—') + ' ratio=' + (meta.vol.ratio ? meta.vol.ratio.toFixed(2) : '—') + ' rev=' + meta.vol.revIdx + ' conf=' + meta.vol.confidence + ' baseN=' + ((volLoadBase()[side] && (volLoadBase()[side].pre || []).length) || 0) + '/' + ((volLoadBase()[side] && (volLoadBase()[side].post || []).length) || 0) + ' src=' + meta.volTier.base_src)}`, "log-info");
 
   // ---- Late Contact 特征（固件 B58 复刻，击球点偏后识别用，仅记录不判决）----
   try {
@@ -2344,7 +2348,7 @@ const VOL_TIER_B_LOW = 0.90, VOL_TIER_B_HIGH = 1.10;
 const VOL_TARGET_KEY = "nt_vol_target_v1";   // { pre_deg, post_deg } 可选教练目标值（口径 B）
 const VOL_TIER_BASE_N = 30;                  // 同侧基线需要的历史窗数
 const VOL_BASE_MIN_N = 10;                   // 冷启动不足此数不判（confidence=low）
-const VOL_PROFILE_KEY = "nt_vol_base_v1";    // { "正手":[..], "反手":[..] } 跨会话同侧 pre_deg 历史
+const VOL_PROFILE_KEY = "nt_vol_base_v1";    // { "正手":{pre:[..],post:[..]}, "反手":{pre:[..],post:[..]} } 跨会话同侧 pre/post_deg 历史
 
 // 峰值角速度（deg/s）：只统计 T0-120ms..T0+40ms（与 Python analyze_window 同口径）
 function volPeakOmega(data) {
@@ -2436,10 +2440,29 @@ function volCompute(data, t0) {
   };
 }
 
-// 跨会话基线（分侧）：同侧最近 30 窗 pre_deg 中位
+// 跨会话基线（分侧）：同侧最近 30 窗 pre_deg / post_deg 各自中位
+// 存储结构 v2：{ "正手": { pre: [..], post: [..] }, "反手": { pre: [..], post: [..] } }
+// 兼容 v1 旧格式 { "正手": [pre_num,..], "反手": [pre_num,..] }：旧数字全部迁入 pre，post 冷启动
 function volLoadBase() {
-  try { return JSON.parse(localStorage.getItem(VOL_PROFILE_KEY)) || { "正手": [], "反手": [] }; }
-  catch (_) { return { "正手": [], "反手": [] }; }
+  const empty = () => ({ "正手": { pre: [], post: [] }, "反手": { pre: [], post: [] } });
+  try {
+    const raw = JSON.parse(localStorage.getItem(VOL_PROFILE_KEY));
+    if (!raw) return empty();
+    const out = empty();
+    for (const s of ["正手", "反手"]) {
+      const v = raw[s];
+      if (Array.isArray(v)) {
+        // v1 旧格式：纯数字数组 → 全部当作 pre 基线（post 基线冷启动）
+        out[s].pre = v.filter(x => typeof x === "number" && isFinite(x));
+      } else if (v && Array.isArray(v.pre) && Array.isArray(v.post)) {
+        out[s] = {
+          pre: v.pre.filter(x => typeof x === "number" && isFinite(x)),
+          post: v.post.filter(x => typeof x === "number" && isFinite(x)),
+        };
+      }
+    }
+    return out;
+  } catch (_) { return empty(); }
 }
 function volSaveBase(base) {
   try { localStorage.setItem(VOL_PROFILE_KEY, JSON.stringify(base)); } catch (_) {}
@@ -2464,7 +2487,7 @@ function volMedian(vals) {
 // 档位判定：baseSrc = self | target | null；tier = 偏小 | 正常 | 偏大 | null
 function volTier(side, volObj, sessPause) {
   if (!volObj || volObj.confidence === "low" || sessPause) return {
-    pre_tier: null, post_tier: null, base_deg: null, base_src: null };
+    pre_tier: null, post_tier: null, base_deg: null, base_post_deg: null, base_src: null };
   // 口径 B（教练目标值，留空即关闭）
   const target = volTargetGet();
   if (target && (target.pre_deg != null || target.post_deg != null)) {
@@ -2478,61 +2501,73 @@ function volTier(side, volObj, sessPause) {
     return {
       pre_tier: tier(volObj.pre_deg, target.pre_deg),
       post_tier: tier(volObj.post_deg, target.post_deg),
-      base_deg: target.pre_deg != null ? target.pre_deg : target.post_deg,
+      base_deg: target.pre_deg != null ? target.pre_deg : null,
+      base_post_deg: target.post_deg != null ? target.post_deg : null,
       base_src: "target",
     };
   }
-  // 口径 A（个人基线）：同侧最近 30 窗 pre_deg 中位
+  // 口径 A（个人基线）：同侧最近 30 窗 pre_deg / post_deg 各自中位，独立判决
   const base = volLoadBase();
-  const sideArr = base[side] || [];
-  const preArr = sideArr.slice(-VOL_TIER_BASE_N);
-  if (preArr.length < VOL_BASE_MIN_N) return {
-    pre_tier: null, post_tier: null, base_deg: null, base_src: null };
-  const preMed = volMedian(preArr);
-  const tier = v => {
-    if (v == null || !isFinite(v)) return null;
-    const r = v / preMed;
+  const sideBase = base[side] || { pre: [], post: [] };
+  const preArr = (sideBase.pre || []).slice(-VOL_TIER_BASE_N);
+  const postArr = (sideBase.post || []).slice(-VOL_TIER_BASE_N);
+  const preMed = preArr.length >= VOL_BASE_MIN_N ? volMedian(preArr) : null;
+  const postMed = postArr.length >= VOL_BASE_MIN_N ? volMedian(postArr) : null;
+  // pre / post 各自基线不足时只对应档位为 null，不影响另一项
+  if (preMed == null && postMed == null) return {
+    pre_tier: null, post_tier: null, base_deg: null, base_post_deg: null, base_src: null };
+  const tier = (v, med) => {
+    if (v == null || !isFinite(v) || med == null || !isFinite(med) || med <= 1e-6) return null;
+    const r = v / med;
     if (r < VOL_TIER_A_LOW) return "偏小";
     if (r > VOL_TIER_A_HIGH) return "偏大";
     return "正常";
   };
   return {
-    pre_tier: tier(volObj.pre_deg),
-    post_tier: null,            // post 暂不判：后窗被截断 + 正手"随挥不足"与"转体不足"叠加不可解（§6.2）
+    pre_tier: tier(volObj.pre_deg, preMed),
+    post_tier: tier(volObj.post_deg, postMed),
     base_deg: preMed,
+    base_post_deg: postMed,
     base_src: "self",
   };
 }
 
-// 基线更新：pre_deg 进同侧历史队列（不进捡球窗 / confidence=low）
+// 基线更新：pre_deg / post_deg 分别进同侧历史队列（不进捡球窗 / confidence=low）
 function volBaseUpdate(side, volObj, sessPause) {
   if (sessPause || !volObj || volObj.confidence === "low") return;
-  if (!volObj.pre_deg || !isFinite(volObj.pre_deg)) return;
   if (side !== "正手" && side !== "反手") return;
   const base = volLoadBase();
-  (base[side] = base[side] || []).push(volObj.pre_deg);
-  // 跨会话保留最近 100 个（≈ 3~4 场，足够稳定，不至于无限膨胀）
-  if (base[side].length > 100) base[side] = base[side].slice(-100);
+  const slot = base[side] || (base[side] = { pre: [], post: [] });
+  if (volObj.pre_deg != null && isFinite(volObj.pre_deg)) {
+    slot.pre.push(volObj.pre_deg);
+    if (slot.pre.length > 100) slot.pre = slot.pre.slice(-100);
+  }
+  if (volObj.post_deg != null && isFinite(volObj.post_deg)) {
+    slot.post.push(volObj.post_deg);
+    if (slot.post.length > 100) slot.post = slot.post.slice(-100);
+  }
   volSaveBase(base);
 }
 
-// 触发逻辑：同侧最近 8 窗内 ≥3 次「偏小」 → 提示 1 次；冷却 5 窗
+// 触发逻辑：同侧最近 8 窗内 ≥3 次「偏小」（引拍或随挥任一） → 提示 1 次；冷却 5 窗
 // 状态挂在 FORM.volState（FORM 本身是 const 但对象属性可扩展，跨节引用没问题）
 const VOL_WIN_N = 8, VOL_CUE_K = 3, VOL_COOLDOWN = 5;
 // volState 初始化：放在 FORM 声明后（见 FORM 对象扩展处），这里只定义函数
-function volCheckCue(side, seq, preTier) {
-  if (!side || preTier !== "偏小") return null;
+function volCheckCue(side, seq, preTier, postTier) {
+  if (!side) return null;
+  const small = preTier === "偏小" || postTier === "偏小";
+  if (!small) return null;
   const st = FORM.volState[side];
   if (!st) return null;
   // 超过 8 窗没更新过 → 重置（防止跨会话状态脏）
-  if (st.lastSeq >= 0 && (seq - st.lastSeq > 30)) st.preSmall = 0;
+  if (st.lastSeq >= 0 && (seq - st.lastSeq > 30)) st.smallCount = 0;
   st.lastSeq = seq;
-  st.preSmall++;
+  st.smallCount++;
   // 冷却中？（seq 号比 cueSeq 大 5 以上才能再提示）
   if (seq - st.cueSeq < VOL_COOLDOWN) return null;
-  if (st.preSmall >= VOL_CUE_K) {
+  if (st.smallCount >= VOL_CUE_K) {
     st.cueSeq = seq;
-    st.preSmall = 0;
+    st.smallCount = 0;
     return "偏小时";
   }
   return null;
@@ -2551,7 +2586,7 @@ function volCheckCue(side, seq, preTier) {
 // =====================================================================
 const FORM_PROFILE_KEY = "nt_profile_v1";
 const FORM_K3_ALPHA = 0.2;      // K3 running P50 的 EMA 系数（任务书 §2.3）
-const FORM_K3_MIN_N = 10;       // 冷启动：每会话前 10 球只更新 P50、不参与判决（任务书 §2.3）
+const FORM_K3_MIN_N = 10;       // 冷启动：累计前 10 球只更新 P50、不参与判决（基线持久化后跨会话累计）
 const FORM_K3_REL_TOL = 0.6;    // 相对个人 P50 偏移超过 60% 视为「引拍偏赶」
 const FORM_BASE_INCH = 26;      // 拍长基准（26" → 系数 1.0）
 
@@ -2561,12 +2596,39 @@ const FORM = {
   profile: { height: null, age: null, racketIn: null },
   // K3 基线按击球侧分开维护：正手引拍时长约是反手的 3 倍（20261029 实测 0.50s vs 0.15s），
   // 混用一条基线会让反手 ratio 恒低于门限 → 全体误判「引拍不足」
-  k3Buf: { "正手": [], "反手": [] },   // 近 20 球引拍占比（rolling，分侧）
-  k3: { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } },
+  k3Buf: { "正手": [], "反手": [] },   // 近 20 球引拍占比（rolling，分侧，跨会话持久化）
+  k3: { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } },   // 跨会话持久化，技术页可手动重置
   // volState：触发逻辑状态（2026-11-02 新幅度指标影子期，volCheckCue 消费）
-  volState: { "正手": { preSmall: 0, lastSeq: -1, cueSeq: -999 },
-              "反手": { preSmall: 0, lastSeq: -1, cueSeq: -999 } },
+  volState: { "正手": { smallCount: 0, lastSeq: -1, cueSeq: -999 },
+              "反手": { smallCount: 0, lastSeq: -1, cueSeq: -999 } },
 };
+
+// ---- K3 基线持久化（localStorage，方案 B）：换拍/换人时用技术页「重置基线」按钮手动清零 ----
+const K3_PROFILE_KEY = "nt_k3_base_v1";   // K3 个人引拍占比基线（跨会话持久化，方案 B 2026-11-17）
+function k3LoadBase() {
+  try {
+    const p = JSON.parse(localStorage.getItem(K3_PROFILE_KEY) || "null");
+    if (!p || typeof p !== "object") return;
+    for (const s of ["正手", "反手"]) {
+      const buf = p.k3Buf && p.k3Buf[s], st = p.k3 && p.k3[s];
+      if (Array.isArray(buf)) {
+        FORM.k3Buf[s] = buf.filter(x => typeof x === "number" && isFinite(x)).slice(-20);
+      }
+      if (st && typeof st === "object") {
+        const p50 = Number(st.p50), n = Number(st.n) | 0;
+        FORM.k3[s] = {
+          p50: isFinite(p50) && p50 > 0 ? p50 : null,
+          n: n > 0 ? n : 0,
+        };
+      }
+    }
+  } catch (_) {}
+}
+function k3SaveBase() {
+  try { localStorage.setItem(K3_PROFILE_KEY, JSON.stringify({ k3Buf: FORM.k3Buf, k3: FORM.k3 })); }
+  catch (_) {}
+}
+k3LoadBase();
 
 // 拍长系数 K4（未设置按 26" → 1.0，保证默认零改动）
 function formK4() {
@@ -2687,6 +2749,7 @@ function formCompute(data, side) {
     const med = diagQuantile(buf.slice(), 0.5);
     st.p50 = st.p50 == null ? med : st.p50 + FORM_K3_ALPHA * (med - st.p50);
     st.n++;
+    k3SaveBase();   // 方案 B：K3 基线跨会话持久化，每次有效击球后落盘
   }
   const k3 = k3Key ? FORM.k3[k3Key] : { p50: null, n: 0 };
   return {
@@ -2779,7 +2842,7 @@ function formRenderThresholds() {
     `引拍时长: ${th.dur ? `P10=${f3(th.dur.p10)}s P50=${f3(th.dur.p50)}s P90=${f3(th.dur.p90)}s` : "—"} — ${th.durSrc}`,
     `随挥时长: ${th.ftDur ? `P10=${f3(th.ftDur.p10)}s P50=${f3(th.ftDur.p50)}s` : "—"} — ${th.ftDurSrc}`,
     `K2 前臂比例: ${th.forearm != null ? th.forearm : "—"} — ${th.forearmSrc}`,
-    `K3 个人引拍占比 P50: 正手 ${f3(FORM.k3["正手"].p50)} (n=${FORM.k3["正手"].n}) · 反手 ${f3(FORM.k3["反手"].p50)} (n=${FORM.k3["反手"].n}) — 分侧维护，EMA α=${FORM_K3_ALPHA}，偏移门限 ${(FORM_K3_REL_TOL * 100).toFixed(0)}%`,
+    `K3 个人引拍占比 P50: 正手 ${f3(FORM.k3["正手"].p50)} (n=${FORM.k3["正手"].n}) · 反手 ${f3(FORM.k3["反手"].p50)} (n=${FORM.k3["反手"].n}) — 分侧维护·跨会话持久化，EMA α=${FORM_K3_ALPHA}，偏移门限 ${(FORM_K3_REL_TOL * 100).toFixed(0)}%`,
   ];
   // 实测对照：本会话传感器侧 pre_dur 中位 vs 视频 P50×scale（口径比异常时提示核对）
   const obs = [];
@@ -3499,8 +3562,8 @@ function updateDiagnosis(w) {
   }
 
   // 数值行：pre_deg / post_deg / ratio / rev / baseline 统计
+  const pct = b => b != null && Number.isFinite(b) ? ` · 基 ${b.toFixed(0)}°` : "";
   if (vol && Number.isFinite(vol.pre_deg)) {
-    const pct = b => b != null && Number.isFinite(b) ? ` · 基 ${b.toFixed(0)}°` : "";
     tbNum.textContent = `${vol.pre_deg.toFixed(1)}° / ${vol.pre_m.toFixed(2)}m`
       + ` · ratio ${isFinite(vol.ratio) ? vol.ratio.toFixed(2) : "—"}`
       + ` · revIdx ${vol.revIdx} (${vol.revReason})`
@@ -3512,6 +3575,7 @@ function updateDiagnosis(w) {
   }
   if (vol && Number.isFinite(vol.post_deg)) {
     ftNum.textContent = `${vol.post_deg.toFixed(1)}° / ${vol.post_m.toFixed(2)}m`
+      + pct(vtier && vtier.base_post_deg)
       + ` · conf ${vol.confidence} · side ${side}`
       + ` · 窗末截断（真实随挥长 200-400ms，当前仅到 +168ms，§10 产品限制）`;
   } else {
@@ -4339,9 +4403,8 @@ $("connectBtn").addEventListener("click", async () => {
   try { localStorage.setItem("nt_collect_base", "0"); } catch (_) {}
   shareCanvas = null;      // 上一次的分享卡片不再复用
   if ($("shareImg")) { $("shareImg").classList.remove("on"); $("shareImg").removeAttribute("src"); }
-  // K3 个人基线按会话冷启动（换拍/换人/换天不继承旧基线）
-  FORM.k3Buf = { "正手": [], "反手": [] };
-  FORM.k3 = { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } };
+  // K3 个人基线已跨会话持久化（方案 B 2026-11-17）：新会话不再清零；
+  // 换拍/换人/基线漂移时用技术页「重置引拍基线（K3）」按钮手动清零
   sessionStartTs = Date.now();
   seqReset();                     // B95：新会话 tag，seq 从 0 重新开始（单调递增由 seqNext 保证）
   csvOpenUncap();                 // B96：新连接的第一段（未采集，tag=<sessionTag>）
@@ -6799,6 +6862,15 @@ if ($("pfSave")) $("pfSave").addEventListener("click", () => {
   log("已保存孩子资料（身高/年龄/拍长），门限已按 K4 归一化", "log-info");
 });
 if ($("pfAuto")) $("pfAuto").addEventListener("click", formSuggestRacket);
+if ($("k3ResetBtn")) $("k3ResetBtn").addEventListener("click", () => {
+  FORM.k3Buf = { "正手": [], "反手": [] };
+  FORM.k3 = { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } };
+  k3SaveBase();
+  formRenderThresholds();
+  const stat = $("k3ResetStat");
+  if (stat) stat.textContent = `已重置（${new Date().toLocaleTimeString()}），重新校准 ${FORM_K3_MIN_N} 球`;
+  log("K3 引拍基线已重置（正反手清零，重新校准 10 球）", "log-info");
+});
 formRenderThresholds();
 if (NATIVE) {
   log("原生壳：BLE 由前台服务直连（锁屏/切后台不断链）", "log-info");
