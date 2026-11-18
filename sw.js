@@ -1,5 +1,5 @@
 // Nexttennis V101 Service Worker — app shell cache for offline PWA
-const CACHE = "nexttennis-v71";   // B127：随挥档位启用（方案 A）+ K3 引拍基线跨会话持久化（方案 B）；B126：脱机记录下载（Step5）
+const CACHE = "nexttennis-v72";   // B127：CSV 原生保存 + 原生 TTS + 摄像头权限 + 切拍重连（B126：脱机记录下载 Step5）
 const SHELL = [
   "./",
   "./index.html",

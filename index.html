@@ -5673,6 +5673,8 @@ async function pinPlaybackToSpeaker() {
 
 // 采集页/首页统一麦克风文案：直接显示 mic_label 原文（2026-11-03 用户要求）
 function micNowTxt() {
+  // 原生壳由 MediaRecorder 直接采：有蓝牙耳机时走 SCO（VOICE_COMMUNICATION），否则用本机麦
+  if (NATIVE) return "原生采集（检测到蓝牙耳机时优先耳机麦，否则本机麦）";
   if (!voiceMicLabel) return "待授权（点「检测麦」）";
   if (micKindOf(voiceMicLabel) === "蓝牙耳机") return "蓝牙耳机｜" + voiceMicLabel;
   return (voiceMicFallback ? "本机麦克风（未选到蓝牙）｜" : "本机麦克风｜") + voiceMicLabel;
@@ -6463,7 +6465,11 @@ $("voiceDevSel").addEventListener("change", async e => {
 });
 $("voiceMicRetry").addEventListener("click", () => {
   if (capOn) { log("采集中不能重新检测麦克风：请先「■ 结束采集」", "log-warn"); return; }
-  if (NATIVE) { log("原生壳录音由前台服务直接采，无需页面授权麦克风", "log-info"); return; }
+  if (NATIVE) {
+    log("原生壳录音由前台服务直采：有蓝牙耳机时自动走耳机麦（SCO），否则用本机麦克风", "log-info");
+    try { NATIVE.toast && NATIVE.toast("原生采集：有耳机走耳机麦"); } catch (e) {}
+    return;
+  }
   voicePrimeMic();
 });
 ttsMute(false);
@@ -6517,11 +6523,16 @@ async function saveBlobFile(blob, filename, mime) {
       }
       const where = br.saveEnd();
       log(`已保存 ${filename} → ${where || "下载目录"}`, "log-info");
+      try { br.toast && br.toast(`已保存 ${filename}`); } catch (e) {}
       return true;
     } catch (e) {
       log(`保存失败：${e.message}`, "log-warn");
+      try { br.toast && br.toast(`保存失败：${e.message}`); } catch (e2) {}
       return false;
     }
+  }
+  if (br && typeof br.saveStart !== "function") {
+    log("当前 APK 版本不支持直接保存，请安装 B127 及以上的 APK", "log-warn");
   }
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
