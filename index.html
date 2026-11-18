@@ -974,7 +974,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B135-20261118-2300";   // B135：视频录完由原生转封装成 MP4（只换容器不重编码），修手机相册/系统播放器错读 WebM 时间戳导致的 3~5 倍速、提前结束；B134：录像结束把时长传给原生补写 WebM Duration；B133：视频边录边落盘（每 3s 分片直写，内存不再常驻整段 Blob）+ 写盘逐块校验；B132：降热三改——屏幕只在采集中常亮 / 关闭原生逐窗录音（去双路）/ 蓝牙扫描降占空比 + 断线重扫递增；B131：采集前未连球拍警告。
+const APP_BUILD = "APP-Step5-B136-20261118";   // B136：打框判决现场标定——修 Gz 转角单位 bug（rad→deg，原 DEG_MAX 实际从未触发），DEG_MAX 45→24；启用高频联合判决 flat>0.64（SPEC_VETO），补小偏心打框召回；score 降为影子列。基于 11-18 现场 48 拍语音标注。B135：视频录完由原生转封装成 MP4（只换容器不重编码），修手机相册/系统播放器错读 WebM 时间戳导致的 3~5 倍速、提前结束；B134：录像结束把时长传给原生补写 WebM Duration；B133：视频边录边落盘（每 3s 分片直写，内存不再常驻整段 Blob）+ 写盘逐块校验；B132：降热三改——屏幕只在采集中常亮 / 关闭原生逐窗录音（去双路）/ 蓝牙扫描降占空比 + 断线重扫递增；B131：采集前未连球拍警告。
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -2563,17 +2563,20 @@ function estimateSpeed(data) {
 // 场上：early 中位数 20.6°（含挥拍/手腕主动转动，拍侧信号无法分离），
 //   绝对阈值不能从台架移植；45° 是帆帆 173 窗 P93 的临时值，需现场语音标注修订。
 // 打框是击球质量否决项：命中时其余识别项不评估、不给星、不算球速。
-// 判决（B129）：以低频 Gz 转角为准。高频谱形状分数只记影子，不参与否决——
-//   11-18 现场 23 球实测：score 与力度 F1 强相关（Spearman 0.68），
-//   用 0.95 门限误判 22%（全是正常球被当成打框），力度无关的假设在场上不成立。
-//   score = flat + crest/50 - s120（球框 > 甜区），影子列继续采集用于后续校准。
+// 判决（2026-11-18 现场语音标注标定）：hit = (early > DEG_MAX) OR (flat > FLAT_MAX)
+//   - 低频 Gz 转角 early（deg）：DEG_MAX=24，11-18 标定（原 45 为 11-15 临时值）
+//   - 高频谱平坦度 flat：FLAT_MAX=0.64。11-18 48 拍扫描：flat 是最稳的高频特征
+//     （AUC 0.838，跨包/力量三层均不塌），能补 deg 漏掉的小偏心打框。
+//   - score（=flat+crest/50−s120）仍记入 CSV 影子列，但不参与判决：11-18 现场
+//     score 与力度 F1 强相关（Spearman 0.68），轻力量层失效，不及 flat 稳健。
+// 打框是击球质量否决项：命中时其余识别项不评估、不给星、不算球速。
 const FRAME = {
   LO_MS: -5, HI_MS: 20,               // 冲击瞬间窗
   BASE_LO_MS: -48, BASE_HI_MS: -10,   // 冲击前基线
-  DEG_MAX: 45,                        // 低频：Gz 冲击转角门限（deg）
+  DEG_MAX: 24,                        // 低频：Gz 冲击转角门限（deg），2026-11-18 现场标定
+  FLAT_MAX: 0.64,                     // 高频：谱平坦度门限，参与否决，2026-11-18 现场标定
   SCORE_MAX: 0.95,                    // 高频：谱形状分数门限（影子，仅记录不否决）
-  SCORE_VETO: false,                  // 谱分数是否参与否决。B129 实测：score 与 F1 强相关
-                                      // （Spearman 0.68），现场正常球误判 22%，故降为影子。
+  SPEC_VETO: true,                    // 高频特征是否参与否决（true=启用 flat 联合判决）
 };
 
 // 频谱形状特征（力度无关）：flat 谱平坦度、crest 峰值因子、s120 100-150Hz 幅度占比。
@@ -2674,12 +2677,12 @@ function frameEvaluate(w) {
   // 高频：谱形状分数
   const sp = spectralCompute(w.data);
   r.flat = sp.flat; r.crest = sp.crest; r.s120 = sp.s120; r.score = sp.score;
-  r.specHit = Number.isFinite(r.score) && r.score > FRAME.SCORE_MAX;
-  // 判决：低频转角是否决项；谱分数默认只记影子（SCORE_VETO=false），待现场标注校准后再启用
-  r.hit = r.degHit || (FRAME.SCORE_VETO && r.specHit);
-  if (r.degHit && r.specHit) r.why = "deg+score";
+  r.specHit = Number.isFinite(r.flat) && r.flat > FRAME.FLAT_MAX;
+  // 判决：低频转角 OR 高频谱平坦度（SPEC_VETO=true）。score 仍记影子列但不投票。
+  r.hit = r.degHit || (FRAME.SPEC_VETO && r.specHit);
+  if (r.degHit && r.specHit) r.why = "deg+flat";
   else if (r.degHit) r.why = "deg";
-  else if (r.specHit) r.why = FRAME.SCORE_VETO ? "score" : "score_shadow";
+  else if (r.specHit) r.why = "flat";
   else r.why = "";
   return r;
 }
@@ -3815,7 +3818,7 @@ function nfRender(w) {
     lateLine,
     `<b>击球过晚 / Late Contact</b>（旧时间型规则，仅技术视图保留；正式判决见上方首页行）—— 引拍时长=${n3(f.preDurS)}s · 加速时长=${n3(f.accDurS)}s · `
       + `低通角速度占比=${n2(f.wlpRatio)} · 低通峰值相对触球=${n2(f.tPeakLpMs)}ms → 旧初判 <b>${f.squeezedVerdict}</b>`,
-    `<b>打框</b>（联合判决：Gz 转角 + 谱形状，OR 逻辑）—— early 转角=${fr.deg != null && isFinite(fr.deg) ? fr.deg.toFixed(1) : "—"}°（门限 ${FRAME.DEG_MAX}°）· 谱分数=${fr.score != null && isFinite(fr.score) ? fr.score.toFixed(3) : "—"}（门限 ${FRAME.SCORE_MAX}）· 判决 <b>${fr.hit ? "打框" : "甜区"}</b>${fr.why ? ` · 触发：${fr.why}` : ""}`,
+    `<b>打框</b>（联合判决：Gz 转角 + 谱平坦度，OR 逻辑）—— early 转角=${fr.deg != null && isFinite(fr.deg) ? fr.deg.toFixed(1) : "—"}°（门限 ${FRAME.DEG_MAX}°）· 谱平坦度=${fr.flat != null && isFinite(fr.flat) ? fr.flat.toFixed(3) : "—"}（门限 ${FRAME.FLAT_MAX}）· 判决 <b>${fr.hit ? "打框" : "甜区"}</b>${fr.why ? ` · 触发：${fr.why}` : ""}`,
     `<b>引拍时机</b>（个人基线相对量，属 Late Contact 上游；逐球不重复报）—— ${f.timingVerdict}（${f.timingWhy}）`,
     `<b>拍面控制（翻拍面）</b> —— Δtilt(${NF.FACE_T10_MS}→${NF.FACE_P80_MS}ms)=${f.d_tilt_judge != null ? f.d_tilt_judge.toFixed(1) : "—"}° · 判决 <b>${f.face_flip_judge}</b>（门限 [${NF.FACE_CLOSE_MIN}, ${NF.FACE_OPEN_MAX}]° · 超区间距离 ${f.face_flip_score != null ? f.face_flip_score.toFixed(1) : 0}°）`,
     `<b>挥拍流畅度</b>（标定中）—— 凹陷比=${n2(f.flowDip)} · 顿挫=${n2(f.flowJerk)}（宏观段前挥 10Hz 低通）`,
@@ -4111,7 +4114,7 @@ function updateFrame(w) {
   el.innerHTML = f.hit
     ? `<span class="badge fail">打框</span>`
     : `<span class="badge pass">甜区</span>`;
-  num.textContent = `冲击转角 ${f.deg.toFixed(1)}°（门限 ${FRAME.DEG_MAX}°）`;
+  num.textContent = `冲击转角 ${f.deg.toFixed(1)}°（门限 ${FRAME.DEG_MAX}°）· 平坦度 ${f.flat != null && isFinite(f.flat) ? f.flat.toFixed(3) : "—"}（门限 ${FRAME.FLAT_MAX}）`;
 }
 
 // ---------- 会话状态（训练中 / 捡球暂停） ----------
@@ -6734,7 +6737,7 @@ function buildCsvRows(m) {
   const fv = m.meta.frame || {};
   const frameDeg = Number.isFinite(fv.deg) ? fv.deg.toFixed(1) : "";
   const frameHit = Number.isFinite(fv.deg) ? (fv.hit ? 1 : 0) : "";
-  // 联合判决影子列：谱形状特征 + 触发来源（deg/score/deg+score），用于现场持续校准阈值
+  // 联合判决列：谱形状特征 + 触发来源（deg/flat/deg+flat），用于现场持续校准阈值
   const specFlat = Number.isFinite(fv.flat) ? fv.flat.toFixed(4) : "";
   const specCrest = Number.isFinite(fv.crest) ? fv.crest.toFixed(3) : "";
   const specS120 = Number.isFinite(fv.s120) ? fv.s120.toFixed(4) : "";
