@@ -974,7 +974,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B127-20261117-1458";   // B127：随挥档位启用（方案 A）+ K3 引拍基线跨会话持久化（方案 B，见下方说明）。
+const APP_BUILD = "APP-Step5-B128-20261118-1000";   // B128：原生文件保存 toast + 原生 TTS + 摄像头权限 + 切拍重连 + 耳机麦(SCO) + APK 版本显示。
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -7816,8 +7816,17 @@ if ("serviceWorker" in navigator) {
 }
 
 // 初始提示
-$("appVer").textContent = APP_BUILD;
-log(`App 版本 ${APP_BUILD}`, "log-info");
+let apkVerTxt = "";
+try { if (NATIVE && NATIVE.apkVer) apkVerTxt = "｜APK " + NATIVE.apkVer(); } catch (e) {}
+$("appVer").textContent = APP_BUILD + apkVerTxt;
+log(`App 版本 ${APP_BUILD}${apkVerTxt}`, "log-info");
+if (NATIVE) {
+  const cap = [];
+  try { if (NATIVE.saveStart) cap.push("文件保存"); } catch (e) {}
+  try { if (NATIVE.speak) cap.push("语音播报"); } catch (e) {}
+  try { if (NATIVE.toast) cap.push("toast"); } catch (e) {}
+  log(`原生能力：${cap.length ? cap.join("/") : "无（APK 过旧，请升级）"}`, cap.length ? "log-info" : "log-warn");
+}
 log("选择模式后点击【连接设备】。推荐先选 Mock 模式验证全部功能。", "log-info");
 setupTechModeToggle();
 log("提示：连点 header 5 次切换 家庭视图 / 技术演示视图", "log-info");
