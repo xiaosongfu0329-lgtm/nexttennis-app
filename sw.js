@@ -1,5 +1,5 @@
 // Nexttennis V101 Service Worker — app shell cache for offline PWA
-const CACHE = "nexttennis-v74";   // B129：导出/保存改页内浮层提示（不依赖原生 toast）
+const CACHE = "nexttennis-v75";   // B130：导出按钮无数据/异常也有页内浮层反馈
 const SHELL = [
   "./",
   "./index.html",

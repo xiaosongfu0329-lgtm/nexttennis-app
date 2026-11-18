@@ -974,7 +974,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B129-20261118-1130";   // B129：导出/保存改为页内浮层提示（不依赖原生 toast，任何 ROM 都可见）；B128：原生保存 + TTS + 摄像头权限 + 切拍重连 + 耳机麦(SCO) + APK 版本显示。
+const APP_BUILD = "APP-Step5-B130-20261118-1330";   // B130：导出按钮全部加页内浮层（含无数据/异常分支，不再静默）；B129：导出/保存页内浮层 + 耳机麦 SCO 路由 + TTS 主线程。
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -4334,7 +4334,12 @@ function sessionLogCsvRows() {
   return rows;
 }
 function sessionLogExport() {
-  if (!connLog.length && !windowLog.length) { log("暂无会话日志可导出", "log-warn"); return; }
+  if (!connLog.length && !windowLog.length) {
+    log("暂无会话日志可导出", "log-warn");
+    flashMsg("暂无会话日志可导出", true);
+    return;
+  }
+  flashMsg("正在导出会话日志…");
   download(`session_log_${capTag || sessionTag()}.csv`, "\ufeff" + sessionLogCsvRows().join("\n") + "\n", "text/csv");
   log(`已导出会话日志：事件 ${connLog.length} 条 + 窗口 ${windowLog.length} 条`, "log-info");
 }
@@ -6602,14 +6607,24 @@ function download(filename, content, mime) {
 
 $("exportJsonBtn").addEventListener("click", () => {
   const obj = getLabeledMatrix("unlabeled");
-  if (!obj) return;
+  if (!obj) {
+    log("暂无窗口数据可导出", "log-warn");
+    flashMsg("暂无窗口数据可导出", true);
+    return;
+  }
+  flashMsg("正在导出 JSON…");
   download(`tennis_${obj.seq}_${obj.timestamp}.json`, JSON.stringify(obj, null, 2), "application/json");
   log(`已导出 JSON seq=${obj.seq}`, "log-info");
 });
 
 $("exportCsvBtn").addEventListener("click", () => {
-  if (!currentWindow) { log("暂无窗口数据", "log-warn"); return; }
+  if (!currentWindow) {
+    log("暂无窗口数据", "log-warn");
+    flashMsg("暂无窗口数据（先连接球拍并打几个球）", true);
+    return;
+  }
   const m = currentWindow;
+  flashMsg("正在导出当前窗口 CSV…");
   download(`tennis_${m.meta.seq}_${m.meta.timestamp}.csv`,
            CSV_HEADER + buildCsvRows(m), "text/csv");
   log(`已导出 CSV seq=${m.meta.seq} (${PROTO.WINDOW.samples} 行)`, "log-info");
@@ -6666,15 +6681,25 @@ function buildCsvRows(m) {
 }
 
 $("exportSessionCsvBtn").addEventListener("click", () => {
-  // B96：只导出当前段（采集场次），避免把上一场的窗口混进来；空段则取最近一个非空段
-  const seg = (csvOpenSeg && csvOpenSeg.wins.length) ? csvOpenSeg
-            : csvSegs.filter(s => s.wins.length).slice(-1)[0];
-  if (!seg) { log("本次连接暂无窗口数据", "log-warn"); return; }
-  let body = "";
-  for (const w of seg.wins) body += buildCsvRows(w);
-  const tag = seg.tag;                     // 与同 tag 的视频/音频/打点同名
-  download(`tennis_session_${tag}.csv`, CSV_HEADER + body, "text/csv");
-  log(`已导出本段 ${seg.wins.length} 个窗口（${tag}）`, "log-info");
+  try {
+    // B96：只导出当前段（采集场次），避免把上一场的窗口混进来；空段则取最近一个非空段
+    const seg = (csvOpenSeg && csvOpenSeg.wins.length) ? csvOpenSeg
+              : csvSegs.filter(s => s.wins.length).slice(-1)[0];
+    if (!seg) {
+      log("本次连接暂无窗口数据（历史场次请用「导出采集包」）", "log-warn");
+      flashMsg("本次连接暂无窗口数据\n历史场次请用「导出采集包」", true);
+      return;
+    }
+    let body = "";
+    for (const w of seg.wins) body += buildCsvRows(w);
+    const tag = seg.tag;                     // 与同 tag 的视频/音频/打点同名
+    flashMsg(`正在导出 ${seg.wins.length} 个窗口…`);
+    download(`tennis_session_${tag}.csv`, CSV_HEADER + body, "text/csv");
+    log(`已导出本段 ${seg.wins.length} 个窗口（${tag}）`, "log-info");
+  } catch (e) {
+    log(`导出 CSV 失败：${e.message}`, "log-fail");
+    flashMsg(`导出 CSV 失败：${e.message}`, true);
+  }
 });
 
 $("exportSessionLogBtn").addEventListener("click", sessionLogExport);
