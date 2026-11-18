@@ -1,5 +1,5 @@
 // Nexttennis V101 Service Worker — app shell cache for offline PWA
-const CACHE = "nexttennis-v73";   // B128：原生保存 toast / TTS / 摄像头 / 切拍重连 / 耳机麦 SCO / APK 版本显示
+const CACHE = "nexttennis-v74";   // B129：导出/保存改页内浮层提示（不依赖原生 toast）
 const SHELL = [
   "./",
   "./index.html",

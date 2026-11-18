@@ -974,7 +974,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B128-20261118-1000";   // B128：原生文件保存 toast + 原生 TTS + 摄像头权限 + 切拍重连 + 耳机麦(SCO) + APK 版本显示。
+const APP_BUILD = "APP-Step5-B129-20261118-1130";   // B129：导出/保存改为页内浮层提示（不依赖原生 toast，任何 ROM 都可见）；B128：原生保存 + TTS + 摄像头权限 + 切拍重连 + 耳机麦(SCO) + APK 版本显示。
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -2512,16 +2512,17 @@ function estimateSpeed(data) {
 // 场上：early 中位数 20.6°（含挥拍/手腕主动转动，拍侧信号无法分离），
 //   绝对阈值不能从台架移植；45° 是帆帆 173 窗 P93 的临时值，需现场语音标注修订。
 // 打框是击球质量否决项：命中时其余识别项不评估、不给星、不算球速。
-// 联合判决（B120）：低频 Gz 转角 + 高频谱形状，OR 逻辑覆盖各自盲区。
-//   - deg > DEG_MAX：抓扭转打框（场上高速挥拍有效）
-//   - score > SCORE_MAX：抓正撞框/低力度打框（Gz 转角不足但频谱是球框特征）
-//   score = flat + crest/50 - s120，方向：球框 > 甜区（台架+两轮手持 AUC 0.95）
-//   SCORE_MAX 为手持轻击数据的临时值，需现场真实打框样本持续校准。
+// 判决（B129）：以低频 Gz 转角为准。高频谱形状分数只记影子，不参与否决——
+//   11-18 现场 23 球实测：score 与力度 F1 强相关（Spearman 0.68），
+//   用 0.95 门限误判 22%（全是正常球被当成打框），力度无关的假设在场上不成立。
+//   score = flat + crest/50 - s120（球框 > 甜区），影子列继续采集用于后续校准。
 const FRAME = {
   LO_MS: -5, HI_MS: 20,               // 冲击瞬间窗
   BASE_LO_MS: -48, BASE_HI_MS: -10,   // 冲击前基线
   DEG_MAX: 45,                        // 低频：Gz 冲击转角门限（deg）
-  SCORE_MAX: 0.95,                    // 高频：谱形状分数门限（临时值，待校准）
+  SCORE_MAX: 0.95,                    // 高频：谱形状分数门限（影子，仅记录不否决）
+  SCORE_VETO: false,                  // 谱分数是否参与否决。B129 实测：score 与 F1 强相关
+                                      // （Spearman 0.68），现场正常球误判 22%，故降为影子。
 };
 
 // 频谱形状特征（力度无关）：flat 谱平坦度、crest 峰值因子、s120 100-150Hz 幅度占比。
@@ -2622,11 +2623,11 @@ function frameEvaluate(w) {
   const sp = spectralCompute(w.data);
   r.flat = sp.flat; r.crest = sp.crest; r.s120 = sp.s120; r.score = sp.score;
   r.specHit = Number.isFinite(r.score) && r.score > FRAME.SCORE_MAX;
-  // 联合判决：OR 逻辑，deg 抓扭转打框、score 抓正撞框/低力度打框
-  r.hit = r.degHit || r.specHit;
+  // 判决：低频转角是否决项；谱分数默认只记影子（SCORE_VETO=false），待现场标注校准后再启用
+  r.hit = r.degHit || (FRAME.SCORE_VETO && r.specHit);
   if (r.degHit && r.specHit) r.why = "deg+score";
   else if (r.degHit) r.why = "deg";
-  else if (r.specHit) r.why = "score";
+  else if (r.specHit) r.why = FRAME.SCORE_VETO ? "score" : "score_shadow";
   else r.why = "";
   return r;
 }
@@ -5588,6 +5589,13 @@ async function voiceUpdateStat() {
 // - 如果 voiceDevLabel 是用户手动选的 label：精确匹配 label
 // - 如果没设 voiceDevLabel：自动挑蓝牙耳机（有就用，没有返回 "" 让浏览器选默认）
 async function voiceResolvePreferredDevice() {
+  // B129：原生壳里 WebView 的 enumerateDevices 拿不到蓝牙耳机 label（只有一个默认麦克风），
+  // 所以「检测耳机」永远判成本机麦。改为问原生：已连接就返回设备名，录音由原生开 SCO 走耳机麦。
+  if (NATIVE && NATIVE.voiceHeadset) {
+    let hs = "";
+    try { hs = NATIVE.voiceHeadset() || ""; } catch (e) {}
+    if (hs) return { deviceId: "", label: "蓝牙耳机｜" + hs, resolved: true, isBT: true, nativeSco: true };
+  }
   try {
     const devs = (await navigator.mediaDevices.enumerateDevices())
       .filter(d => d.kind === "audioinput" && d.deviceId && d.deviceId !== "default");
@@ -5673,8 +5681,12 @@ async function pinPlaybackToSpeaker() {
 
 // 采集页/首页统一麦克风文案：直接显示 mic_label 原文（2026-11-03 用户要求）
 function micNowTxt() {
-  // 原生壳由 MediaRecorder 直接采：有蓝牙耳机时走 SCO（VOICE_COMMUNICATION），否则用本机麦
-  if (NATIVE) return "原生采集（检测到蓝牙耳机时优先耳机麦，否则本机麦）";
+  // B129：原生壳直接查系统已连接的蓝牙音频设备（WebView 枚举不到耳机 label）
+  if (NATIVE) {
+    let hs = "";
+    try { if (NATIVE.voiceHeadset) hs = NATIVE.voiceHeadset() || ""; } catch (e) {}
+    return hs ? "蓝牙耳机｜" + hs : "本机麦克风（未检测到蓝牙耳机）";
+  }
   if (!voiceMicLabel) return "待授权（点「检测麦」）";
   if (micKindOf(voiceMicLabel) === "蓝牙耳机") return "蓝牙耳机｜" + voiceMicLabel;
   return (voiceMicFallback ? "本机麦克风（未选到蓝牙）｜" : "本机麦克风｜") + voiceMicLabel;
@@ -5925,6 +5937,14 @@ async function capAudioStart() {
     await voiceMarkFail({ name: "SecurityError", message: "缺少 mediaDevices（非 https 或浏览器不支持）" });
     return false;
   }
+  // B129：先把原生音频输入路由切到蓝牙耳机（SCO 建立约 200~500ms），再开 WebView 录音；
+  // WebView 自身不会开 SCO，之前「耳机麦」实际一直录的是本机麦。
+  let hsName = "";
+  if (NATIVE) {
+    try { if (NATIVE.voiceHeadset) hsName = NATIVE.voiceHeadset() || ""; } catch (e) {}
+    try { if (NATIVE.voiceRoute) NATIVE.voiceRoute(true); } catch (e) {}
+    if (hsName) await new Promise(r => setTimeout(r, 450));
+  }
   const baseAudio = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
   const pick = await voiceResolvePreferredDevice();
   let stream = null;
@@ -5943,8 +5963,15 @@ async function capAudioStart() {
     } else { await voiceMarkFail(e); return false; }
   }
   voiceMicError = false; voiceMicReason = ""; voiceLastFailKey = "";
-  voiceMicLabel = (stream.getAudioTracks()[0] && stream.getAudioTracks()[0].label) || voiceMicLabel;
-  voiceMicFallback = micKindOf(voiceMicLabel) !== "蓝牙耳机";
+  const trackLbl = (stream.getAudioTracks()[0] && stream.getAudioTracks()[0].label) || "";
+  // B129：原生壳里 track label 恒为「Microphone」，不能据此判本机麦；以原生查到的耳机为准
+  if (pick.nativeSco && hsName) {
+    voiceMicLabel = pick.label;
+    voiceMicFallback = false;
+  } else {
+    voiceMicLabel = trackLbl || voiceMicLabel;
+    voiceMicFallback = micKindOf(voiceMicLabel) !== "蓝牙耳机";
+  }
   // 预检说"有蓝牙"、实际却拿到本机麦（exact 失效/被占用）→ 仍给一次提示，可取消
   if (voiceMicFallback && !capHeadsetOK) {
     capHeadsetOK = confirm("请连接耳机以保证录音效果\n\n"
@@ -6209,6 +6236,8 @@ async function capAudioStop() {
   const res = await capAudioFinalizePart(false, "user_stop");
   capAudioStopping = false;
   if (res && capAudioMic) capAudioMicEnd = capAudioMic;   // 正常收尾才把末段 label 当作结束输入
+  // B129：停止后把音频路由还给系统（否则 SCO 一直占着，播报/放音会闷在耳机里）
+  try { if (NATIVE && NATIVE.voiceRoute) NATIVE.voiceRoute(false); } catch (e) {}
   await voiceUpdateStat();
   return res;
 }
@@ -6258,6 +6287,7 @@ async function capStart(mode) {
   }
   if (!(await capAudioStart())) {
     capOn = null; capTag = "";
+    try { if (NATIVE && NATIVE.voiceRoute) NATIVE.voiceRoute(false); } catch (e) {}
     if (mode === "video") await camStopRec();      // 音频失败时别留下空录像
     capPaint(); camLog("麦克风不可用，未开始采集", true);
     return;
@@ -6501,6 +6531,25 @@ if (!window.isSecureContext || !navigator.mediaDevices) {
       + `接口=${navigator.mediaDevices ? "有" : "无"}；请用 https 地址打开`, "log-warn");
 }
 
+// 页内浮层提示：不依赖原生 toast（部分 ROM/旧 APK 上 toast 不显示），保证导出有反馈
+function flashMsg(text, isErr) {
+  let el = document.getElementById("ntFlash");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "ntFlash";
+    el.style.cssText = "position:fixed;left:50%;bottom:56px;transform:translateX(-50%);z-index:99999;" +
+      "max-width:88vw;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.4;" +
+      "background:#222;color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;" +
+      "transition:opacity .18s;pointer-events:none;text-align:center;white-space:pre-line";
+    document.body.appendChild(el);
+  }
+  el.style.background = isErr ? "#7a1f1f" : "#1e3a2b";
+  el.textContent = text;
+  el.style.opacity = "1";
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.opacity = "0"; }, 4000);
+}
+
 // [B127] 保存文件：原生壳里 WebView 不支持 <a download>，改走桥分块写入「下载」目录；
 // 浏览器里仍用 Blob + a[download]。返回 Promise<boolean>（是否已保存）。
 async function saveBlobFile(blob, filename, mime) {
@@ -6509,6 +6558,7 @@ async function saveBlobFile(blob, filename, mime) {
     try {
       if (!br.saveStart(filename, mime || "application/octet-stream")) {
         log(`保存失败：无法创建 ${filename}`, "log-warn");
+        flashMsg(`保存失败：无法创建 ${filename}`, true);
         return false;
       }
       const CHUNK = 512 * 1024;
@@ -6522,17 +6572,21 @@ async function saveBlobFile(blob, filename, mime) {
         br.saveChunk(btoa(s));
       }
       const where = br.saveEnd();
-      log(`已保存 ${filename} → ${where || "下载目录"}`, "log-info");
+      const w = where || "下载目录";
+      log(`已保存 ${filename} → ${w}`, "log-info");
+      flashMsg(`已保存 ${filename}\n→ ${w}`);
       try { br.toast && br.toast(`已保存 ${filename}`); } catch (e) {}
       return true;
     } catch (e) {
       log(`保存失败：${e.message}`, "log-warn");
+      flashMsg(`保存失败：${e.message}`, true);
       try { br.toast && br.toast(`保存失败：${e.message}`); } catch (e2) {}
       return false;
     }
   }
   if (br && typeof br.saveStart !== "function") {
     log("当前 APK 版本不支持直接保存，请安装 B127 及以上的 APK", "log-warn");
+    flashMsg("当前 APK 过旧，无法保存文件\n请安装 B128 及以上的 APK", true);
   }
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
