@@ -974,7 +974,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B133-20261118-1600";   // B133：视频边录边落盘（每 3s 分片直写，内存不再常驻整段 Blob）+ 写盘逐块校验；B132：降热三改——屏幕只在采集中常亮 / 关闭原生逐窗录音（去双路）/ 蓝牙扫描降占空比 + 断线重扫递增；B131：采集前未连球拍警告。
+const APP_BUILD = "APP-Step5-B134-20261118-2200";   // B134：录像结束时把这段时长传给原生，补写 WebM 头里的 Duration（修 ffmpeg 读出 N/A / 播放器快进）；上一版：视频边录边落盘（每 3s 分片直写，内存不再常驻整段 Blob）+ 写盘逐块校验；B132：降热三改——屏幕只在采集中常亮 / 关闭原生逐窗录音（去双路）/ 蓝牙扫描降占空比 + 断线重扫递增；B131：采集前未连球拍警告。
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -6650,7 +6650,9 @@ async function saveBlobFile(blob, filename, mime) {
       if (written !== blob.size) {
         throw new Error(`保存不完整（${written}/${blob.size} 字节）`);
       }
-      const where = br.saveEnd();
+      // B134：saveEnd 新增时长参数（非视频文件传 0）；旧 APK 不接受参数，退回无参调用
+      let where = "";
+      try { where = br.saveEnd(0); } catch (_) { where = br.saveEnd(); }
       if (!where) throw new Error("文件校验未通过，已删除");
       const w = where || "下载目录";
       log(`已保存 ${filename} → ${w}`, "log-info");
@@ -7802,13 +7804,25 @@ async function camStartRec() {
     clearInterval(camTimer); camTimer = null;
     $("camRecTag").classList.remove("on");
     camAutoPaused = false;
+    // B134：这段录像的实际时长（毫秒）= 墙钟差 − 暂停，与下面 meta.media_ms 同一口径。
+    // 原生端用它补写 WebM 头里的 Duration：MediaRecorder 分片直写的文件没有该字段。
+    const stopAtMs = Date.now();
+    const recMs = camMetaCur
+      ? Math.max(0, stopAtMs - camMetaCur.start_ms - camMetaCur.paused_ms
+                     - (camMetaCur.pause_open ? stopAtMs - camMetaCur.pause_open : 0))
+      : (camRecStart ? Math.max(0, stopAtMs - camRecStart) : 0);
     camRecStart = 0;
     let blob = null, name = "", sizeMb = 0;
     if (camSink) {
       const sink = camSink;
       camSink = null;
       await sink.queue;                      // 等最后一个分片落盘
-      const where = sink.failed ? "" : window.AndroidBle.saveEnd();
+      let where = "";
+      if (!sink.failed) {
+        // B134：带时长调用；旧 APK 的 saveEnd 不接参数（调用会抛异常），退回无参调用保持兼容
+        try { where = window.AndroidBle.saveEnd(Math.round(recMs)); }
+        catch (_) { try { where = window.AndroidBle.saveEnd(); } catch (_) { where = ""; } }
+      }
       if (!where || sink.bytes <= 0) {
         if (sink.bytes <= 0) { try { window.AndroidBle.saveAbort(); } catch (_) {} }
         camLog("视频保存失败：写入中断，残留文件已删除", true);
