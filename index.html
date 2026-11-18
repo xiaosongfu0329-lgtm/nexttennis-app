@@ -1067,6 +1067,7 @@ const PROTO = {
   SYS_MAGIC: 0xA5,
   SYNC_FLAG: 0xF2,   // [B119] 系统帧 flags=0xF2 → 对时回包（其余 flags 仍按电池帧解析）
   SYNC_REQ: 0x53,    // [B119] App 写 4B 请求首字节
+  ACK_MAGIC: 0xAC,   // [B38] 窗口 ACK：App 写 2B [0xAC][rawSeq 低 8 位]，固件收到后释放缓冲槽
   CHUNK_HDR: 12,
   // [B126] 脱机记录下载命令层（与固件 Step5-B64 1:1）
   //   命令帧 App→设备: [0x54][cmd][cmdSeq][len][payload][crc16]
@@ -1176,8 +1177,12 @@ class BleStreamParser {
       this._histChunk(buf, ci, ct, seq, total, plen, crc, fw, ts24);
       return;
     }
-    // 已交付过的 seq 又来分片 => 多链路堆叠/迟到重传，直接忽略
-    if (this._delivered.has(seq)) return;
+    // 已交付过的 seq 又来分片 => 多链路堆叠/迟到重传（固件没收到 ACK 会补发同一窗口）
+    // 直接忽略，并在首片重发一次 ACK，避免固件槽位一直占着不放
+    if (this._delivered.has(seq)) {
+      if (ci === 0) sendWinAck(seq);
+      return;
+    }
 
     let slot = this._buf.get(seq);
     if (!slot) {
@@ -1330,14 +1335,23 @@ class BleStreamParser {
       if (badOrder) { link_qc = "INTERLEAVED"; link_note = `order=[${badOrder.join(",")}]`; }
     }
 
+    // [B38] 窗口内容签名：断连补传会重发同一 raw seq，App 侧用「seq + 签名」去重
+    let winSig = 0x811C9DC5;
+    for (let i = 0; i < slot.bytes.length; i++) {
+      winSig ^= slot.bytes[i];
+      winSig = Math.imul(winSig, 16777619);
+    }
+
     const meta = { seq, timestamp: slot.createdAt, source: "impact",
                    recvBytes: slot.filled, total: slot.total, fw: slot.fw,
                    fwMs: slot.fwMs || 0,          // [B56] 固件触发时刻 (ms since boot, 24bit 回绕)
                    crcFail: slot.crcFail, quickClass: slot.quickClass,
                    strokeType: null, spinType: null,
-                   link_qc, link_note };   // B109：窗级传输异常（独立于固件 qc）
+                   link_qc, link_note,            // B109：窗级传输异常（独立于固件 qc）
+                   winSig: winSig >>> 0 };        // [B38] 补传去重签名
     this._buf.delete(seq);
     this._delivered.add(seq);
+    sendWinAck(seq);   // [B38] 拼装完成即 ACK：即使后续分析抛异常，固件也能释放槽位
     if (this._delivered.size > 64) {   // 只防近 64 个窗口的迟到副本（seq 为 u8，64 ≪ 256 回绕周期）
       this._delivered.delete(this._delivered.values().next().value);
     }
@@ -1907,7 +1921,29 @@ let sessionStartTs = 0;
 // 2026-11-05（B95）：固件 seq 是 u8，重连/固件复位会归零；同一 sessionTag 内必须单调，
 // 否则 (会话, seq) 重复会让 windows.csv 串窗。这里由 App 统一重编号，raw seq 只用于丢包检测。
 let seqBase = 0, seqLast = -1, seqLastRaw = -1;
-function seqReset() { seqBase = 0; seqLast = -1; seqLastRaw = -1; }
+// [B38] 断连补传去重：固件未收到 ACK 会重发同一窗口，且 parser.reset() 在断连时清空 _delivered，
+// 所以这里用「raw seq + 窗口内容签名」跨重连去重；同一 seq 但内容不同 = 固件复位后重新计数，按新窗处理。
+// 只影响入表/分析，不改变 windows/marks 文件格式。
+const WIN_SEEN_TTL_MS = 10 * 60 * 1000;
+let winSeen = new Map();     // rawSeq -> {sig, t}
+let resendN = 0;             // 补传去重次数（session_log 用）
+function winSeenPrune(now) {
+  for (const [k, v] of winSeen) {
+    if (now - v.t > WIN_SEEN_TTL_MS) winSeen.delete(k);
+  }
+  if (winSeen.size > 400) {
+    const oldest = [...winSeen.entries()].sort((a, b) => a[1].t - b[1].t)[0];
+    if (oldest) winSeen.delete(oldest[0]);
+  }
+}
+// [B38] 窗口 ACK：[0xAC][rawSeq 低 8 位]。老固件不认此帧/特征值不可写时静默失败，不阻塞采集。
+function sendWinAck(rawSeq) {
+  try {
+    if (typeof hwSync === "undefined" || !hwSync._send) return;
+    hwSync._send(new Uint8Array([PROTO.ACK_MAGIC, rawSeq & 0xFF]));
+  } catch (e) {}
+}
+function seqReset() { seqBase = 0; seqLast = -1; seqLastRaw = -1; winSeen.clear(); resendN = 0; }
 function seqNext(rawSeq) {
   // 255→0 是协议正常回绕；其他"往回跳"视为固件重连/复位，留痕但不让 App 序号归零
   if (rawSeq <= seqLastRaw && !(seqLastRaw === 255 && rawSeq === 0)) {
@@ -2162,6 +2198,21 @@ function computeLateContactFeatures(win) {
 
 // ---------- 窗口到达（冲击协议 / mock 共用） ----------
 function onWindow(meta, data) {
+  // [B38] 补传去重：parser 的 _delivered 断连时会清空，重发的窗口会再次走到这里。
+  //   同一 raw seq + 相同内容签名 → 已入表过，只记 session_log，不重复进 sessionWindows。
+  if (meta.source === "impact" && meta.winSig != null) {
+    const now = Date.now();
+    const prev = winSeen.get(meta.seq);
+    if (prev && prev.sig === meta.winSig && now - prev.t < WIN_SEEN_TTL_MS) {
+      resendN += 1;
+      connLogAdd({ event: "resend", sessionTag: sessionTag(), lastSeq: meta.seq,
+                   note: `补传去重 seq=${meta.seq}` });
+      log(`补传窗口 seq=${meta.seq} 已收过，去重（累计 ${resendN}）`, "log-info");
+      return;
+    }
+    winSeen.set(meta.seq, { sig: meta.winSig, t: now });
+    winSeenPrune(now);
+  }
   let res;
   try {
   meta.rawSeq = meta.seq;
