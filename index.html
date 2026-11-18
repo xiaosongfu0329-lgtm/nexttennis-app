@@ -974,7 +974,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B130-20261118-1330";   // B130：导出按钮全部加页内浮层（含无数据/异常分支，不再静默）；B129：导出/保存页内浮层 + 耳机麦 SCO 路由 + TTS 主线程。
+const APP_BUILD = "APP-Step5-B131-20261118-1410";   // B131：采集前未连球拍时红框警告（防止只录音/录像白采）；B130：导出按钮全部加页内浮层（含无数据/异常分支）。
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -4392,6 +4392,7 @@ window.__ntChunk = function (b64) {
 window.__ntStatus = function (json) {
   try {
     const s = typeof json === "string" ? JSON.parse(json) : json;
+    natLink = s.state || "";
     if (s.state === "scanning") { setConn("扫描中…", "idle"); log("原生壳扫描 Tennis_Sensor…", "log-info"); }
     else if (s.state === "connecting") { setConn("连接中…", "idle"); }
     else if (s.state === "connected") {
@@ -5235,6 +5236,8 @@ setTimeout(() => { offPanelRender(); if (!OFFLINE.active) offSetState("未连接
 //        浏览器（Web Bluetooth）无法枚举设备，只能保留固定编号列表，靠系统弹窗自己选。
 const DEV_LIST = ["Tennis_Sensor_01", "Tennis_Sensor_02", "Tennis_Sensor_03"];
 const natScan = { devices: [], scanning: false, at: 0 };
+// [B130] 原生壳链路状态（__ntStatus 写入），用于采集前判断是否真的连上了球拍
+let natLink = "";
 let pendingAddr = "";     // 原生壳：本次要连接的具体 MAC
 function devMenuRender() {
   const box = $("devMenu");
@@ -6249,6 +6252,12 @@ async function capAudioStop() {
 
 async function capStart(mode) {
   if (capOn) { log("已在采集中，先点「■ 结束采集」", "log-warn"); return; }
+  // [B130] 防白采：没连球拍就开采集，只会录到音视频，不会产生任何窗口/CSV
+  const linked = NATIVE ? (natLink === "connected") : linkConnected();
+  if (!linked) {
+    flashMsg("未连接球拍：本场只会录音/录像，不会有窗口和 CSV", true);
+    log("未连接球拍 → 本次采集不会产生窗口数据（先点顶部设备芯片选中并连接）", "log-warn");
+  }
   // 2026-11-07：视频采集尽量先进全屏并锁横屏——真横屏后相机流与页面天然一致；
   // 必须在点击手势里同步发起，失败就静默退回 CSS 整页旋转（B114/B115 兜底）。
   // B121：全屏/锁定都是异步的，必须等真的转横再往下走。否则 getUserMedia 按物理竖屏
