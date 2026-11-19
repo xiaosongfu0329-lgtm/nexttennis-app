@@ -1,6 +1,6 @@
 {
-  "build": 136,
-  "version": "0.2.0-B136",
-  "apk": "https://xiaosongfu0329-lgtm.github.io/nexttennis-app/apk/Nexttennis-B136.apk",
-  "note": "过热定位：记录编码矩阵/WebView 版本/硬件加速/屏幕亮度，录制期间每 30s 记系统热状态"
+  "build": 137,
+  "version": "0.2.0-B137",
+  "apk": "https://xiaosongfu0329-lgtm.github.io/nexttennis-app/apk/Nexttennis-B137.apk",
+  "note": "过热定位：录制期每 15s 记录电池温度与本进程 CPU 占用，用于区分软件负载与相机/射频负载"
 }
