@@ -1,6 +1,6 @@
 {
-  "build": 138,
-  "version": "0.2.0-B138",
-  "apk": "https://xiaosongfu0329-lgtm.github.io/nexttennis-app/apk/Nexttennis-B138.apk",
-  "note": "CPU 热点遥测：按进程/线程列出占用最高的线程，定位 172% 负载来源"
+  "build": 141,
+  "version": "0.2.0-B141",
+  "apk": "https://xiaosongfu0329-lgtm.github.io/nexttennis-app/apk/Nexttennis-B141.apk",
+  "note": "热保护 + 自动分段：热状态≥3 持续60s 或到 4 立即收尾落盘暂停录制，降到≤2 自动续录；每5分钟切段、间隔10s；采集页不再全屏取景（保留分栏，压低亮度）"
 }
