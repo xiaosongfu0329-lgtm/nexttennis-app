@@ -974,7 +974,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B136-20261118";   // B136：打框判决现场标定——修 Gz 转角单位 bug（rad→deg，原 DEG_MAX 实际从未触发），DEG_MAX 45→24；启用高频联合判决 flat>0.64（SPEC_VETO），补小偏心打框召回；score 降为影子列。基于 11-18 现场 48 拍语音标注。B135：视频录完由原生转封装成 MP4（只换容器不重编码），修手机相册/系统播放器错读 WebM 时间戳导致的 3~5 倍速、提前结束；B134：录像结束把时长传给原生补写 WebM Duration；B133：视频边录边落盘（每 3s 分片直写，内存不再常驻整段 Blob）+ 写盘逐块校验；B132：降热三改——屏幕只在采集中常亮 / 关闭原生逐窗录音（去双路）/ 蓝牙扫描降占空比 + 断线重扫递增；B131：采集前未连球拍警告。
+const APP_BUILD = "APP-Step5-B136-20261119";   // B136：①打框判决现场标定——修 Gz 转角单位 bug（rad→deg，原 DEG_MAX 实际从未触发），DEG_MAX 45→24；启用高频联合判决 flat>0.64（SPEC_VETO），补小偏心打框召回；score 降为影子列。基于 11-18 现场 48 拍语音标注。②过热定位——记录编码矩阵/WebView 版本/硬件加速/屏幕亮度，录制期每 30s 记系统热状态（规格 720p30/2.5Mbps 不变）。B135：视频录完由原生转封装成 MP4（只换容器不重编码），修手机相册/系统播放器错读 WebM 时间戳导致的 3~5 倍速、提前结束；B134：录像结束把时长传给原生补写 WebM Duration；B133：视频边录边落盘（每 3s 分片直写，内存不再常驻整段 Blob）+ 写盘逐块校验；B132：降热三改——屏幕只在采集中常亮 / 关闭原生逐窗录音（去双路）/ 蓝牙扫描降占空比 + 断线重扫递增；B131：采集前未连球拍警告。
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -7617,12 +7617,35 @@ async function camWake(on) {
     } else if (camLock) { await camLock.release(); camLock = null; }
   } catch (_) {}
 }
+// B136：录制期间每 30s 记一次系统热状态，用来定位「浏览器没事、换壳才热」的升温曲线。
+// 先只观测不改规格：帧率/分辨率/码率都保持 30fps 720p 原样。
+let camThermalTimer = null;
+let camThermalLast = -2;
+function camThermalOn() {
+  clearInterval(camThermalTimer);
+  camThermalPoll();
+  camThermalTimer = setInterval(camThermalPoll, 30000);
+}
+function camThermalOff() {
+  clearInterval(camThermalTimer); camThermalTimer = null;
+}
+function camThermalPoll() {
+  let t = -1;
+  try { t = (NATIVE && NATIVE.thermal) ? NATIVE.thermal() : -1; } catch (_) { return; }
+  if (t < 0) return;                      // 旧 APK 或系统不支持
+  if (t === camThermalLast) return;        // 只在状态变化时记，避免刷屏
+  camThermalLast = t;
+  const label = ["无", "轻度", "中度", "重度", "危急", "关机"][t] || String(t);
+  log(`设备热状态：${label}（${t}）`, t >= 2 ? "log-warn" : "log-info");
+  if (t >= 2) camLog(`设备${label}发热：建议暂停采集散热`, true);
+}
 // B121：取摄像头流并校验方向。第一次拿到竖屏流时释放、等横屏后重取一次；
 // 仍竖屏则原样返回，由下游在 meta 里标记 source_orientation 并提示，不阻断采集。
 async function camGetStream(attempt) {
   // B131：原生壳里 1080p30@8Mbps 长时间录制发热明显（11-18 两段因过热停机），
   // 降到 720p；动作识别不需要 1080p，文件也从约 99MB/106s 降到约 26MB。
-  // 若设备只给 1080p，下方码率按长边再下调。
+  // B136：帧率保持 30——浏览器里同样配置不过热，说明多出来的功耗来自壳层而不是相机规格，
+  // 先定位壳层差异，不靠降帧率掩盖问题。
   const s = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: { facingMode: { ideal: "environment" },
@@ -7724,6 +7747,7 @@ function camRelease() {
   const gd = $("camGuide"); if (gd) gd.classList.remove("on");
   clearInterval(camTimer); camTimer = null;
   $("camRecTag").classList.remove("on");
+  camThermalOff();                 // B136：切纯录音时停止热状态采样
   camWake(false);
 }
 
@@ -7749,6 +7773,17 @@ async function camStartRec() {
   if (!(await camOpen())) return false;
   const mime = camPickMime();
   if (!mime) { camLog("本浏览器不支持 MediaRecorder", true); return false; }
+  // B136：记录编码支持矩阵与 WebView 版本。旧 WebView 不支持 h264 时会退到 VP9 软编，
+  // CPU 长期满载——这是「浏览器里没事、换原生壳才过热」的头号嫌疑，必须留证据。
+  try {
+    const ua = (navigator.userAgent.match(/Chrome\/[\d.]+/) || [""])[0];
+    const sup = ["video/webm;codecs=h264", "video/mp4;codecs=avc1.42E01E",
+                 "video/webm;codecs=vp9", "video/webm;codecs=vp8"]
+      .map(c => `${c.split(";")[1] || c}=${MediaRecorder.isTypeSupported(c) ? "Y" : "N"}`).join(" ");
+    let dg = "";
+    try { if (NATIVE && NATIVE.diag) dg = "｜壳层 " + NATIVE.diag(); } catch (_) {}
+    log(`编码支持：${sup}｜选用 ${mime}｜${ua}${dg}`, "log-info");
+  } catch (_) {}
   camChunks = [];
   camAutoPaused = false;     // 新一段录像：清掉捡球暂停标记
   // B131：码率下调以降功耗。原 1080p30=8Mbps，原生壳长时间录制过热；
@@ -7805,6 +7840,7 @@ async function camStartRec() {
   camRec.onstop = async () => {
     const fs = camFrameWatchStop();   // 2026-11-07：诊断落帧
     clearInterval(camTimer); camTimer = null;
+    camThermalOff();                  // B136：停止热状态采样
     $("camRecTag").classList.remove("on");
     camAutoPaused = false;
     // B134：这段录像的实际时长（毫秒）= 墙钟差 − 暂停，与下面 meta.media_ms 同一口径。
@@ -7898,6 +7934,8 @@ async function camStartRec() {
   camFrameWatchStart();      // 2026-11-07：诊断落帧
   camRec.start(3000);        // 3s 分片
   camRecStart = Date.now();
+  // B136：只观测——每 30s 记录系统热状态，定位升温从第几分钟开始
+  camThermalOn();
   $("camRecTag").classList.add("on");
   $("camRecTag").textContent = "● 录像中";
   camWake(true);
