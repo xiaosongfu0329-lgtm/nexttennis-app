@@ -273,10 +273,12 @@
     #capFlipBtn, #capExitBtn { display: inline-flex; }
   }
   /* 2026-11-07：视频采集进行中——取景铺满整页，计数/块/会话/录音压成半透明叠加层，提示文字缩小 */
+  /* B140：去掉这层 backdrop-filter。它压在 30fps 的实时相机画面上，每帧都要重新高斯模糊，
+     Chrome 有 GPU 优化路径而 WebView 没有——实测壳内 RenderThread+VizWebView 恒定吃 60% CPU
+     （隐藏预览后仍是 60%，证明开销来自这层逐帧模糊，而不是视频合成）。改纯半透明底色，观感接近、零逐帧成本。 */
   body.capVideo #page6.active { display: block; padding: 0; }
   body.capVideo #page6.active > .panel { position: absolute; z-index: 5; margin: 0; padding: 4px 8px;
-    background: rgba(13,17,23,.66); border: 1px solid rgba(255,255,255,.14); border-radius: 10px;
-    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+    background: rgba(13,17,23,.86); border: 1px solid rgba(255,255,255,.14); border-radius: 10px; }
   body.capVideo #page6.active > .panel:nth-child(1) { position: absolute; inset: 0; padding: 0;
     background: #000; border: none; border-radius: 0; z-index: 1; }
   body.capVideo #page6 #camWrap { position: absolute; inset: 0; border: none; border-radius: 0; }
@@ -974,7 +976,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B139-20261119";   // B139：录制时隐藏相机预览（B138 证明 RenderThread+VizWebView 合计约 62% CPU 全花在预览合成；隐藏不影响录像内容），用于验证降热效果；localStorage.nt_showPreview="1" 可恢复常显。B138：CPU 热点遥测——按进程/线程列出占用最高的 6 条，配合 B136 的编码矩阵/壳层诊断，区分"软件负载打满"与"相机/射频非 CPU 负载"。规格 720p30/3Mbps 不变。B136：①打框判决现场标定——修 Gz 转角单位 bug（rad→deg，原 DEG_MAX 实际从未触发），DEG_MAX 45→24；启用高频联合判决 flat>0.64（SPEC_VETO），补小偏心打框召回；score 降为影子列。基于 11-18 现场 48 拍语音标注。②过热定位——记录编码矩阵/WebView 版本/硬件加速/屏幕亮度，录制期每 30s 记系统热状态（规格 720p30/2.5Mbps 不变）。B135：视频录完由原生转封装成 MP4（只换容器不重编码），修手机相册/系统播放器错读 WebM 时间戳导致的 3~5 倍速、提前结束；B134：录像结束把时长传给原生补写 WebM Duration；B133：视频边录边落盘（每 3s 分片直写，内存不再常驻整段 Blob）+ 写盘逐块校验；B132：降热三改——屏幕只在采集中常亮 / 关闭原生逐窗录音（去双路）/ 蓝牙扫描降占空比 + 断线重扫递增；B131：采集前未连球拍警告。
+const APP_BUILD = "APP-Step5-B140-20261119";   // B140：撤掉采集页叠加面板的 backdrop-filter:blur(6px)——它压在 30fps 实时画面上逐帧重算高斯模糊，是壳内 RenderThread 35%+VizWebView 25% 的嫌疑源（隐藏预览后仍 60%，证明与视频合成无关）。同时撤回 B139 的隐藏预览（实测无效且妨碍取景）。B138：CPU 热点遥测
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -7952,13 +7954,6 @@ async function camStartRec() {
   $("camRecTag").classList.add("on");
   $("camRecTag").textContent = "● 录像中";
   camWake(true);
-  // B139：录制时默认隐藏预览。B138 遥测显示 RenderThread 36% + VizWebView 26%（约 1.0 核）
-  // 全花在把相机帧合成到 WebView 上；MediaRecorder 用的是同一路 MediaStream，隐藏 <video>
-  // 不影响录制内容。localStorage.nt_showPreview="1" 可恢复常显。
-  if (localStorage.getItem("nt_showPreview") !== "1") {
-    $("camVideo").style.display = "none";
-    log("采集页：录制中已隐藏预览画面（降热，录像内容不受影响）", "log-info");
-  }
   camTimer = setInterval(() => {
     if (camAutoPaused) { camLog("录像已暂停（捡球中）", false); return; }
     const s = Math.round((Date.now() - camRecStart) / 1000);
