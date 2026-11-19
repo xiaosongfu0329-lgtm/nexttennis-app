@@ -966,7 +966,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B142-20261119";   // B142：代码清理（删从未调用的 nfQMul/volTargetSet/VERDICT_CLS/VOL_WIN_N、已删控件的个人资料编辑残留、空转的 updateSessStat；风险建议年龄改读球员档案）；CPU 热点诊断由 15s 降为 60s。无功能变更
+const APP_BUILD = "APP-Step5-B143-20261119";   // B143：修时长取时点——meta 的 end_ms/media_ms 改用 onstop 到达时刻（不再把 MP4 转封装耗时算进去，实测多 2.33s）；音频先请求停止再等视频收尾，end_ts/dur_ms 改用停止请求时刻；seg_name 统一为落盘后的 .mp4；Opus 采样率按实际 48000 记录
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -6021,6 +6021,9 @@ function capAudioRecorderStart(stream, label) {
   capAudioStartTs = 0;
   const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
     .find(m => MediaRecorder.isTypeSupported(m)) || "";
+  // B143：Opus 一律 48kHz 编码，而 getSettings() 报的是采集端输入率（通常是 44100），
+  // 不能拿它当编码采样率写进 meta（2026-11-19 的包记 44100，实际文件是 48000）。
+  if (mime.includes("opus")) capAudioSampleRate = 48000;
   const rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
   capAudioRec = rec;
   const seg = { part, start_ts: "", end_ts: "", dur_ms: 0, chunks: 0,
@@ -6062,10 +6065,13 @@ function capAudioFinalizePart(interrupted, reason) {
   return new Promise(resolve => {
     const rec = capAudioRec, stream = capAudioStream;
     if (!rec) { resolve(null); return; }
+    let stopReqMs = 0;            // B143：请求停止的时刻（rec.stop() 之前），不是 onstop 落盘时刻
     const finish = async () => {
       const mime = rec.mimeType || (capAudioChunks[0] && capAudioChunks[0].type) || "audio/webm";
       const blob = new Blob(capAudioChunks, { type: mime });
-      const endNow = Date.now();
+      // B143：onstop 可能被主线程上的视频转封装（saveEnd 同步调用）推迟数秒，
+      // 用请求停止的时刻算 end_ts/dur_ms，才能和音频文件实际结尾一致。
+      const endNow = stopReqMs || Date.now();
       const seg = capAudioSegs[capAudioSegs.length - 1];
       if (seg) {
         seg.end_ts = new Date(endNow).toISOString();
@@ -6105,6 +6111,7 @@ function capAudioFinalizePart(interrupted, reason) {
       resolve({ name, dur: endNow - startMs, marks: partMarks.length, part });
     };
     if (rec.state === "inactive") { finish(); return; }
+    stopReqMs = Date.now();
     try { rec.onstop = finish; rec.stop(); } catch (e) { finish(); }
   });
 }
@@ -6355,6 +6362,7 @@ async function capStop(doPack = true) {
   capOn = null;                    // 先关：后续窗口不再打点
   clearInterval(capTickTimer); capTickTimer = null;
   clearInterval(capMicTimer); capMicTimer = null;
+  let audioP = null;
   if (mode === "video") {
     // B141：手动结束——本段结束原因记 stop，并清掉分段/热保护定时器
     camSegReason = "stop";
@@ -6362,10 +6370,13 @@ async function capStop(doPack = true) {
     clearTimeout(camSegGapTimer); camSegGapTimer = null;
     camHeatStop = false; camHeatSince = 0;
     if ($("camHeat")) $("camHeat").classList.remove("on");
+    // B143：先发出停录音请求，再等视频收尾。saveEnd 同步转 MP4 会阻塞主线程数秒，
+    // 若此时音频还在录，分片回调进不来，尾部 2s 多会被丢掉（2026-11-19 实测：视频 151.29s，音频 151.24s）。
+    audioP = capAudioStop();
     if (camRec && camRec.state !== "inactive") { camLog("正在保存视频…", false); await camStopRec(); }
     camThermalOff();
   }
-  const a = await capAudioStop();
+  const a = audioP ? await audioP : await capAudioStop();
   ttsMute(false);
   try { if (NATIVE && NATIVE.setVoiceAuto) NATIVE.setVoiceAuto(false); } catch (e) {}
   capPaint(); colRefresh();
@@ -7978,12 +7989,15 @@ async function camStartRec() {
     if (camMetaCur) {
       clockWatch.stop();
       if (camMetaCur.pause_open) camMetaPause("resume");   // 停在暂停中：补记续录时刻
-      const endMs = Date.now();
+      // B143：收尾时刻必须用 onstop 到达时的 stopAtMs（转封装之前）。此前在这里取 Date.now()，
+      // 而它位于 saveEnd 同步转 MP4 之后——转封装耗时会算进 media_ms（2026-11-19 实测多 2.33s，
+      // 导致 videos.csv 的时长/结束秒偏大、末尾 2.3s 是"不存在的画面"）。
+      const endMs = stopAtMs;
       const wallMs = endMs - camMetaCur.start_ms;
       const mediaMs = Math.max(0, wallMs - camMetaCur.paused_ms);
       capVideoMetas.push({
         ...camMetaCur,
-        name, size_mb: capVideoSizeMb,
+        name, seg_name: name, size_mb: capVideoSizeMb,   // B143：seg_name 也用落盘后的最终文件名（原生端会 .webm→.mp4）
         end_ms: endMs, end_abs: new Date(endMs).toISOString(),
         wall_ms: wallMs, media_ms: mediaMs, paused_ms: camMetaCur.paused_ms,
         pause_count: camMetaCur.pauses.length,

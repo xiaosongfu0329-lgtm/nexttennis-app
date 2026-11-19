@@ -1,5 +1,5 @@
 // Nexttennis V101 Service Worker — app shell cache for offline PWA
-const CACHE = "nexttennis-v79";   // B142：死代码清理 + CPU 热点诊断降频
+const CACHE = "nexttennis-v80";   // B143：修 meta 时长取时点（media_ms/音频 dur_ms）
 const SHELL = [
   "./",
   "./index.html",
