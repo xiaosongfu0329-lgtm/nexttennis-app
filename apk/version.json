@@ -1,6 +1,6 @@
 {
-  "build": 137,
-  "version": "0.2.0-B137",
-  "apk": "https://xiaosongfu0329-lgtm.github.io/nexttennis-app/apk/Nexttennis-B137.apk",
-  "note": "过热定位：录制期每 15s 记录电池温度与本进程 CPU 占用，用于区分软件负载与相机/射频负载"
+  "build": 138,
+  "version": "0.2.0-B138",
+  "apk": "https://xiaosongfu0329-lgtm.github.io/nexttennis-app/apk/Nexttennis-B138.apk",
+  "note": "CPU 热点遥测：按进程/线程列出占用最高的线程，定位 172% 负载来源"
 }
