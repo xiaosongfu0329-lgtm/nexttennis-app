@@ -1,6 +1,6 @@
 {
-  "build": 135,
-  "version": "0.2.0-B135",
-  "apk": "https://xiaosongfu0329-lgtm.github.io/nexttennis-app/apk/Nexttennis-B135.apk",
-  "note": "B135：视频录完自动转封装成 MP4（只换容器、不重编码），修手机相册/系统播放器 3~5 倍速、提前结束的问题。"
+  "build": 136,
+  "version": "0.2.0-B136",
+  "apk": "https://xiaosongfu0329-lgtm.github.io/nexttennis-app/apk/Nexttennis-B136.apk",
+  "note": "过热定位：记录编码矩阵/WebView 版本/硬件加速/屏幕亮度，录制期间每 30s 记系统热状态"
 }
