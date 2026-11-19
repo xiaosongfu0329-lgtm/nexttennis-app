@@ -966,7 +966,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B141-20261119";   // B141：①热保护——热状态 ≥3 持续 60s 或一到 4(危急) 立即收尾落盘、暂停录制散热，预览保留，降到 ≤2 自动续录（也可手点「继续采集」）；②自动分段——每 5 分钟主动切一段、间隔 10s，段名 _s2/_s3 且 meta 记 session_tag/seg，分析侧可按同场合并；③每段落盘日志记热状态/时长/落帧数；④采集页不再全屏取景，始终保留分栏版式以压低屏幕亮度与进热
+const APP_BUILD = "APP-Step5-B142-20261119";   // B142：代码清理（删从未调用的 nfQMul/volTargetSet/VERDICT_CLS/VOL_WIN_N、已删控件的个人资料编辑残留、空转的 updateSessStat；风险建议年龄改读球员档案）；CPU 热点诊断由 15s 降为 60s。无功能变更
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -2452,16 +2452,6 @@ function updateWinSelector(selectLatest) {
     sel.appendChild(o);
   });
   if (selectLatest) sel.value = sessionWindows.length - 1;
-  updateSessStat();
-}
-
-function updateSessStat() {
-  const n = sessionWindows.length;
-  const passN = sessionWindows.filter(w => isQcOk(w.qc.code, w.meta)).length;
-  const el = $("sessStat");
-  if (!el) return;
-  if (!n) { el.textContent = ""; return; }
-  el.textContent = `本次连接共 ${n} 个窗口（PASS ${passN}，其余 ${n - passN}）`;
 }
 
 // 选择历史窗口：重新载入图表 + QC 面板（currentWindow 同步切换，单窗口导出即导出所选）
@@ -2926,12 +2916,6 @@ function volTargetGet() {
   try { return JSON.parse(localStorage.getItem(VOL_TARGET_KEY)) || null; }
   catch (_) { return null; }
 }
-function volTargetSet(obj) {
-  try {
-    if (obj == null) localStorage.removeItem(VOL_TARGET_KEY);
-    else localStorage.setItem(VOL_TARGET_KEY, JSON.stringify(obj));
-  } catch (_) {}
-}
 function volMedian(vals) {
   if (!vals || !vals.length) return NaN;
   const s = vals.slice().sort((a, b) => a - b);
@@ -3006,7 +2990,7 @@ function volBaseUpdate(side, volObj, sessPause) {
 
 // 触发逻辑：同侧最近 8 窗内 ≥3 次「偏小」（引拍或随挥任一） → 提示 1 次；冷却 5 窗
 // 状态挂在 FORM.volState（FORM 本身是 const 但对象属性可扩展，跨节引用没问题）
-const VOL_WIN_N = 8, VOL_CUE_K = 3, VOL_COOLDOWN = 5;
+const VOL_CUE_K = 3, VOL_COOLDOWN = 5;
 // volState 初始化：放在 FORM 声明后（见 FORM 对象扩展处），这里只定义函数
 function volCheckCue(side, seq, preTier, postTier) {
   if (!side) return null;
@@ -3224,38 +3208,6 @@ function formLoadProfile() {
       FORM.profile.racketIn = p.racketIn != null ? Number(p.racketIn) : null;
     }
   } catch (_) {}
-  const h = $("pfHeight"), a = $("pfAge"), r = $("pfRacket");
-  if (h) h.value = FORM.profile.height != null ? FORM.profile.height : "";
-  if (a) a.value = FORM.profile.age != null ? FORM.profile.age : "";
-  if (r) r.value = FORM.profile.racketIn != null ? String(FORM.profile.racketIn) : "";
-  formUpdateProfileStat();
-}
-function formSaveProfile() {
-  const h = parseFloat($("pfHeight").value), a = parseFloat($("pfAge").value);
-  const r = parseFloat($("pfRacket").value);
-  FORM.profile.height = isFinite(h) ? h : null;
-  FORM.profile.age = isFinite(a) ? a : null;
-  FORM.profile.racketIn = isFinite(r) ? r : null;
-  try { localStorage.setItem(FORM_PROFILE_KEY, JSON.stringify(FORM.profile)); } catch (_) {}
-  formUpdateProfileStat();
-  formRenderThresholds();
-}
-function formUpdateProfileStat() {
-  const el = $("pfStat");
-  if (!el) return;
-  const parts = [];
-  parts.push(FORM.profile.height != null ? `身高 ${FORM.profile.height}cm` : "身高未填");
-  parts.push(FORM.profile.age != null ? `年龄 ${FORM.profile.age} 岁` : "年龄未填");
-  parts.push(`拍长系数 K4=${formK4().toFixed(3)}`);
-  el.textContent = `已保存：${parts.join(" · ")}。资料只用于门限归一化，不影响正常使用。`;
-}
-// 按身高推荐拍长（25/26/27 三档），用户可改
-function formSuggestRacket() {
-  const h = parseFloat($("pfHeight").value);
-  if (!isFinite(h)) { $("pfStat").textContent = "先填身高，再点「按身高推荐拍长」。"; return; }
-  const inch = h < 120 ? 25 : (h <= 145 ? 26 : 27);
-  $("pfRacket").value = String(inch);
-  formSaveProfile();
 }
 
 // ---- JSON 载入：优先 app/data 文件，失败用内嵌同内容块（file:// 直开场景）----
@@ -3448,15 +3400,6 @@ function nfQFromRollPitch(rollDeg, pitchDeg) {
   const cr = Math.cos(r / 2), sr = Math.sin(r / 2);
   const cp = Math.cos(p / 2), sp = Math.sin(p / 2);
   return [cr * cp, sr * cp, cr * sp, -sr * sp];  // w,x,y,z
-}
-function nfQMul(a, b) {
-  const [w1, x1, y1, z1] = a, [w2, x2, y2, z2] = b;
-  return [
-    w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-    w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-    w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-    w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-  ];
 }
 function nfQRot(q, v) {
   const [w, x, y, z] = q;
@@ -3980,7 +3923,6 @@ function diagnoseSwing(data, t0, form, side) {
   };
 }
 
-const VERDICT_CLS = { "有": "pass", "完整": "pass", "不确定": "warn", "无": "fail", "不足": "fail" };
 
 function updateDiagnosis(w) {
   updateFrame(w); // 打框行独立于引拍/随挥，先刷（无效窗口也要清空）
@@ -7210,11 +7152,8 @@ function reviewRiskAdvice(s) {
     return { text: "本次训练未检测到明显损伤风险行为，继续保持甜区击球和早启动的习惯。" };
   }
 
-  // 年龄系数
-  const age = (() => {
-    const el = $("pfAge");
-    return el && el.value ? +el.value : NaN;
-  })();
+  // 年龄系数（B142：原读取已删除的 pfAge 输入框，改为读球员档案注入的 FORM.profile.age）
+  const age = FORM.profile.age != null ? Number(FORM.profile.age) : NaN;
   let ageLabel = "";
   if (isFinite(age)) {
     if (age < 18) ageLabel = "青少年期骨骼正在发育";
@@ -7641,6 +7580,7 @@ let camSegThermalMax = -1;             // 本段内最高热状态
 let camHeatSince = 0;                  // 热状态 ≥3 的连续起点
 let camHeatStop = false;               // 热保护休息中（录制已停、预览保留）
 let camHeatTemp = 0;                   // 休息时电池温度
+let camHotspotAt = 0;                  // B141：CPU 热点扫描上次时间（诊断用，降为 60s 一次）
 function camThermalOn() {
   clearInterval(camThermalTimer);
   camThermalPoll();
@@ -7723,8 +7663,10 @@ function camThermalPoll() {
   // CPU 很低但温度仍涨说明热来自相机/射频/屏幕等非 CPU 通路
   if (pf && pf.temp > 0) log(`设备负载：电池 ${pf.temp}℃｜App CPU ${pf.cpu}%｜热状态 ${t}`, "log-info");
   // B138：CPU 热点（进程/线程级），172% 的负载必须落到具体线程才知道该改哪里
+  // B141：定位已完成，降为 60s 一次（原来 15s 一次扫全进程线程，录像期间没必要那么勤）
   try {
-    if (NATIVE && NATIVE.hotspots) {
+    if (NATIVE && NATIVE.hotspots && Date.now() - camHotspotAt >= 60000) {
+      camHotspotAt = Date.now();
       const hs = NATIVE.hotspots();
       if (hs) log(`CPU 热点：${hs}`, "log-warn");
     }
@@ -8271,11 +8213,6 @@ log("提示：连点 header 5 次切换 家庭视图 / 技术演示视图", "log
 // 形态门限 v2：载入 JSON / 个人资料，绑定设置页
 formLoadProfile();
 formLoadJson();
-if ($("pfSave")) $("pfSave").addEventListener("click", () => {
-  formSaveProfile();
-  log("已保存孩子资料（身高/年龄/拍长），门限已按 K4 归一化", "log-info");
-});
-if ($("pfAuto")) $("pfAuto").addEventListener("click", formSuggestRacket);
 if ($("k3ResetBtn")) $("k3ResetBtn").addEventListener("click", () => {
   FORM.k3Buf = { "正手": [], "反手": [] };
   FORM.k3 = { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } };
