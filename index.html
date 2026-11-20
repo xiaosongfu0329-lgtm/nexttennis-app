@@ -966,7 +966,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B143-20261119";   // B143：修时长取时点——meta 的 end_ms/media_ms 改用 onstop 到达时刻（不再把 MP4 转封装耗时算进去，实测多 2.33s）；音频先请求停止再等视频收尾，end_ts/dur_ms 改用停止请求时刻；seg_name 统一为落盘后的 .mp4；Opus 采样率按实际 48000 记录
+const APP_BUILD = "APP-Step5-B144-20261120";   // B144：采集侧参数调整——分段时长 5→8 分钟、段间隔 10s→2s，减少切段次数与空档时长（不改画质/帧率/码率，不加内容感知）
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -7580,12 +7580,12 @@ async function camWake(on) {
 let camThermalTimer = null;
 let camThermalLast = -2;
 // B141：热保护 + 自动分段
-const CAM_SEG_MS = 5 * 60 * 1000;      // 每段最长 5 分钟，到点主动切段（避免单文件过大/长时间连续编码）
-const CAM_SEG_GAP_MS = 10 * 1000;      // 段间隔 10s（等上一段落盘/转封装完成再开下一段）
+const CAM_SEG_MS = 8 * 60 * 1000;      // B144：每段最长 8 分钟（原 5 分钟）——减少切段次数，降低"切在击球上/切段空档丢画面"的概率
+const CAM_SEG_GAP_MS = 2 * 1000;       // B144：段间隔 2s（原 10s）——上一段已在 camSegmentStop 里落盘/转封装完，这里只留冷却余量
 const CAM_HEAT_HOLD_MS = 60 * 1000;    // 热状态 ≥3 需连续 60s 才判定为「真的压不住」
 let camSegIdx = 0;                     // 本场已开始的段号（1 起；第 1 段沿用旧文件名）
-let camSegReason = "start";            // 本段结束原因：auto(满 5 分钟) / heat(过热) / stop(手动) / abort
-let camSegTimer = null;                // 满 5 分钟定时器
+let camSegReason = "start";            // 本段结束原因：auto(满段长) / heat(过热) / stop(手动) / abort
+let camSegTimer = null;                // 满段长定时器
 let camSegGapTimer = null;             // 段间隔定时器
 let camSegThermalMax = -1;             // 本段内最高热状态
 let camHeatSince = 0;                  // 热状态 ≥3 的连续起点
@@ -7605,7 +7605,7 @@ function camThermalLabel(t) {
   return t < 0 ? "未知" : (["无", "轻度", "中度", "重度", "危急", "关机"][t] || String(t));
 }
 function camSegReasonTxt(r) {
-  return { auto: "满 5 分钟切段", heat: "过热收尾", stop: "手动结束",
+  return { auto: `满 ${Math.round(CAM_SEG_MS / 60000)} 分钟切段`, heat: "过热收尾", stop: "手动结束",
            resume: "热保护续录", start: "异常中止", abort: "异常中止" }[r] || r;
 }
 // B141：热保护判定。≥4 立即收；≥3 连续 60s 收；休息中降到 ≤2 自动续录。
@@ -7837,7 +7837,7 @@ async function camSegmentStart(reason) {
   }
   return ok;
 }
-// 满 5 分钟主动切段：先收尾落盘，等 10s 再录下一段
+// 满段长主动切段：先收尾落盘，等冷却间隔再录下一段（B144：段长 8 分钟、间隔 2s）
 async function camSegmentRotate() {
   if (capOn !== "video" || camHeatStop) return;
   await camSegmentStop("auto");
@@ -8042,7 +8042,7 @@ async function camStartRec() {
   camRecStart = Date.now();
   // B136：只观测——每 30s 记录系统热状态，定位升温从第几分钟开始
   camThermalOn();
-  // B141：满 5 分钟主动切段（段间隔 10s），避免单文件过大、也让编码器周期性休息
+  // B141：满段长主动切段（B144：段长 8 分钟、间隔 2s），避免单文件过大、也让编码器周期性休息
   clearTimeout(camSegTimer);
   camSegTimer = setTimeout(() => { camSegTimer = null; camSegmentRotate(); }, CAM_SEG_MS);
   $("camRecTag").classList.add("on");

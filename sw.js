@@ -1,5 +1,5 @@
 // Nexttennis V101 Service Worker — app shell cache for offline PWA
-const CACHE = "nexttennis-v80";   // B143：修 meta 时长取时点（media_ms/音频 dur_ms）
+const CACHE = "nexttennis-v81";   // B144：分段时长 8 分钟、段间隔 2s
 const SHELL = [
   "./",
   "./index.html",
