@@ -1,5 +1,5 @@
 // Nexttennis V101 Service Worker — app shell cache for offline PWA
-const CACHE = "nexttennis-v81";   // B144：分段时长 8 分钟、段间隔 2s
+const CACHE = "nexttennis-v82";   // B145：取消过热自动停止（热状态仅记录）
 const SHELL = [
   "./",
   "./index.html",

@@ -274,16 +274,6 @@
   }
   /* B141：取消「取景铺满整页」——录制时也保留附图的分栏版式（画面固定框 + 计数/设置面板），
      亮着的像素少了，屏幕功耗与整机进热随之下降，也便于随时看面板改设置。预览仍 contain 不裁切。 */
-  /* B141：热保护休息条（压在预览框内，不遮挡取景的主要内容） */
-  #camHeat { position: absolute; left: 8px; right: 8px; bottom: 8px; display: none;
-             flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 10px;
-             background: rgba(186,96,0,.94); color: #fff; z-index: 7; }
-  #camHeat.on { display: flex; }
-  #camHeat b { font-size: 16px; }
-  #camHeat span { font-size: 12px; line-height: 1.35; }
-  #camHeat button { align-self: flex-start; min-height: 34px; padding: 4px 14px; border: 0;
-                    border-radius: 8px; background: #fff; color: #8a4b00; font-weight: 700; }
-
   /* ===== 2026-11-16 B125：左侧页边栏 + 首页判决改版 ===== */
   body { display: grid; grid-template-columns: 42px minmax(0, 1fr);
          grid-template-areas: "nav head" "nav main"; align-content: start; }
@@ -630,12 +620,6 @@
       <video id="camVideo" playsinline autoplay muted></video>
       <div id="camOff">手机请横置 · 点此开启摄像头</div>
       <div id="camRecTag">● 录像中</div>
-      <!-- B141：热保护休息条——录制已收尾落盘，预览保留；降到 ≤2 自动续录，也可手动继续 -->
-      <div id="camHeat">
-        <b id="camHeatTxt">休息中</b>
-        <span id="camHeatSub">已停止录制，画面保留：降到 ≤2 自动继续</span>
-        <button id="camHeatGo">继续采集</button>
-      </div>
       <div id="camGuide"><b>球员全身应占此框 40% 以上</b></div>
       <div id="capClap">▶ 开录了 · 敲一下拍子（对齐视频与传感器）</div>
       <div class="c-camstat">
@@ -966,7 +950,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B144-20261120";   // B144：采集侧参数调整——分段时长 5→8 分钟、段间隔 10s→2s，减少切段次数与空档时长（不改画质/帧率/码率，不加内容感知）
+const APP_BUILD = "APP-Step5-B145-20261120";   // B145：取消 App 侧过热自动停止（热状态仅记录，交给系统处理）；保留满段长自动分段、画质/帧率/码率不变
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -6286,12 +6270,10 @@ async function capStart(mode) {
   capStartTs = Date.now();
   capMarks = [];
   capVideoName = ""; capVideoSizeMb = 0;
-  // B141：新一场——段号/热保护状态清零，清掉上一场残留的定时器与休息条
+  // B145：新一场——段号/热状态清零，清掉上一场残留的定时器
   camSegIdx = 0; camSegReason = "start"; camSegThermalMax = -1;
-  camHeatSince = 0; camHeatStop = false; camHeatTemp = 0;
   clearTimeout(camSegTimer); camSegTimer = null;
   clearTimeout(camSegGapTimer); camSegGapTimer = null;
-  if ($("camHeat")) $("camHeat").classList.remove("on");
   if (mode === "video") {
     $("camWrap").style.display = "block";
     if (!(await camOpen())) {
@@ -6368,8 +6350,6 @@ async function capStop(doPack = true) {
     camSegReason = "stop";
     clearTimeout(camSegTimer); camSegTimer = null;
     clearTimeout(camSegGapTimer); camSegGapTimer = null;
-    camHeatStop = false; camHeatSince = 0;
-    if ($("camHeat")) $("camHeat").classList.remove("on");
     // B143：先发出停录音请求，再等视频收尾。saveEnd 同步转 MP4 会阻塞主线程数秒，
     // 若此时音频还在录，分片回调进不来，尾部 2s 多会被丢掉（2026-11-19 实测：视频 151.29s，音频 151.24s）。
     audioP = capAudioStop();
@@ -7576,21 +7556,17 @@ async function camWake(on) {
 }
 // B136：录制期间每 15s 记一次热状态/电池温度/本进程 CPU 占用，用来定位「浏览器没事、换壳才热」的升温曲线。
 // 先只观测不改规格：帧率/分辨率/码率都保持 30fps 720p 原样。
-// B141：同一路采样兼任热保护判据——≥3(重度) 连续 60s，或一到 4(危急) 就收尾落盘、暂停录制散热。
+// B145：同一路采样只做记录——热状态写入 meta（thermal_max/thermal_end），不再由 App 停止录像。
 let camThermalTimer = null;
 let camThermalLast = -2;
-// B141：热保护 + 自动分段
+// B145：自动分段（热保护已取消，热状态仅记录）
 const CAM_SEG_MS = 8 * 60 * 1000;      // B144：每段最长 8 分钟（原 5 分钟）——减少切段次数，降低"切在击球上/切段空档丢画面"的概率
 const CAM_SEG_GAP_MS = 2 * 1000;       // B144：段间隔 2s（原 10s）——上一段已在 camSegmentStop 里落盘/转封装完，这里只留冷却余量
-const CAM_HEAT_HOLD_MS = 60 * 1000;    // 热状态 ≥3 需连续 60s 才判定为「真的压不住」
 let camSegIdx = 0;                     // 本场已开始的段号（1 起；第 1 段沿用旧文件名）
 let camSegReason = "start";            // 本段结束原因：auto(满段长) / heat(过热) / stop(手动) / abort
 let camSegTimer = null;                // 满段长定时器
 let camSegGapTimer = null;             // 段间隔定时器
 let camSegThermalMax = -1;             // 本段内最高热状态
-let camHeatSince = 0;                  // 热状态 ≥3 的连续起点
-let camHeatStop = false;               // 热保护休息中（录制已停、预览保留）
-let camHeatTemp = 0;                   // 休息时电池温度
 let camHotspotAt = 0;                  // B141：CPU 热点扫描上次时间（诊断用，降为 60s 一次）
 function camThermalOn() {
   clearInterval(camThermalTimer);
@@ -7608,57 +7584,8 @@ function camSegReasonTxt(r) {
   return { auto: `满 ${Math.round(CAM_SEG_MS / 60000)} 分钟切段`, heat: "过热收尾", stop: "手动结束",
            resume: "热保护续录", start: "异常中止", abort: "异常中止" }[r] || r;
 }
-// B141：热保护判定。≥4 立即收；≥3 连续 60s 收；休息中降到 ≤2 自动续录。
-function camHeatCheck(t, temp) {
-  if (capOn !== "video") { camHeatSince = 0; return; }
-  if (camHeatStop) {
-    if (temp > 0 && $("camHeatTxt")) {
-      $("camHeatTxt").textContent = `休息中（电池 ${temp}℃）`;
-    }
-    if (t >= 0 && t <= 2) camHeatResume("自动");
-    return;
-  }
-  if (t >= 4) { camHeatEnter(t, temp); return; }
-  if (t >= 3) {
-    if (!camHeatSince) camHeatSince = Date.now();
-    else if (Date.now() - camHeatSince >= CAM_HEAT_HOLD_MS) camHeatEnter(t, temp);
-  } else {
-    camHeatSince = 0;
-  }
-}
-// B141：进入休息——先收尾落盘（边录边写，已写入部分不丢），再提示；预览不隐藏
-async function camHeatEnter(t, temp) {
-  if (camHeatStop || capOn !== "video") return;
-  camHeatStop = true;
-  camHeatTemp = temp || 0;
-  camHeatSince = 0;
-  camSegReason = "heat";
-  if ($("camHeatTxt")) {
-    $("camHeatTxt").textContent = `休息中` + (camHeatTemp > 0 ? `（电池 ${camHeatTemp}℃）` : "");
-  }
-  if ($("camHeatSub")) {
-    $("camHeatSub").textContent = `热状态 ${camThermalLabel(t)}：本段已收尾落盘，降到 ≤2 自动继续`;
-  }
-  if ($("camHeat")) $("camHeat").classList.add("on");
-  camLog(`设备过热（${camThermalLabel(t)}${camHeatTemp > 0 ? "，" + camHeatTemp + "℃" : ""}）：`
-       + `本段已收尾落盘，暂停录制散热；画面保留，降到 ≤2 自动续录`, true);
-  log(`热保护：热状态 ${camThermalLabel(t)}，暂停录制（已落盘，可点「继续采集」或等降温）`, "log-warn");
-  await camSegmentStop("heat");
-}
-// B141：热保护休息结束——手动点按钮或降到 ≤2 时续录（新开一段）
-async function camHeatResume(by) {
-  if (!camHeatStop || capOn !== "video") return;
-  camHeatStop = false;
-  if ($("camHeat")) $("camHeat").classList.remove("on");
-  camLog(`已降温，继续采集（${by}）`, false);
-  log(`热保护：继续录制（${by}）`, "log-info");
-  const ok = await camSegmentStart("resume");
-  if (!ok && capOn === "video") {          // 续录失败：回到休息态，别让状态悬空
-    camHeatStop = true;
-    if ($("camHeatSub")) $("camHeatSub").textContent = "续录失败：摄像头/文件不可用，可再点「继续采集」";
-    if ($("camHeat")) $("camHeat").classList.add("on");
-  }
-}
+// B145：取消 App 侧过热自动停止。热状态只在 camThermalPoll 里记录（写入 meta 的 thermal_max/thermal_end），
+// 是否限流/关停相机由 Android 系统决定；满段长切段（camSegmentRotate）仍然保留。
 function camThermalPoll() {
   let t = -1, pf = null;
   try { t = (NATIVE && NATIVE.thermal) ? NATIVE.thermal() : -1; } catch (_) {}
@@ -7668,7 +7595,7 @@ function camThermalPoll() {
     camThermalLast = t;
     const label = camThermalLabel(t);
     log(`设备热状态：${label}（${t}）`, t >= 2 ? "log-warn" : "log-info");
-    if (t >= 2 && !camHeatStop) camLog(`设备${label}发热：建议暂停采集散热`, true);
+    if (t >= 2) camLog(`设备${label}发热：建议暂停采集散热`, true);
   }
   // B136：电池温度 + 本进程 CPU 占用——CPU 打满说明是软件负载（分片桥接/软编），
   // CPU 很低但温度仍涨说明热来自相机/射频/屏幕等非 CPU 通路
@@ -7682,7 +7609,6 @@ function camThermalPoll() {
       if (hs) log(`CPU 热点：${hs}`, "log-warn");
     }
   } catch (_) {}
-  camHeatCheck(t, pf ? pf.temp : 0);
 }
 // B121：取摄像头流并校验方向。第一次拿到竖屏流时释放、等横屏后重取一次；
 // 仍竖屏则原样返回，由下游在 meta 里标记 source_orientation 并提示，不阻断采集。
@@ -7776,11 +7702,9 @@ function camRelease() {
   camFrameWatchStop();
   clockWatch.stop();               // B120：切纯录音后不再监测墙钟
   camMetaCur = null;               // 这一段不作为正常录像，时间基准一并作废
-  // B141：切纯录音前清掉分段/热保护定时器与休息条
+  // B145：切纯录音前清掉分段定时器
   clearTimeout(camSegTimer); camSegTimer = null;
   clearTimeout(camSegGapTimer); camSegGapTimer = null;
-  camHeatStop = false; camHeatSince = 0;
-  if ($("camHeat")) $("camHeat").classList.remove("on");
   if (camRec && camRec.state !== "inactive") {
     camRec.onstop = null;            // 不当作一次正常录像：不下载、不写 manifest
     try { camRec.stop(); } catch (e) {}
@@ -7828,20 +7752,20 @@ async function camSegmentStop(reason) {
   return await camStopRec();     // 等 onstop 落盘完成再返回
 }
 async function camSegmentStart(reason) {
-  if (capOn !== "video" || camHeatStop) return false;
+  if (capOn !== "video") return false;
   if (camRec && camRec.state !== "inactive") return true;
   const ok = await camStartRec();
   if (!ok) {
     camLog(`续录启动失败（${camSegReasonTxt(reason)}）`, true);
-    log(`热保护/分段：续录启动失败（${reason}）`, "log-warn");
+    log(`分段：续录启动失败（${reason}）`, "log-warn");
   }
   return ok;
 }
 // 满段长主动切段：先收尾落盘，等冷却间隔再录下一段（B144：段长 8 分钟、间隔 2s）
 async function camSegmentRotate() {
-  if (capOn !== "video" || camHeatStop) return;
+  if (capOn !== "video") return;
   await camSegmentStop("auto");
-  if (capOn !== "video" || camHeatStop) return;
+  if (capOn !== "video") return;
   camLog(`已录满 ${Math.round(CAM_SEG_MS / 60000)} 分钟：已切段，${Math.round(CAM_SEG_GAP_MS / 1000)}s 后续录`, false);
   log(`分段：本段已落盘，${Math.round(CAM_SEG_GAP_MS / 1000)}s 后开始下一段（音频不断）`, "log-info");
   camSegGapTimer = setTimeout(() => {
@@ -7928,7 +7852,7 @@ async function camStartRec() {
   camRec.onstop = async () => {
     const fs = camFrameWatchStop();   // 2026-11-07：诊断落帧
     clearInterval(camTimer); camTimer = null;
-    // B141：这里不再关热状态采样——分段/热保护休息期间还要靠它判断能否续录
+    // B145：分段期间保持热状态采样，仅用于记录
     $("camVideo").style.display = ""; // B139：恢复预览显示
     $("camRecTag").classList.remove("on");
     camAutoPaused = false;
@@ -8149,8 +8073,6 @@ if ($("camOff")) $("camOff").addEventListener("click", () => { if (capOn === "vi
 if ($("capStartVideo")) $("capStartVideo").addEventListener("click", () => capStart("video"));
 if ($("capStartAudio")) $("capStartAudio").addEventListener("click", () => capStart("audio"));
 if ($("capStopBtn")) $("capStopBtn").addEventListener("click", () => capStop(true));
-// B141：热保护休息条上的「继续采集」——立即续录（不必等降到 ≤2）
-if ($("camHeatGo")) $("camHeatGo").addEventListener("click", () => camHeatResume("手动"));
 // 全屏按钮：避开浏览器省电策略（Android Chrome 全屏下 wakeLock 更宽容；iOS Safari 全屏也是 PWA 前置）
 if ($("camFsBtn")) $("camFsBtn").addEventListener("click", async () => {
   try {
