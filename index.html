@@ -950,7 +950,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B145-20261120";   // B145：取消 App 侧过热自动停止（热状态仅记录，交给系统处理）；保留满段长自动分段、画质/帧率/码率不变
+const APP_BUILD = "APP-Step5-B146-20261122";   // B146：打框改判据为 Gz 峰值÷击球后窗（比值 7.211，消除力量影响）；冻结并移除高频谱计算
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -2296,7 +2296,7 @@ function onWindow(meta, data) {
   // K3 个人基线只吃有效击球窗：异物/拍框/丢包窗的时长特征不具语义，无条件入 buf 会把 running P50 拉偏
   meta.form = isQcOk(res.code, meta)
     ? formCompute(data, meta.strokeFhBh && meta.strokeFhBh.side) : null;
-  meta.frame = frameEvaluate({ meta, data }); // 打框：Gz 冲击转角（与本窗一同留存，回看时直接复用）
+  meta.frame = frameEvaluate({ meta, data }); // 打框：Gz 峰值/后窗比（与本窗一同留存，回看时直接复用）
   meta.sessState = sessionState;          // 窗口到达时的会话状态快照（train/pause，供导出后剔除捡球窗）
   // session 首窗通常是敲拍锚点（启动锚定），不是正式击球——跳过 vol 分析/基线/触发
   // B107：改用「本次连接收到的第 1 个窗口」判定，丢弃低速/拾球窗后不会把首个真球误当锚点
@@ -2519,137 +2519,69 @@ function estimateSpeed(data) {
 }
 
 // =====================================================================
-// 3.5 打框（击球点偏离甜区）—— Gz 冲击转角（2026-11-15 替换原 VTI 路线）
+// 3.5 打框（击球点偏离甜区）—— Gz 冲击峰值 / 击球后窗比
 // =====================================================================
 // 物理含义：传感器 +Y 为拍面法向，X/Z 落在拍面内。偏心击球产生 τ = r × F，
-//   1 点钟方向的偏离沿 X，力矩落在 Z 轴 → 用 Gz 的冲击转角衡量"拍面被撞歪多少"。
-// 口径：early = ∫|Gz − base|dt，t = T0−5…+20ms（25 个 960Hz 采样），
-//       base = mean(Gz[T0−48…T0−10])。
-// 台架真手持（F1 已匹配）：甜点 early 2.9° / 球框 12.1°，AUC 1.00，4.22 倍。
-// 场上：early 中位数 20.6°（含挥拍/手腕主动转动，拍侧信号无法分离），
-//   绝对阈值不能从台架移植；45° 是帆帆 173 窗 P93 的临时值，需现场语音标注修订。
-// 打框是击球质量否决项：命中时其余识别项不评估、不给星、不算球速。
-// 判决（2026-11-18 现场语音标注标定）：hit = (early > DEG_MAX) OR (flat > FLAT_MAX)
-//   - 低频 Gz 转角 early（deg）：DEG_MAX=24，11-18 标定（原 45 为 11-15 临时值）
-//   - 高频谱平坦度 flat：FLAT_MAX=0.64。11-18 48 拍扫描：flat 是最稳的高频特征
-//     （AUC 0.838，跨包/力量三层均不塌），能补 deg 漏掉的小偏心打框。
-//   - score（=flat+crest/50−s120）仍记入 CSV 影子列，但不参与判决：11-18 现场
-//     score 与力度 F1 强相关（Spearman 0.68），轻力量层失效，不及 flat 稳健。
+//   1 点钟方向的偏离沿 X，力矩落在 Z 轴 → 用 Gz 的冲击突变衡量"拍面被撞歪多少"。
+// 口径：d[i] = |Gz[i] − base|，base = mean(Gz[T0−60, T0−20))（与冲击窗不重叠）
+//       peak = max(d[T0−5, T0+15])，den = mean(d[T0+50, T0+150])，den 下限 50 deg/s
+//       ratio = peak / den
+// 为什么要归一：绝对幅值随击球力量增长。11-20 采集包按力量四分层实测，
+//   峰值单独使用误报 17.9%→52.6%（随力量上升），归一后 21.4%→10.5%（基本不变）。
+// 判决（2026-11-22 现场语音标注标定）：hit = ratio > RATIO_MAX
+//   室内对照 83 拍（打框 31）：P 74.3% R 83.9% F1 78.8%
+//   发球机未标注正常球误报：11-20 18.7% / 11-16 15.3%
+// 高频谱特征（flat/crest/s120/score）于 2026-11-22 冻结：960Hz 采样上限 480Hz，
+//   而线床主峰实测 600~800Hz，不可测且会折叠，详见 docs/打框高频分析_20261118.md。
 // 打框是击球质量否决项：命中时其余识别项不评估、不给星、不算球速。
 const FRAME = {
-  LO_MS: -5, HI_MS: 20,               // 冲击瞬间窗
-  BASE_LO_MS: -48, BASE_HI_MS: -10,   // 冲击前基线
-  DEG_MAX: 24,                        // 低频：Gz 冲击转角门限（deg），2026-11-18 现场标定
-  FLAT_MAX: 0.64,                     // 高频：谱平坦度门限，参与否决，2026-11-18 现场标定
-  SCORE_MAX: 0.95,                    // 高频：谱形状分数门限（影子，仅记录不否决）
-  SPEC_VETO: true,                    // 高频特征是否参与否决（true=启用 flat 联合判决）
+  PK_LO_MS: -5, PK_HI_MS: 15,         // 冲击峰值窗（含端点）
+  BASE_LO_MS: -60, BASE_HI_MS: -20,   // 冲击前基线（与峰值/后窗都不重叠）
+  DEN_LO_MS: 50, DEN_HI_MS: 150,      // 击球后归一窗（随挥段）
+  DEN_MIN: 50,                        // 后窗均值下限（deg/s），防止分母过小放大噪声
+  RATIO_MAX: 7.211,                   // 判决门限，2026-11-22 现场标定
 };
 
-// 频谱形状特征（力度无关）：flat 谱平坦度、crest 峰值因子、s120 100-150Hz 幅度占比。
-// 口径与离线分析脚本完全一致，保证 CSV 影子列与离线复盘可直接对比。
-function spectralCompute(data) {
-  const r = { flat: NaN, crest: NaN, s120: NaN, score: NaN };
-  try {
-    const hx = data[9], hy = data[10], hz = data[11];   // Hx,Hy,Hz（高 g 合模长）
-    const N = hx.length;
-    let t0 = 0, hMax = 0;
-    for (let i = 0; i < N; i++) {
-      const v = Math.hypot(hx[i], hy[i], hz[i]);
-      if (v > hMax) { hMax = v; t0 = i; }
-    }
-    const nuse = 160;
-    let i0 = t0, i1 = Math.min(N, t0 + nuse);
-    const seg = new Float32Array(nuse);
-    for (let i = i0; i < i1; i++) seg[i - i0] = Math.hypot(hx[i], hy[i], hz[i]);
-    // 去均值 + 汉宁窗
-    let mean = 0;
-    for (let i = 0; i < nuse; i++) mean += seg[i];
-    mean /= nuse;
-    const win = new Float32Array(nuse);
-    for (let i = 0; i < nuse; i++) {
-      seg[i] -= mean;
-      win[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (nuse - 1)));
-    }
-    // FFT（NFFT=2048 零填充）
-    const NFFT = 2048;
-    const re = new Float64Array(NFFT), im = new Float64Array(NFFT);
-    for (let i = 0; i < nuse; i++) { re[i] = seg[i] * win[i]; }
-    const _fft = (a, b) => {
-      const n = a.length;
-      if (n <= 1) return;
-      const m = n >> 1;
-      const ar = new Float64Array(m), ai = new Float64Array(m);
-      const br = new Float64Array(m), bi = new Float64Array(m);
-      for (let i = 0; i < m; i++) { ar[i] = a[2*i]; ai[i] = b[2*i]; br[i] = a[2*i+1]; bi[i] = b[2*i+1]; }
-      _fft(ar, ai); _fft(br, bi);
-      for (let k = 0; k < m; k++) {
-        const ang = -2 * Math.PI * k / n;
-        const wr = Math.cos(ang), wi = Math.sin(ang);
-        const xr = br[k] * wr - bi[k] * wi;
-        const xi = br[k] * wi + bi[k] * wr;
-        a[k] = ar[k] + xr; b[k] = ai[k] + xi;
-        a[k + m] = ar[k] - xr; b[k + m] = ai[k] - xi;
-      }
-    };
-    _fft(re, im);
-    const FS = 960.0;
-    const spec = new Float64Array(NFFT / 2 + 1);
-    for (let k = 0; k <= NFFT / 2; k++) spec[k] = Math.hypot(re[k], im[k]);
-    let spMax = 0;
-    for (let k = 0; k < spec.length; k++) if (spec[k] > spMax) spMax = spec[k];
-    if (spMax < 1e-12) return r;
-    // 80–470 Hz 带，峰值归一化
-    const fb = 80 * NFFT / FS, fe = 470 * NFFT / FS;
-    let sumAmp = 0, sumLog = 0, sumSq = 0, s120 = 0, cnt = 0;
-    const f120l = 100 * NFFT / FS, f120h = 150 * NFFT / FS;
-    for (let k = Math.ceil(fb); k <= Math.floor(fe); k++) {
-      const v = spec[k] / spMax;
-      sumAmp += v;
-      sumLog += Math.log(v + 1e-12);
-      sumSq += v * v;
-      if (k >= f120l && k <= f120h) s120 += v;
-      cnt++;
-    }
-    const arith = sumAmp / cnt;
-    const geo = Math.exp(sumLog / cnt);
-    const rms = Math.sqrt(sumSq / cnt);
-    r.flat = geo / (arith + 1e-12);
-    r.crest = 1 / (rms + 1e-12);
-    r.s120 = s120 / (sumAmp + 1e-12);
-    r.score = r.flat + r.crest / 50.0 - r.s120;   // 球框 > 甜区
-  } catch (e) {}
-  return r;
-}
-
 function frameEvaluate(w) {
-  const r = { deg: NaN, hit: false, why: "", flat: NaN, crest: NaN, s120: NaN, score: NaN, degHit: false, specHit: false };
+  const r = { deg: NaN, peak: NaN, den: NaN, ratio: NaN, hit: false, why: "" };
   if (!w || !w.data || !w.meta) return r;
   const t0 = w.meta.t0Index != null ? w.meta.t0Index : findT0Index(w.data);
   if (!(t0 >= PROTO.WINDOW.MICRO_START && t0 <= PROTO.WINDOW.MICRO_END)) {
     r.why = "宏观段T0"; return r;
   }
-  // 低频：Gz 冲击转角
   const gz = w.data[5];                       // 通道顺序：Ax,Ay,Az,Gx,Gy,Gz（单位 rad/s）
-  const b0 = Math.max(0, t0 - 48), b1 = Math.max(b0 + 1, t0 - 10);
+  const n = gz.length;
+  // 基线：T0−60…T0−20ms（与峰值窗、后窗都不重叠）
+  const b0 = Math.max(0, t0 + FRAME.BASE_LO_MS);
+  const b1 = Math.max(b0 + 1, Math.min(n, t0 + FRAME.BASE_HI_MS));
   let base = 0;
   for (let i = b0; i < b1; i++) base += gz[i];
   base /= (b1 - b0);
+  // 冲击峰值：T0−5…T0+15ms（含端点）
+  let pk = 0;
+  const p0 = Math.max(0, t0 + FRAME.PK_LO_MS);
+  const p1 = Math.min(n - 1, t0 + FRAME.PK_HI_MS);
+  for (let i = p0; i <= p1; i++) {
+    const v = Math.abs(gz[i] - base);
+    if (v > pk) pk = v;
+  }
+  // 击球后窗均值：T0+50…T0+150ms
+  let su = 0, cnt = 0;
+  const d0 = Math.max(0, t0 + FRAME.DEN_LO_MS);
+  const d1 = Math.min(n, t0 + FRAME.DEN_HI_MS);
+  for (let i = d0; i < d1; i++) { su += Math.abs(gz[i] - base); cnt++; }
+  const den = cnt ? su / cnt : 0;
+  const K = 180 / Math.PI;                    // rad/s → deg/s
+  r.peak = pk * K;
+  r.den = den * K;
+  r.ratio = r.peak / Math.max(r.den, FRAME.DEN_MIN);
+  r.hit = Number.isFinite(r.ratio) && r.ratio > FRAME.RATIO_MAX;
+  r.why = r.hit ? "ratio" : "";
+  // 影子量：原 25ms 积分转角（deg），只记录不参与判决，便于与历史数据对照
   const i0 = Math.max(0, t0 - 5), i1 = Math.min(PROTO.WINDOW.MICRO_END + 1, t0 + 20);
   let s = 0;
   for (let i = i0; i < i1; i++) s += Math.abs(gz[i] - base);
-  // 低频转角：rad/s 积分得 rad，再乘 180/π 转为 deg（与 Python np.degrees 同口径）
-  r.deg = (s / 960) * (180 / Math.PI);
-  r.degHit = r.deg > FRAME.DEG_MAX;
-  // 高频：谱形状分数
-  const sp = spectralCompute(w.data);
-  r.flat = sp.flat; r.crest = sp.crest; r.s120 = sp.s120; r.score = sp.score;
-  r.specHit = Number.isFinite(r.flat) && r.flat > FRAME.FLAT_MAX;
-  // 判决：低频转角 OR 高频谱平坦度（SPEC_VETO=true）。score 仍记影子列但不投票。
-  r.hit = r.degHit || (FRAME.SPEC_VETO && r.specHit);
-  if (r.degHit && r.specHit) r.why = "deg+flat";
-  else if (r.degHit) r.why = "deg";
-  else if (r.specHit) r.why = "flat";
-  else r.why = "";
+  r.deg = (s / 960) * K;
   return r;
 }
 
@@ -3577,7 +3509,7 @@ function nfCompute(data, t0, form) {
     }
   }
 
-  // 3) 打框由 frameEvaluate 联合判决（Gz 转角 + 谱形状 score，OR 逻辑），高频特征在 frameEvaluate 内算
+  // 3) 打框由 frameEvaluate 判决（Gz 峰值 ÷ 击球后窗，单一比值），高频特征 2026-11-22 已冻结移除
 
   // 4) 被挤到族：ω_lp_ratio = 低通(10Hz)|ω| @ T0−50ms ÷ 前挥峰值（宏观 120Hz + 微观 960Hz 分段滤波）
   let wlpRatio = NaN, tPeakLpMs = NaN, wlpAtT0 = NaN;
@@ -3737,7 +3669,7 @@ function nfRender(w) {
     lateLine,
     `<b>击球过晚 / Late Contact</b>（旧时间型规则，仅技术视图保留；正式判决见上方首页行）—— 引拍时长=${n3(f.preDurS)}s · 加速时长=${n3(f.accDurS)}s · `
       + `低通角速度占比=${n2(f.wlpRatio)} · 低通峰值相对触球=${n2(f.tPeakLpMs)}ms → 旧初判 <b>${f.squeezedVerdict}</b>`,
-    `<b>打框</b>（联合判决：Gz 转角 + 谱平坦度，OR 逻辑）—— early 转角=${fr.deg != null && isFinite(fr.deg) ? fr.deg.toFixed(1) : "—"}°（门限 ${FRAME.DEG_MAX}°）· 谱平坦度=${fr.flat != null && isFinite(fr.flat) ? fr.flat.toFixed(3) : "—"}（门限 ${FRAME.FLAT_MAX}）· 判决 <b>${fr.hit ? "打框" : "甜区"}</b>${fr.why ? ` · 触发：${fr.why}` : ""}`,
+    `<b>打框</b>（Gz 冲击峰值 ÷ 击球后窗，消除力量影响）—— 峰值=${fr.peak != null && isFinite(fr.peak) ? fr.peak.toFixed(0) : "—"} deg/s · 后窗=${fr.den != null && isFinite(fr.den) ? fr.den.toFixed(0) : "—"} deg/s · 比值=${fr.ratio != null && isFinite(fr.ratio) ? fr.ratio.toFixed(2) : "—"}（门限 ${FRAME.RATIO_MAX}）· 判决 <b>${fr.hit ? "打框" : "甜区"}</b>`,
     `<b>引拍时机</b>（个人基线相对量，属 Late Contact 上游；逐球不重复报）—— ${f.timingVerdict}（${f.timingWhy}）`,
     `<b>拍面控制（翻拍面）</b> —— Δtilt(${NF.FACE_T10_MS}→${NF.FACE_P80_MS}ms)=${f.d_tilt_judge != null ? f.d_tilt_judge.toFixed(1) : "—"}° · 判决 <b>${f.face_flip_judge}</b>（门限 [${NF.FACE_CLOSE_MIN}, ${NF.FACE_OPEN_MAX}]° · 超区间距离 ${f.face_flip_score != null ? f.face_flip_score.toFixed(1) : 0}°）`,
     `<b>挥拍流畅度</b>（标定中）—— 凹陷比=${n2(f.flowDip)} · 顿挫=${n2(f.flowJerk)}（宏观段前挥 10Hz 低通）`,
@@ -4014,12 +3946,12 @@ function starPopIfPerfect(w) {
   setTimeout(() => { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); }, 2000);
 }
 
-// ---------- 打框行：Gz 冲击转角（T0−5~+20ms），2026-11-15 替换原 VTI 方案 ----------
+// ---------- 打框行：Gz 冲击峰值 ÷ 击球后窗，2026-11-22 替换 25ms 积分口径 ----------
 function updateFrame(w) {
   const el = $("frameBadge"), num = $("frameNum");
   if (!el || !num) return;
   const f = w && w.meta && w.meta.frame;
-  if (!f || !isFinite(f.deg)) {
+  if (!f || !isFinite(f.ratio)) {
     el.innerHTML = `<span class="badge idle">—</span>`;
     num.textContent = "—" + (f && f.why ? `（${f.why}）` : "");
     return;
@@ -4032,7 +3964,7 @@ function updateFrame(w) {
   el.innerHTML = f.hit
     ? `<span class="badge fail">打框</span>`
     : `<span class="badge pass">甜区</span>`;
-  num.textContent = `冲击转角 ${f.deg.toFixed(1)}°（门限 ${FRAME.DEG_MAX}°）· 平坦度 ${f.flat != null && isFinite(f.flat) ? f.flat.toFixed(3) : "—"}（门限 ${FRAME.FLAT_MAX}）`;
+  num.textContent = `冲击峰值 ${f.peak.toFixed(0)} / 后窗 ${f.den.toFixed(0)} deg/s = ${f.ratio.toFixed(2)}（门限 ${FRAME.RATIO_MAX}）`;
 }
 
 // ---------- 会话状态（训练中 / 捡球暂停） ----------
@@ -6001,6 +5933,10 @@ function capAudioRecorderStart(stream, label) {
   capAudioMic = label || capAudioMic || "";
   if (!capAudioPartIdx) capAudioPartIdx = 1;   // 段号由上一段收尾时 +1（重开前的空档打点归新段）
   const part = capAudioPartIdx;
+  // B147：录像中音频中断重开 → 视频里的音轨停在上一条 track 末尾，记一笔供分析侧定位空档
+  if (camRec && camRec.state === "recording" && camMetaCur) {
+    (camMetaCur.audio_breaks = camMetaCur.audio_breaks || []).push({ at_ms: Date.now(), part });
+  }
   capAudioChunks = [];
   capAudioStartTs = 0;
   const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
@@ -6653,7 +6589,7 @@ $("exportCsvBtn").addEventListener("click", () => {
 // CSV 表头与行构建（单窗口 / 会话导出共用；impact_type 为固件板判）
 // stroke_type：固件已停发该字段（Step4 移交 App），改为 App W2 零校准判决写入（FH→FOREHAND / BH→BACKHAND），
 // 仅 NORMAL_HIT(0) 且判决有效时填写；列名不变、不写 note，不影响块名解析。
-const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,frame_deg,frame_hit,fw_ms,pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict,link_qc,link_note,t_capture_utc,sync_qc,spec_flat,spec_crest,spec_s120,spec_score,frame_why\n";
+const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,frame_deg,frame_hit,fw_ms,pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict,link_qc,link_note,t_capture_utc,sync_qc,frame_peak,frame_den,frame_ratio,frame_why\n";
 function buildCsvRows(m) {
   const impactType = m.meta.quickClass != null
     ? ["NORMAL_HIT", "FRAME_HIT", "FOREIGN_IMPACT"][m.meta.quickClass] : "";
@@ -6672,16 +6608,16 @@ function buildCsvRows(m) {
   // [B119] 心跳对时：fw 触发时刻换算成绝对时间（未对时空值，sync_qc 标 bad 表示对时不可信）
   const uc = m.meta.tCaptureUtcMs ? new Date(m.meta.tCaptureUtcMs).toISOString() : "";
   const sq = m.meta.syncQc || "";
-  // 会话状态 / 打框快照：导出后可按 sess_state 剔除捡球窗，frame_deg 为 Gz 冲击转角（度）
+  // 会话状态 / 打框快照：导出后可按 sess_state 剔除捡球窗。
+  // frame_deg 为旧的 25ms 积分转角（度，仅影子对照）；frame_peak/den/ratio 为现行判据输入。
   const ss = m.meta.sessState === "pause" ? "pause" : "train";
   const fv = m.meta.frame || {};
   const frameDeg = Number.isFinite(fv.deg) ? fv.deg.toFixed(1) : "";
-  const frameHit = Number.isFinite(fv.deg) ? (fv.hit ? 1 : 0) : "";
-  // 联合判决列：谱形状特征 + 触发来源（deg/flat/deg+flat），用于现场持续校准阈值
-  const specFlat = Number.isFinite(fv.flat) ? fv.flat.toFixed(4) : "";
-  const specCrest = Number.isFinite(fv.crest) ? fv.crest.toFixed(3) : "";
-  const specS120 = Number.isFinite(fv.s120) ? fv.s120.toFixed(4) : "";
-  const specScore = Number.isFinite(fv.score) ? fv.score.toFixed(4) : "";
+  const frameHit = Number.isFinite(fv.ratio) ? (fv.hit ? 1 : 0) : "";
+  // 判决输入列：峰值、后窗均值、比值 + 触发来源，用于现场持续校准门限
+  const framePeak = Number.isFinite(fv.peak) ? fv.peak.toFixed(0) : "";
+  const frameDen = Number.isFinite(fv.den) ? fv.den.toFixed(1) : "";
+  const frameRatio = Number.isFinite(fv.ratio) ? fv.ratio.toFixed(3) : "";
   const frameWhy = fv.why || "";
   // B102：Late Contact / V 点特征（B100 已在 meta.late 算好，此前只在内存、未进 CSV）。
   // 只在末端追加 5 列；非 NORMAL_HIT 或未算到时留空，列数恒定不影响既有解析。
@@ -6695,7 +6631,7 @@ function buildCsvRows(m) {
   for (let i = 0; i < PROTO.WINDOW.samples; i++) {
     rows += `${m.meta.seq},${m.meta.timestamp},${i},`;
     for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) rows += m.data[ch][i].toFixed(6) + ",";
-    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${frameDeg},${frameHit},${m.meta.fwMs || 0},${lateTail},${lqc},${lnoteEsc},${uc},${sq},${specFlat},${specCrest},${specS120},${specScore},${frameWhy}\n`;
+    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${frameDeg},${frameHit},${m.meta.fwMs || 0},${lateTail},${lqc},${lnoteEsc},${uc},${sq},${framePeak},${frameDen},${frameRatio},${frameWhy}\n`;
   }
   return rows;
 }
@@ -7827,7 +7763,28 @@ async function camStartRec() {
       camLog("无法创建视频文件，改用内存暂存", true);
     }
   }
-  camRec = new MediaRecorder(camStream, { mimeType: mime, videoBitsPerSecond: camBr });
+  // B147（测试）：视频轨带音轨——把常开录音的麦克风音轨挂进录像流。
+  // 不另开 getUserMedia（B126 起两路抢麦会互相挤掉），只是把已有音轨再喂给一个 MediaRecorder。
+  // 老 WebView 若不允许同一音轨被两路录制，构造会抛异常 → 回退纯画面，行为与改动前一致。
+  let recStream = camStream, embAudio = null;
+  try {
+    const at = (capAudioStream && capAudioStream.getAudioTracks)
+      ? capAudioStream.getAudioTracks().filter(t => t.readyState === "live") : [];
+    if (at.length) { embAudio = at[0]; recStream = new MediaStream([...camStream.getVideoTracks(), embAudio]); }
+  } catch (e) { recStream = camStream; embAudio = null; }
+  try {
+    camRec = new MediaRecorder(recStream, Object.assign(
+      { mimeType: mime, videoBitsPerSecond: camBr },
+      embAudio ? { audioBitsPerSecond: 32000 } : {}));
+  } catch (e) {
+    embAudio = null; recStream = camStream;
+    camLog("带音轨录像不可用，回退纯画面：" + (e && e.name ? e.name : "error"), true);
+    camRec = new MediaRecorder(camStream, { mimeType: mime, videoBitsPerSecond: camBr });
+  }
+  camMetaCur.audio_embedded = !!embAudio;
+  camMetaCur.audio_track = embAudio ? (embAudio.label || "") : "";
+  camMetaCur.rec_mime = camRec.mimeType || mime;
+  camLog(embAudio ? `视频已带音轨（${camMetaCur.rec_mime}）` : "视频无音轨（纯画面）", !embAudio);
   camRec.ondataavailable = e => {
     if (!e.data || !e.data.size) return;
     if (!camSink) { camChunks.push(e.data); return; }
