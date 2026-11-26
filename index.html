@@ -950,7 +950,7 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-const APP_BUILD = "APP-Step5-B147-20261125";   // B147：视频轨带音轨（复用常开录音的麦克风 track，不另开 getUserMedia）；逐拍视频对齐用
+const APP_BUILD = "APP-Step5-B150-20261126";   // B150：SFLP 姿态四元数 + 时间戳锚点（v3 M1–M4）；B147：视频轨带音轨；逐拍视频对齐用
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -1028,8 +1028,9 @@ const PROTO = {
     channels: 12,        // ax,ay,az, gx,gy,gz, roll,pitch,yaw, hx,hy,hz (LSM6DSV320X)
     samples: 396,        // [B54] 138宏观前(120Hz) + 48微观前 + 162微观后 (960Hz) + 48宏观后(120Hz)
     sampleRate: 960,     // Hz —— 仅微观段；宏观段为 MACRO_RATE，分段索引见 MICRO_*
-    bytes: 9504,         // 396 × 12 × int16
-    chunks: 41,          // 9504 / 232 → 41 片
+    bytes: 9504,         // 396 × 12 × int16（仅 flags=0 的兼容值；新窗口一律按 deriveWindow 推导）
+    maxBytes: 9504,      // 单窗最大字节数（12 通道），仅用于分片缓冲预分配
+    chunks: 41,          // 9504 / 232 → 41 片（仅 flags=0 的兼容值）
     chunkPayload: 232,   // 每片载荷字节数 (12B 头 + 232B = 244B/片)
     T0_INDEX: 186,       // 138 + 48：T0 在窗内的固定索引
     MICRO_START: 138,    // 微观段起始索引（宏观前结束）
@@ -1055,12 +1056,173 @@ const PROTO = {
     rspInfo: 0x81, rspRecHdr: 0x83, rspAckOk: 0x84, rspTimeOk: 0x85, rspDlEnd: 0x86, rspErr: 0x87,
   },
   HISTORY_FLAG: 0x10,
+  // v3 模块位：bit5/bit6/bit7（bit4 已被 HISTORY_FLAG 占用，本字节已排满）
+  FLAGS: { CH6: 0x20, QUAT: 0x40, TS: 0x80 },
+  QUAT: { count: 213, bytes: 1332, quadBytes: 1278, markerBytes: 54 },
+  TS:   { anchors: 8, bytes: 32, anchorIdx: [0, 137, 138, null, 347, 348, 395] },
   // 原始 int16 → 物理单位换算
   SCALE_A:   0.000488,                 // g/LSB    @ ±16g
   SCALE_G:   0.140 * Math.PI / 180,    // rad/s/LSB @ ±4000dps
   SCALE_ANG: 0.01,                     // °/LSB    (roll/pitch/yaw, 0.01°)
   SCALE_HG:  0.010417,                 // g/LSB    @ ±320g
 };
+
+// =====================================================================
+// 0.5 SFLP 姿态四元数 / 时间戳锚点（v3 M1–M4）——纯函数，不依赖 UI
+//   flags 必须取首片（chunk_index=0）；QUAT/TS 均依赖 CH6，非法组合整窗丢弃。
+// =====================================================================
+// ===== SFLP QUAT/TS PURE BEGIN =====
+function deriveWindow(flags) {
+  const hasCh6  = (flags & PROTO.FLAGS.CH6)  !== 0;
+  const hasQuat = (flags & PROTO.FLAGS.QUAT) !== 0;
+  const hasTs   = (flags & PROTO.FLAGS.TS)   !== 0;
+  const chPerSample = hasCh6 ? 6 : 12;
+  const baseBytes = PROTO.WINDOW.samples * chPerSample * 2;      // 4752 / 9504
+  const quatBytes = hasQuat ? PROTO.QUAT.bytes : 0;
+  const tsBytes   = (hasCh6 && hasTs) ? PROTO.TS.bytes : 0;      // TS 段只在 6 通道窗口上定义
+  const winBytes  = baseBytes + quatBytes + tsBytes;
+  return {
+    flags, hasCh6, hasQuat, hasTs, chPerSample, baseBytes, quatBytes, tsBytes,
+    winBytes, winChunks: Math.ceil(winBytes / PROTO.WINDOW.chunkPayload),
+    invalid: (hasQuat && !hasCh6) || (hasTs && !hasCh6),
+    isNew: (flags & (PROTO.FLAGS.CH6 | PROTO.FLAGS.QUAT | PROTO.FLAGS.TS)) !== 0,
+  };
+}
+
+// 213 个四元数按原始样本索引对齐：0..137 逐点、138..346 每 8 取 1、348..395 逐点
+function quatKForIdx(idx) {
+  if (idx <= 137) return idx;
+  if (idx <= 347) return 138 + Math.floor((idx - 138) / 8);
+  return 165 + (idx - 348);
+}
+function idxForQuatK(k) {
+  if (k <= 137) return k;
+  if (k <= 164) return 138 + (k - 138) * 8;
+  return 348 + (k - 165);
+}
+
+// smallest-three 解码：q=[w,x,y,z]，被丢弃分量由 2bit 标记给出，且必须做符号连续化
+function decodeQuatSection(bytes, off) {
+  const N = PROTO.QUAT.count, n = N * 4;
+  const out = new Float32Array(n);
+  const dv = new DataView(bytes.buffer, bytes.byteOffset + off, PROTO.QUAT.bytes);
+  let prev = null;
+  for (let k = 0; k < N; k++) {
+    const m = (dv.getUint8(PROTO.QUAT.quadBytes + (k >> 2)) >> ((k & 3) * 2)) & 0x03;
+    const a = dv.getInt16(k * 6,     true) / 32767;
+    const b = dv.getInt16(k * 6 + 2, true) / 32767;
+    const c = dv.getInt16(k * 6 + 4, true) / 32767;
+    const d = Math.sqrt(Math.max(0, 1 - a * a - b * b - c * c));
+    const q = [0, 0, 0, 0];
+    let j = 0;
+    for (let t = 0; t < 4; t++) if (t !== m) q[t] = [a, b, c][j++];
+    q[m] = d;
+    const norm = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+    for (let t = 0; t < 4; t++) q[t] /= norm;
+    // 符号连续化：q 与 -q 等价，但插值必须走短弧
+    if (prev && (q[0] * prev[0] + q[1] * prev[1] + q[2] * prev[2] + q[3] * prev[3]) < 0) {
+      for (let t = 0; t < 4; t++) q[t] = -q[t];
+    }
+    out[k * 4] = q[0]; out[k * 4 + 1] = q[1]; out[k * 4 + 2] = q[2]; out[k * 4 + 3] = q[3];
+    prev = q;
+  }
+  return out;
+}
+
+// 8 个锚点（µs）；#7 低 2bit 为质量位（bit0 丢失 / bit1 回绕），不参与时间插值
+function decodeTsSection(bytes, off) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset + off, PROTO.TS.bytes);
+  const anchors = new Array(PROTO.TS.anchors);
+  for (let i = 0; i < PROTO.TS.anchors; i++) anchors[i] = dv.getUint32(i * 4, true);
+  return { anchors, qc: anchors[7] & 0x03 };
+}
+
+function quatMul(a, b) {   // a ⊗ b，分量序 [w,x,y,z]
+  return [
+    a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+    a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+    a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+    a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
+  ];
+}
+function quatConj(q) { return [q[0], -q[1], -q[2], -q[3]]; }
+function rotateVecByQuat(q, v) {    // v' = q ⊗ v ⊗ q*
+  const w = q[0], x = q[1], y = q[2], z = q[3];
+  const tx = 2 * (y * v[2] - z * v[1]);
+  const ty = 2 * (z * v[0] - x * v[2]);
+  const tz = 2 * (x * v[1] - y * v[0]);
+  return [
+    v[0] + w * tx + (y * tz - z * ty),
+    v[1] + w * ty + (z * tx - x * tz),
+    v[2] + w * tz + (x * ty - y * tx),
+  ];
+}
+function slerp(a, b, t) {
+  let dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+  let bb = b;
+  if (dot < 0) { dot = -dot; bb = [-b[0], -b[1], -b[2], -b[3]]; }
+  if (dot > 0.9995) {
+    const r = a.map((v, i) => v + t * (bb[i] - v));
+    const nn = Math.hypot(r[0], r[1], r[2], r[3]) || 1;
+    return r.map(v => v / nn);
+  }
+  const th = Math.acos(Math.min(1, dot));
+  const s = Math.sin(th);
+  const w0 = Math.sin((1 - t) * th) / s, w1 = Math.sin(t * th) / s;
+  return a.map((v, i) => v * w0 + bb[i] * w1);
+}
+
+// 任意原始样本索引处的四元数（非采样点用 slerp 插值）
+function quatAtIdx(w, idx) {
+  const q = w && w.meta && w.meta.quat;
+  if (!q || idx == null) return null;
+  const N = PROTO.QUAT.count;
+  const i = Math.max(0, Math.min(PROTO.WINDOW.samples - 1, idx));
+  const k0 = Math.min(quatKForIdx(i), N - 1);
+  const i0 = idxForQuatK(k0);
+  const q0 = [q[k0 * 4], q[k0 * 4 + 1], q[k0 * 4 + 2], q[k0 * 4 + 3]];
+  if (i <= i0 || k0 >= N - 1) return q0;
+  const k1 = k0 + 1;
+  const i1 = idxForQuatK(k1);
+  const t = i1 > i0 ? (i - i0) / (i1 - i0) : 0;
+  const q1 = [q[k1 * 4], q[k1 * 4 + 1], q[k1 * 4 + 2], q[k1 * 4 + 3]];
+  return slerp(q0, q1, t);
+}
+
+// 某索引处「竖直向上」在机体系的方向（世界 +Z 用 q* 旋到机体系）
+function verticalAt(idx, w = currentWindow) {
+  const q = quatAtIdx(w, idx);
+  if (!q) return null;
+  return rotateVecByQuat(quatConj(q), [0, 0, 1]);
+}
+
+// 两索引之间绕竖直轴的相对转角（度，右正；对纯偏航旋转等于偏航角）
+function sweepDeg(idxA, idxB, w = currentWindow) {
+  const qa = quatAtIdx(w, idxA), qb = quatAtIdx(w, idxB);
+  if (!qa || !qb) return null;
+  const qrel = quatMul(qb, quatConj(qa));          // 世界系相对旋转
+  const v = rotateVecByQuat(qrel, [1, 0, 0]);      // 参考水平轴的水平投影方位
+  let deg = Math.atan2(v[1], v[0]) * 180 / Math.PI;
+  if (deg > 180) deg -= 360;
+  if (deg < -180) deg += 360;
+  return deg;
+}
+
+// M4 派生量：三段实测速率与两个边界误差（样本数）
+function segRates(w = currentWindow) {
+  const a = w && w.meta && w.meta.anchors;
+  if (!a || a.length < 7 || w.meta.tsQc) return null;
+  const d = (i, j) => (a[j] - a[i]) >>> 0;         // 无符号差，抗 32bit 回绕
+  const rate = (i, j, n) => n > 0 ? 1e6 * n / d(i, j) : NaN;
+  const macroPre  = rate(0, 1, 137);
+  const micro     = rate(2, 4, 347 - 138);
+  const macroPost = rate(5, 6, 395 - 348);
+  const err137_138 = d(1, 2) * micro / 1e6 - 1;    // 期望 1 个微观样本（1.0417ms）
+  const err347_348 = d(4, 5) * micro / 1e6 - 8;    // 期望 8 个微观样本（8.333ms）
+  return { macro: (macroPre + macroPost) / 2, macroPre, macroPost, micro, err137_138, err347_348 };
+}
+// ===== SFLP QUAT/TS PURE END =====
+
 
 // =====================================================================
 // 1. 日志工具
@@ -1096,6 +1258,7 @@ class BleStreamParser {
     this._buf = new Map();      // seq -> { bytes, createdAt, total, fw, filled, crcFail, quickClass, seen }
     this._lastSeq = -1;
     this._delivered = new Set(); // 已完整交付过的 seq：迟到的重复分片直接忽略
+    this._invalid = new Set();   // [v3] flags 非法组合（QUAT/TS 缺 CH6）的 seq：整窗丢弃，不再重组
     // [B126] 脱机下载：控制帧回调 + 历史波形独立重组（不碰上面的实时窗口缓存）
     this.onOffCtl = null;       // callback(sub, cmdSeq, payloadU8)
     this.onOffWin = null;       // callback(recHdr, data12x396, info)
@@ -1150,7 +1313,7 @@ class BleStreamParser {
     }
     // [B126] 脱机历史波形：flags bit4=1 → 走独立重组，不进入实时窗口/回顾
     if (flags & PROTO.HISTORY_FLAG) {
-      this._histChunk(buf, ci, ct, seq, total, plen, crc, fw, ts24);
+      this._histChunk(buf, ci, ct, seq, total, plen, crc, fw, ts24, flags);
       return;
     }
     // 已交付过的 seq 又来分片 => 多链路堆叠/迟到重传（固件没收到 ACK 会补发同一窗口）
@@ -1159,17 +1322,44 @@ class BleStreamParser {
       if (ci === 0) sendWinAck(seq);
       return;
     }
+    // [v3] flags 非法组合已判定过：丢弃后续分片，首片回 ACK 让固件释放槽位
+    if (this._invalid.has(seq)) {
+      if (ci === 0) sendWinAck(seq);
+      return;
+    }
 
     let slot = this._buf.get(seq);
     if (!slot) {
       this._gc(seq);
-      slot = { bytes: new Uint8Array(PROTO.WINDOW.bytes), createdAt: Date.now(),
+      const est = deriveWindow(flags);
+      slot = { bytes: new Uint8Array(est.winBytes || PROTO.WINDOW.maxBytes), createdAt: Date.now(),
                total, fw, fwMs: ts24, filled: 0, crcFail: 0, quickClass: null, seen: new Set(),
+               flags, win: est, quat: null, anchors: null, tsQc: null,   // [v3] 动态窗口
                // [传输诊断] 首片/末片时刻与通知长度，用来判定是 MTU 拆分还是包间隔过大
                tLast: 0, nPk: 0, minB: 9999, maxB: 0, sumB: 0,
                gMin: 9999, gMax: 0, gSum: 0, gN: 0, gBurst: 0,   // 包间隔分布
                cis: [] };   // B109：分片到达顺序 ci 序列（检测 INTERLEAVED）
       this._buf.set(seq, slot);
+    }
+    // [v3] flags 只信任首片：模块位由 chunk_index=0 决定，非法组合整窗丢弃
+    if (ci === 0) {
+      const dw = deriveWindow(flags);
+      if (dw.invalid) {
+        this._invalid.add(seq);
+        if (this._invalid.size > 64) this._invalid.delete(this._invalid.values().next().value);
+        this._buf.delete(seq);
+        sendWinAck(seq);   // 让固件释放槽位
+        log(`seq=${seq} flags=0x${flags.toString(16)} 非法组合（QUAT/TS 依赖 CH6），整窗丢弃`, "log-warn");
+        return;
+      }
+      slot.flags = flags;
+      slot.win = dw;
+      if (slot.bytes.length !== dw.winBytes) {
+        // 首片可能不是 0（乱序到达）：按首片推导的真实长度重建缓冲，已写入部分保留
+        const nb = new Uint8Array(dw.winBytes);
+        nb.set(slot.bytes.subarray(0, Math.min(nb.length, slot.bytes.length)));
+        slot.bytes = nb;
+      }
     }
     // 统计每条真实到达的通知（重复分片也计入，可反映重传量）
     {
@@ -1193,7 +1383,7 @@ class BleStreamParser {
     slot.seen.add(dupKey);
     slot.cis.push(ci);   // B109：记录分片到达顺序（去重后才记，重复重传不干扰单调性检测）
     // 首片(chunk_index=0) flags bit[3:2] 携带固件判决：0 NORMAL / 1 FRAME / 2 FOREIGN
-    // Step4 flags v2 已把击球/旋转位移交 AI，bit[5:4]/bit[7:6] 恒为 0，App 不再解析
+    // bit4=HISTORY_FLAG；bit5/6/7 = CH6/QUAT/TS（v3 M2/M3/M4），已在上面按首片解析
     if (ct === 0) slot.quickClass = imp;
 
     // CRC16-CCITT 校验（与固件 crc16_ccitt 1:1）
@@ -1202,11 +1392,18 @@ class BleStreamParser {
       slot.crcFail++;
       log(`seq=${seq} 分片 #${ci} CRC 不符`, "log-warn");
     }
-    slot.bytes.set(payload, ci * PROTO.WINDOW.chunkPayload);
+    const off = ci * PROTO.WINDOW.chunkPayload;
+    if (off + plen > slot.bytes.length) {
+      log(`seq=${seq} 分片 #${ci} 偏移越界 (${off}+${plen}>${slot.bytes.length})，丢弃该窗`, "log-warn");
+      this._buf.delete(seq);
+      return;
+    }
+    slot.bytes.set(payload, off);
     slot.filled += plen;
 
-    // 末分片(ct=2) 或收满 9504 字节 → 重组交付
-    if (ct === 2 || slot.filled >= PROTO.WINDOW.bytes) {
+    // 末分片(ct=2) 或收满推导字节数 → 重组交付
+    const winBytes = (slot.win && slot.win.winBytes) || slot.bytes.length;
+    if (ct === 2 || slot.filled >= winBytes) {
       this._deliver(seq, slot);
     }
   }
@@ -1220,56 +1417,93 @@ class BleStreamParser {
     if (this.onOffCtl) this.onOffCtl(sub, cs, payload);
   }
 
-  // [B126] 脱机历史波形重组（41 片）：与实时窗口的 _buf 完全隔离，互不干扰
-  _histChunk(buf, ci, ct, seqLo, total, plen, crc, fw, ts24) {
+  // [B126] 脱机历史波形重组（与实时窗口同构，长度按 flags 推导）：与 _buf 完全隔离，互不干扰
+  _histChunk(buf, ci, ct, seqLo, total, plen, crc, fw, ts24, flags) {
     const payload = new Uint8Array(buf, PROTO.CHUNK_HDR, plen);
+    const win = deriveWindow(flags);
     let h = this._hist;
-    if (!h || h.seqLo !== seqLo) {
-      h = this._hist = { seqLo, total, bytes: new Uint8Array(PROTO.WINDOW.bytes),
+    if (!h || h.seqLo !== seqLo || h.bytes.length !== win.winBytes) {
+      h = this._hist = { seqLo, total, flags, win, bytes: new Uint8Array(win.winBytes),
                          filled: 0, crcFail: 0, fw, fwMs: ts24 };
     }
     if (crc16ccitt(payload) !== crc) h.crcFail++;
-    h.bytes.set(payload, ci * PROTO.WINDOW.chunkPayload);
+    const off = ci * PROTO.WINDOW.chunkPayload;
+    if (off + plen > h.bytes.length) return;   // 越界分片：丢弃，避免整窗错位
+    h.bytes.set(payload, off);
     h.filled += plen;
-    if (ct !== 2 && h.filled < PROTO.WINDOW.bytes) return;
+    if (ct !== 2 && h.filled < win.winBytes) return;
 
     this._hist = null;
+    const chN = win.chPerSample;
+    const OUT_CH = PROTO.WINDOW.channels;
     const i16 = new Int16Array(h.bytes.buffer, h.bytes.byteOffset,
-                               PROTO.WINDOW.samples * PROTO.WINDOW.channels);
+                               PROTO.WINDOW.samples * chN);
     const sc = [PROTO.SCALE_A, PROTO.SCALE_A, PROTO.SCALE_A,
                 PROTO.SCALE_G, PROTO.SCALE_G, PROTO.SCALE_G,
                 PROTO.SCALE_ANG, PROTO.SCALE_ANG, PROTO.SCALE_ANG,
-                PROTO.SCALE_HG, PROTO.SCALE_HG, PROTO.SCALE_HG];
+                PROTO.SCALE_HG, PROTO.SCALE_HG, PROTO.SCALE_HG].slice(0, chN);
     const data = [];
-    for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) data.push(new Float32Array(PROTO.WINDOW.samples));
+    for (let ch = 0; ch < OUT_CH; ch++) data.push(new Float32Array(PROTO.WINDOW.samples));
     for (let i = 0; i < PROTO.WINDOW.samples; i++) {
-      for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) {
-        data[ch][i] = i16[i * PROTO.WINDOW.channels + ch] * sc[ch];
+      for (let ch = 0; ch < chN; ch++) {
+        data[ch][i] = i16[i * chN + ch] * sc[ch];
+      }
+    }
+    // 与实时窗口一致：6 通道时用低 g 同轴回填 Hx/Hy/Hz（同轴高量程复制）
+    if (chN < 12) {
+      for (let i = 0; i < PROTO.WINDOW.samples; i++) {
+        data[9][i] = data[0][i]; data[10][i] = data[1][i]; data[11][i] = data[2][i];
       }
     }
     const hdr = this._offHdr;
     if (this.onOffWin) {
-      this.onOffWin(hdr, data, { seqLo, filled: h.filled, crcFail: h.crcFail, fw: h.fw, fwMs: h.fwMs });
+      this.onOffWin(hdr, data, { seqLo, filled: h.filled, crcFail: h.crcFail, fw: h.fw, fwMs: h.fwMs,
+                                 winBytes: win.winBytes, channels: chN, flags });
     }
   }
 
   _deliver(seq, slot) {
-    // 解析为 12x396：按样本交错 int16（每 12 个 int16 = 一个采样点），再按通道缩放
+    const win = slot.win || deriveWindow(slot.flags || 0);
+    // [v3] 三段拼接最容易出错：新协议窗口必须与实际收到字节数严格一致，否则整窗丢弃
+    if (win.isNew && slot.filled !== win.winBytes) {
+      log(`seq=${seq} 窗口长度不符: 收到 ${slot.filled}B，按 flags=0x${(win.flags >>> 0).toString(16)} 推导 ${win.winBytes}B，丢弃`, "log-warn");
+      this._buf.delete(seq);
+      sendWinAck(seq);
+      return;
+    }
+    // 解析为 chN×396：按样本交错 int16（每 chN 个 int16 = 一个采样点），再按通道缩放
+    // 输出仍固定 12 条通道，6 通道窗口的 Roll..Hz 补零，避免下游 data[6..11] 越界（分析口径暂不变）
+    const chN = win.chPerSample;
+    const OUT_CH = PROTO.WINDOW.channels;
     const i16 = new Int16Array(slot.bytes.buffer, slot.bytes.byteOffset,
-                               PROTO.WINDOW.samples * PROTO.WINDOW.channels);
+                               PROTO.WINDOW.samples * chN);
     const sc = [PROTO.SCALE_A, PROTO.SCALE_A, PROTO.SCALE_A,
                 PROTO.SCALE_G, PROTO.SCALE_G, PROTO.SCALE_G,
                 PROTO.SCALE_ANG, PROTO.SCALE_ANG, PROTO.SCALE_ANG,
-                PROTO.SCALE_HG, PROTO.SCALE_HG, PROTO.SCALE_HG];
+                PROTO.SCALE_HG, PROTO.SCALE_HG, PROTO.SCALE_HG].slice(0, chN);
     const data = [];
-    for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) data.push(new Float32Array(PROTO.WINDOW.samples));
+    for (let ch = 0; ch < OUT_CH; ch++) data.push(new Float32Array(PROTO.WINDOW.samples));
     for (let i = 0; i < PROTO.WINDOW.samples; i++) {
-      for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) {
-        data[ch][i] = i16[i * PROTO.WINDOW.channels + ch] * sc[ch];
+      for (let ch = 0; ch < chN; ch++) {
+        data[ch][i] = i16[i * chN + ch] * sc[ch];
       }
     }
-    if (slot.filled < PROTO.WINDOW.bytes) {
-      log(`seq=${seq} 窗口不完整: 仅收到 ${slot.filled}/${PROTO.WINDOW.bytes}B`, "log-warn");
+    // CH6 不传 Roll/Pitch/Yaw/Hx/Hy/Hz。#9..#11 是高 g 量程的「同轴复制」，用低 g 同轴回填，
+    // 让 findT0Index 仍能在真实冲击区定位（±16g 内一致，硬击球会削顶）；Roll/Pitch/Yaw 无对应量，保持 0。
+    if (chN < 12) {
+      for (let i = 0; i < PROTO.WINDOW.samples; i++) {
+        data[9][i] = data[0][i]; data[10][i] = data[1][i]; data[11][i] = data[2][i];
+      }
+    }
+    // [v3] M3 四元数段（偏移 baseBytes）与 M4 锚点段（偏移 baseBytes+quatBytes）
+    if (win.hasQuat) slot.quat = decodeQuatSection(slot.bytes, win.baseBytes);
+    if (win.tsBytes > 0) {
+      const t = decodeTsSection(slot.bytes, win.baseBytes + win.quatBytes);
+      slot.anchors = t.anchors;
+      slot.tsQc = t.qc;
+    }
+    if (slot.filled < win.winBytes) {
+      log(`seq=${seq} 窗口不完整: 仅收到 ${slot.filled}/${win.winBytes}B`, "log-warn");
     }
     if (slot.crcFail > 0) {
       log(`seq=${seq} 有 ${slot.crcFail} 片 CRC 校验失败`, "log-warn");
@@ -1285,14 +1519,16 @@ class BleStreamParser {
       log(`[perf] seq=${seq} 首片→末片 ${span}ms，末片→交付 ${endAt - lastAt}ms，`
           + `通知 ${n} 包 ${slot.minB}~${slot.maxB}B（均 ${Math.round((slot.sumB || 0) / n)}B），`
           + `包间隔 ${gn ? Math.round(slot.gSum / gn) : 0}ms（最小 ${gn ? slot.gMin : 0} / 最大 ${gn ? slot.gMax : 0}），`
-          + `≤20ms 占 ${gn ? Math.round(slot.gBurst * 100 / gn) : 0}%`, "log-info");
+          + `≤20ms 占 ${gn ? Math.round(slot.gBurst * 100 / gn) : 0}%`
+          + `，窗口 ${win.winBytes}B/${win.winChunks}片 ch=${chN}`
+          + ` quat=${win.hasQuat ? "OK" : "—"} ts_qc=${slot.tsQc != null ? slot.tsQc : "—"}`, "log-info");
     }
     // B109：link_qc 传输异常检测（SHORT / INTERLEAVED，DOUBLE 在 onWindow 入口做）
     let link_qc = "OK", link_note = "";
     const nCis = slot.cis.length;
     const nSeen = slot.seen.size;
-    const expectedBytes = PROTO.WINDOW.bytes;
-    const expectedChunks = slot.total || PROTO.WINDOW.chunks;
+    const expectedBytes = win.winBytes;
+    const expectedChunks = slot.total || win.winChunks;
     const maxCi = expectedChunks - 1;
     if (slot.filled < expectedBytes) {
       link_qc = "SHORT"; link_note = `frames=${slot.filled}/${expectedBytes}`;
@@ -1323,6 +1559,9 @@ class BleStreamParser {
                    fwMs: slot.fwMs || 0,          // [B56] 固件触发时刻 (ms since boot, 24bit 回绕)
                    crcFail: slot.crcFail, quickClass: slot.quickClass,
                    strokeType: null, spinType: null,
+                   // [v3] 窗口结构 + M3/M4 解出结果（老固件全为 0/null，行为与 B147 一致）
+                   flags: slot.flags || 0, winBytes: win.winBytes, channels: chN,
+                   quat: slot.quat, anchors: slot.anchors, tsQc: slot.tsQc,
                    link_qc, link_note,            // B109：窗级传输异常（独立于固件 qc）
                    winSig: winSig >>> 0 };        // [B38] 补传去重签名
     this._buf.delete(seq);
@@ -1345,7 +1584,7 @@ class BleStreamParser {
     return lost;
   }
 
-  reset() { this._buf.clear(); this._lastSeq = -1; this._delivered.clear(); this._hist = null; this._offHdr = null; }
+  reset() { this._buf.clear(); this._lastSeq = -1; this._delivered.clear(); this._invalid.clear(); this._hist = null; this._offHdr = null; }
 
   // 防止分片丢失导致的缓存泄漏：只保留最近 8 个 seq；丢弃未收齐的窗口要留痕
   _gc(keepSeq) {
@@ -1353,7 +1592,8 @@ class BleStreamParser {
       if (s !== keepSeq && ((keepSeq - s + 256) & 0xFF) > 8) {
         const slot = this._buf.get(s);
         if (slot && slot.filled > 0) {
-          log(`seq=${s} 分片未收齐被丢弃 (${slot.filled}/${PROTO.WINDOW.bytes}B)`, "log-warn");
+          const wb = (slot.win && slot.win.winBytes) || PROTO.WINDOW.bytes;
+          log(`seq=${s} 分片未收齐被丢弃 (${slot.filled}/${wb}B)`, "log-warn");
         }
         this._buf.delete(s);
       }
@@ -1413,7 +1653,7 @@ class SanityCheckEngine {
     }
 
     // --- 规则 A：丢包（seq 跳号 / 字节未收满 / 重复分片把 filled 抬满但数据有空洞） ---
-    const incomplete = meta.recvBytes != null && meta.recvBytes < PROTO.WINDOW.bytes;
+    const incomplete = meta.recvBytes != null && meta.recvBytes < (meta.winBytes || PROTO.WINDOW.bytes);
     const hasHoles = zeroSamples > N * 0.05;   // >5% 全零样本：必然不完整
     if (meta.packetLoss || incomplete || hasHoles) {
       return this._record(QC.FAIL_PACKET_LOSS,
@@ -4987,7 +5227,7 @@ const OFFLINE = {
     const magic = hdr ? (hdr[0] | (hdr[1] << 8) | (hdr[2] << 16) | (hdr[3] << 24)) >>> 0 : 0;
     const hcrc = hdr ? (hdr[28] | (hdr[29] << 8)) : 0;
     const hdrOk = !!hdr && hdr.length >= 32 && magic === 0x35534E54 && crc16ccitt(hdr.subarray(0, 28)) === hcrc;
-    if (!hdrOk || !hdr || seq !== this._cur || info.crcFail > 0 || info.filled < PROTO.WINDOW.bytes) {
+    if (!hdrOk || !hdr || seq !== this._cur || info.crcFail > 0 || info.filled < (info.winBytes || PROTO.WINDOW.bytes)) {
       this._fail++;
       log(`[脱机] seq=${seq} 校验失败（头 ${hdrOk ? "OK" : "BAD"} / 分片 CRC×${info.crcFail} / ${info.filled}B），不 ACK`, "log-fail");
       this._next(seq);     // 不 ACK：下次连接会重传
@@ -6583,13 +6823,25 @@ $("exportCsvBtn").addEventListener("click", () => {
   flashMsg("正在导出当前窗口 CSV…");
   download(`tennis_${m.meta.seq}_${m.meta.timestamp}.csv`,
            CSV_HEADER + buildCsvRows(m), "text/csv");
+  // [v3 M3] 四元数旁存：float32 213×4，C 序，无文件头（Python: np.fromfile(...).reshape(213,4)）
+  const qb = quatBinBytes(m);
+  if (qb) {
+    download(`tennis_${m.meta.seq}_${m.meta.timestamp}_quat.bin`, qb, "application/octet-stream");
+    log(`已导出四元数 seq=${m.meta.seq} (${PROTO.QUAT.count}×4 float32)`, "log-info");
+  }
   log(`已导出 CSV seq=${m.meta.seq} (${PROTO.WINDOW.samples} 行)`, "log-info");
 });
 
 // CSV 表头与行构建（单窗口 / 会话导出共用；impact_type 为固件板判）
 // stroke_type：固件已停发该字段（Step4 移交 App），改为 App W2 零校准判决写入（FH→FOREHAND / BH→BACKHAND），
 // 仅 NORMAL_HIT(0) 且判决有效时填写；列名不变、不写 note，不影响块名解析。
-const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,frame_deg,frame_hit,fw_ms,pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict,link_qc,link_note,t_capture_utc,sync_qc,frame_peak,frame_den,frame_ratio,frame_why\n";
+const CSV_HEADER = "seq,timestamp,idx,Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,Hx,Hy,Hz,qc,impact_type,stroke_type,spin_type,note,sess_state,frame_deg,frame_hit,fw_ms,pk_vs_t0_ms,t_rise_ms,fwd_pos,fwd_ms,late_verdict,link_qc,link_note,t_capture_utc,sync_qc,frame_peak,frame_den,frame_ratio,frame_why,ts_us\n";
+// 四元数旁存字节（float32，213×4，C 序，无文件头）；无四元数段时返回 null
+function quatBinBytes(m) {
+  const q = m && m.meta && m.meta.quat;
+  if (!q || q.length !== PROTO.QUAT.count * 4) return null;
+  return new Uint8Array(q.buffer, q.byteOffset, q.byteLength);
+}
 function buildCsvRows(m) {
   const impactType = m.meta.quickClass != null
     ? ["NORMAL_HIT", "FRAME_HIT", "FOREIGN_IMPACT"][m.meta.quickClass] : "";
@@ -6627,11 +6879,22 @@ function buildCsvRows(m) {
       + `${lt.fwd_pos != null ? lt.fwd_pos.toFixed(3) : ""},`
       + `${lt.fwd_ms != null ? lt.fwd_ms : ""},${lt.verdict || ""}`
     : ",,,,";
+  const nCh = m.meta.channels || m.data.length;   // 实际通道数（6 通道窗口缺 Roll..Hz）
+  // [v3 M4] ts_us 只在 8 个锚点所在行填值；ts_qc 置位时整列留空（宁可没有，不给错值）
+  const tsMap = {};
+  const anc = m.meta.anchors;
+  if (anc && !m.meta.tsQc) {
+    const idxs = [0, 137, 138, m.meta.t0Index, 347, 348, 395];
+    idxs.forEach((ix, j) => { if (ix != null && anc[j] != null) tsMap[ix] = anc[j]; });
+  }
   let rows = "";
   for (let i = 0; i < PROTO.WINDOW.samples; i++) {
     rows += `${m.meta.seq},${m.meta.timestamp},${i},`;
-    for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) rows += m.data[ch][i].toFixed(6) + ",";
-    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${frameDeg},${frameHit},${m.meta.fwMs || 0},${lateTail},${lqc},${lnoteEsc},${uc},${sq},${framePeak},${frameDen},${frameRatio},${frameWhy}\n`;
+    // [v3] 6 通道窗口保留 12 列结构，缺的 Roll..Hz 六列置空
+    for (let ch = 0; ch < PROTO.WINDOW.channels; ch++) {
+      rows += (ch < nCh ? m.data[ch][i].toFixed(6) : "") + ",";
+    }
+    rows += `${qcCodeText(m.qc.code, m.meta)},${impactType},${strokeType},${spinType},${noteEsc},${ss},${frameDeg},${frameHit},${m.meta.fwMs || 0},${lateTail},${lqc},${lnoteEsc},${uc},${sq},${framePeak},${frameDen},${frameRatio},${frameWhy},${tsMap[i] != null ? tsMap[i] : ""}\n`;
   }
   return rows;
 }
@@ -6737,9 +7000,18 @@ async function packExport() {
                     start: ps.start, end: ps.end, seqBase: ps.seqBase, seqLast: ps.seqLast });
     }
     const curSegs = csvSegs.filter(s => s.wins.length);
+    let quatFiles = 0;   // [v3 M3] 采集包里随窗口附带的四元数 .bin 数量
     for (const seg of curSegs) {
       let body = "";
-      for (const w of seg.wins) body += buildCsvRows(w);
+      for (const w of seg.wins) {
+        body += buildCsvRows(w);
+        // 四元数旁存：与单窗导出同命名（tennis_<seq>_<ts>_quat.bin），float32 213×4，C 序无文件头
+        const qb = quatBinBytes(w);
+        if (qb) {
+          files.push({ name: `${root}windows/tennis_${w.meta.seq}_${w.meta.timestamp}_quat.bin`, data: qb });
+          quatFiles++;
+        }
+      }
       pushSession({ tag: seg.tag, mode: seg.mode, csv: CSV_HEADER + body, windows: seg.wins.length,
                     start: seg.wins[0].meta.receivedAt, end: seg.wins[seg.wins.length - 1].meta.receivedAt,
                     seqBase: seg.wins[0].meta.seq, seqLast: seg.wins[seg.wins.length - 1].meta.seq });
@@ -6913,6 +7185,7 @@ async function packExport() {
     paintPackStat();
     log(`已导出采集包 pack_${tag}.zip（会话 ${sessFiles.length} 个 / 窗口 `
         + `${curSegs.reduce((a, s) => a + s.wins.length, 0)} 个`
+        + ` / 四元数 ${quatFiles} 份`
         + ` + 整场录音 ${runN} 段（打点 ${markN}） + 旧片段 ${clips.length} + 日志 ${connLog.length} 条）`, "log-pass");
     // R3：导出成功后提示可清空本地录音（用户决定，不自动清）
     if (all.length && confirm(`采集包已导出（含 ${all.length} 段录音）。是否清空本地录音？`)) {
