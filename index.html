@@ -957,8 +957,8 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-// B155：技术页新增「校验标定」——平放姿势采 2 秒，不覆盖已有标定，只报告球场系偏差。
-const APP_BUILD = "APP-Step5-B155-20261127";   // B154：标定随包导出；B153：标定键 v2 + 姿势校验
+// B156：标定与校验支持拍面翻面（朝上/朝下均可），校验显示“拍面轴偏”并标注是否翻面。
+const APP_BUILD = "APP-Step5-B156-20261127";   // B155：校验标定按钮；B154：标定随包导出
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -5396,7 +5396,7 @@ const COURT = {
     d.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
     d.innerHTML = `<div style="background:#1c1f26;color:#eee;padding:18px 20px;border-radius:10px;max-width:360px;line-height:1.8;font-size:14px">
       <b>球场朝向标定（每次上电一次）</b><br>
-      把球拍<b>拍面水平朝上</b>平放在底线上，<b>拍柄沿中线指向对面</b>，保持不动 2 秒。<br>
+      把球拍<b>拍面水平</b>平放在底线上（朝上或朝下均可），<b>拍柄沿中线指向对面</b>，保持不动 2 秒。<br>
       <span style="color:#9aa">只用于绝对方位（直线/斜线）；不做也不影响拍面角、扇面角。蓝牙断联不会丢失。</span>
       <div id="ccMsg" style="color:#f28b82;min-height:20px"></div>
       <div style="margin-top:14px;text-align:right">
@@ -5473,22 +5473,24 @@ const COURT = {
       const fW = vNorm(qRot(qm, [0, 1, 0]));
       const hW = qRot(qm, [0, 0, -1]);
       const fC = qRot(inv, fW), hC = qRot(inv, hW);
-      const devF = Math.acos(Math.max(-1, Math.min(1, fC[2]))) * 180 / Math.PI;
+      const devFraw = Math.acos(Math.max(-1, Math.min(1, fC[2]))) * 180 / Math.PI;
+      const flipped = devFraw > 90;
+      const devF = flipped ? 180 - devFraw : devFraw;      // 拍面不分正反：翻面时取补角
       const devH = Math.acos(Math.max(-1, Math.min(1, hC[1]))) * 180 / Math.PI;
       const ok = devF < 5 && devH < 5 && maxDeg < 2;
       this.pending = false; this.close();
       const st = $("courtVerifyStat");
-      if (st) st.textContent = `拍面偏 ${devF.toFixed(1)}°、拍柄偏 ${devH.toFixed(1)}°、稳定度 ${maxDeg.toFixed(2)}° · ${ok ? "通过" : "偏差偏大"}`;
-      log(`[校验] 拍面偏 ${devF.toFixed(1)}°、拍柄偏 ${devH.toFixed(1)}°、稳定度 ${maxDeg.toFixed(2)}° → ${ok ? "通过" : "偏差偏大"}`,
+      if (st) st.textContent = `拍面轴偏 ${devF.toFixed(1)}°${flipped ? "（翻面）" : ""}、拍柄偏 ${devH.toFixed(1)}°、稳定度 ${maxDeg.toFixed(2)}° · ${ok ? "通过" : "偏差偏大"}`;
+      log(`[校验] 拍面轴偏 ${devF.toFixed(1)}°${flipped ? "（翻面时刻）" : ""}、拍柄偏 ${devH.toFixed(1)}°、稳定度 ${maxDeg.toFixed(2)}° → ${ok ? "通过" : "偏差偏大"}`,
           ok ? "log-pass" : "log-warn");
-      connLogAdd({ event: "court_verify", device: this.addr, note: `dFace=${devF.toFixed(1)} dHandle=${devH.toFixed(1)} maxDeg=${maxDeg.toFixed(2)} ok=${ok ? 1 : 0}` });
+      connLogAdd({ event: "court_verify", device: this.addr, note: `dFace=${devF.toFixed(1)} flip=${flipped ? 1 : 0} dHandle=${devH.toFixed(1)} maxDeg=${maxDeg.toFixed(2)} ok=${ok ? 1 : 0}` });
       return;
     }
-    // court→world：拍面法向(+Y传感)→court Z；拍柄(−Z传感)→court Y
-    const zw = vNorm(qRot(qm, [0, 1, 0]));
+    // court→world：拍面轴(±Y传感)→court Z（不分正反）；拍柄(−Z传感)→court Y
     const hw = qRot(qm, [0, 0, -1]);
-    // 姿势校验：拍面法向应朝天（zw.z≈+1），拍柄应水平（hw.z≈0）
-    const faceDeg = Math.acos(Math.max(-1, Math.min(1, zw[2]))) * 180 / Math.PI;
+    let zw = vNorm(qRot(qm, [0, 1, 0]));
+    const upDot = zw[2];
+    const faceDeg = Math.acos(Math.max(-1, Math.min(1, Math.abs(upDot)))) * 180 / Math.PI;   // 拍面与竖直的夹角
     const hTilt = Math.asin(Math.max(-1, Math.min(1, Math.abs(hw[2])))) * 180 / Math.PI;
     if (faceDeg > 30 || hTilt > 30) {
       this.pending = false;
@@ -5499,6 +5501,7 @@ const COURT = {
       if (b) b.textContent = "重新标定";
       return;
     }
+    if (upDot < 0) zw = [-zw[0], -zw[1], -zw[2]];   // 球拍翻面平放时，取朝上的法向作为球场 +Z
     const yw = vNorm([hw[0] - vDot(hw, zw) * zw[0], hw[1] - vDot(hw, zw) * zw[1], hw[2] - vDot(hw, zw) * zw[2]]);
     const xw = vCross(yw, zw);
     this.q = matToQuat(xw, yw, zw);
