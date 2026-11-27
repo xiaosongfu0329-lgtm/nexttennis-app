@@ -950,9 +950,9 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-// B152：浏览器路径接上球场标定（Web Bluetooth 连接后查 INFO，不下脱机记录）；
-//       本机无标定记录时一律提示重标，避免误用串口测试的旧姿势。
-const APP_BUILD = "APP-Step5-B152-20261127";   // B151：球场朝向标定（CMD_CAL/RSP_CAL）；B150：SFLP 姿态四元数 + 时间戳锚点（v3 M1–M4）
+// B153：标定存储键升 v2（作废 B151 静默取回留下的脏记录）；保存前校验姿势
+//       （拍面朝上、拍柄水平，偏差 >30° 拒绝并提示重做）。
+const APP_BUILD = "APP-Step5-B153-20261127";   // B152：浏览器路径接标定；B151：球场朝向标定（CMD_CAL/RSP_CAL）
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -5337,7 +5337,7 @@ function matToQuat(c0, c1, c2) {           // 列为基向量
 
 const COURT = {
   q: null, addr: "", pending: false, _ui: null, _to: 0, _dismissed: "",
-  key(a) { return "nt_court_cal_" + (a || "dev"); },
+  key(a) { return "nt_court_cal_v2_" + (a || "dev"); },
   load(a) { try { return JSON.parse(localStorage.getItem(this.key(a)) || "null"); } catch (_) { return null; } },
   save(a, o) { try { localStorage.setItem(this.key(a), JSON.stringify(o)); } catch (_) {} },
 
@@ -5368,6 +5368,7 @@ const COURT = {
       <b>球场朝向标定（每次上电一次）</b><br>
       把球拍<b>拍面水平朝上</b>平放在底线上，<b>拍柄沿中线指向对面</b>，保持不动 2 秒。<br>
       <span style="color:#9aa">只用于绝对方位（直线/斜线）；不做也不影响拍面角、扇面角。蓝牙断联不会丢失。</span>
+      <div id="ccMsg" style="color:#f28b82;min-height:20px"></div>
       <div style="margin-top:14px;text-align:right">
         <button id="ccSkip">跳过</button>
         <button id="ccGo" style="margin-left:8px">开始标定</button>
@@ -5437,13 +5438,25 @@ const COURT = {
     // court→world：拍面法向(+Y传感)→court Z；拍柄(−Z传感)→court Y
     const zw = vNorm(qRot(qm, [0, 1, 0]));
     const hw = qRot(qm, [0, 0, -1]);
+    // 姿势校验：拍面法向应朝天（zw.z≈+1），拍柄应水平（hw.z≈0）
+    const faceDeg = Math.acos(Math.max(-1, Math.min(1, zw[2]))) * 180 / Math.PI;
+    const hTilt = Math.asin(Math.max(-1, Math.min(1, Math.abs(hw[2])))) * 180 / Math.PI;
+    if (faceDeg > 30 || hTilt > 30) {
+      this.pending = false;
+      log(`[标定] 姿势偏差过大：拍面偏离水平 ${faceDeg.toFixed(0)}°，拍柄偏离水平 ${hTilt.toFixed(0)}°；未保存，请重做`, "log-fail");
+      const m = this._ui && this._ui.querySelector("#ccMsg");
+      if (m) m.textContent = `姿势偏差过大（拍面 ${faceDeg.toFixed(0)}° / 拍柄 ${hTilt.toFixed(0)}°），请按提示重做`;
+      const b = this._ui && this._ui.querySelector("#ccGo");
+      if (b) b.textContent = "重新标定";
+      return;
+    }
     const yw = vNorm([hw[0] - vDot(hw, zw) * zw[0], hw[1] - vDot(hw, zw) * zw[1], hw[2] - vDot(hw, zw) * zw[2]]);
     const xw = vCross(yw, zw);
     this.q = matToQuat(xw, yw, zw);
-    this.save(this.addr, { q: this.q, t: Date.now(), n: qs.length, maxDeg: +maxDeg.toFixed(2) });
+    this.save(this.addr, { q: this.q, t: Date.now(), n: qs.length, maxDeg: +maxDeg.toFixed(2), faceDeg: +faceDeg.toFixed(1), hTilt: +hTilt.toFixed(1) });
     this.pending = false; this.close();
-    log(`[标定] 完成：${qs.length} 样本，稳定度 ${maxDeg.toFixed(2)}°，q_wc=[${this.q.map(v => v.toFixed(4)).join(", ")}]`,
-        maxDeg < 5 ? "log-pass" : "log-warn");
+    log(`[标定] 完成：${qs.length} 样本，稳定度 ${maxDeg.toFixed(2)}°，拍面偏 ${faceDeg.toFixed(1)}°、拍柄偏 ${hTilt.toFixed(1)}°，q_wc=[${this.q.map(v => v.toFixed(4)).join(", ")}]`,
+        (maxDeg < 5 && faceDeg < 15 && hTilt < 15) ? "log-pass" : "log-warn");
     if (maxDeg >= 5) log("[标定] 采样期间球拍有移动，建议重做", "log-warn");
     connLogAdd({ event: "court_cal", device: this.addr, note: `n=${qs.length} maxDeg=${maxDeg.toFixed(2)}` });
   },
