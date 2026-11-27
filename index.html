@@ -950,10 +950,9 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-// B151：球场朝向标定（CMD_CAL/RSP_CAL）——连接后按 INFO.flags bit2 提示，2s×10Hz 采样，
-//       解算 court→world 四元数 q_wc 存 localStorage；断联重连不丢，重新上电重标；
-//       脱机同步空闲才发命令；采样稳定度 ≥5° 提示重做。
-const APP_BUILD = "APP-Step5-B151-20261127";   // B151：球场朝向标定；B150：SFLP 姿态四元数 + 时间戳锚点（v3 M1–M4）；B147：视频轨带音轨
+// B152：浏览器路径接上球场标定（Web Bluetooth 连接后查 INFO，不下脱机记录）；
+//       本机无标定记录时一律提示重标，避免误用串口测试的旧姿势。
+const APP_BUILD = "APP-Step5-B152-20261127";   // B151：球场朝向标定（CMD_CAL/RSP_CAL）；B150：SFLP 姿态四元数 + 时间戳锚点（v3 M1–M4）
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -4833,6 +4832,7 @@ async function connectImpact() {
     $("devMtu").textContent = "BLE 5.3 DLE";
     connLogAdd({ event: "conn", device: btDevice.name, sessionTag: sessionTag() });
     log(`已连接 ${btDevice.name}，监听 0x19B10001`, "log-pass");
+    OFFLINE.attach(btDevice.name, btDevice.name, true);   // 浏览器路径：只查 INFO 触发球场标定，不下脱机记录
     sessWake(true).then(ok => {
       if (!ok) wakeWarnBanner("屏幕自动锁屏无法阻止，请先把手机「自动锁屏/息屏」设为永不，或关闭省电模式——否则录像中途可能被系统挂起");
     });                    // R5：采集期屏幕常亮
@@ -4938,6 +4938,7 @@ let cleaningUp = null;   // 幂等清理：重复调用复用同一次等待
 function cleanupBt() {
   if (cleaningUp) return cleaningUp;
   hwSync.stop();   // [B119] 链路已断，停止对时轮询（下次连接会 beginSession 重来）
+  OFFLINE.stop();  // [B151] 浏览器路径的 INFO/标定会话随链路一起结束
   const chr = btChar, dev = btDevice;
   btChar = null; btServer = null; btDevice = null;
   if (mockDev) { mockDev.stop(); mockDev = null; }
@@ -5071,12 +5072,13 @@ const OFFLINE = {
   setLastSeq(seq, a) { try { localStorage.setItem(this.lastKey(a), String(seq)); } catch (_) {} },
 
   // 链路就绪（原生壳 connected 回调）
-  attach(name, addr) {
+  attach(name, addr, calOnly) {
     const a = addr || name || "";
     if (this.active && this.addr === a && (this.phase === "info" || this.phase === "fetch" || this.phase === "ack")) return;
     this.stop();
     this.name = name || "";
     this.addr = a;
+    this.calOnly = !!calOnly;
     this.active = true;
     this.info = null;
     offPanelTitle();
@@ -5161,6 +5163,10 @@ const OFFLINE = {
       const epochNow = (p[20] | (p[21] << 8) | (p[22] << 16) | (p[23] << 24)) >>> 0;
       this.info = { fw, offHot: !!(fl & 1), timeSet: !!(fl & 2), calValid: !!(fl & 4), cap, cnt, unacked, oldest, newest, nextSeq, epochNow };
       log(`[脱机] 固件 B${fw} · 已存 ${cnt} 条 · 未同步 ${unacked} 条 · seq ${oldest}~${newest}`, "log-info");
+      if (this.calOnly) {
+        try { COURT.onInfo(this); } catch (e) { log("[标定] " + e.message, "log-warn"); }
+        return;                         // 浏览器路径：只要 INFO，不启动脱机下载
+      }
       this._begin();
       try { COURT.onInfo(this); } catch (e) { log("[标定] " + e.message, "log-warn"); }
       return;
@@ -5344,9 +5350,10 @@ const COURT = {
       log("[标定] 沿用本次上电的球场朝向标定（断联不丢）", "log-info");
       return;
     }
-    if (valid && !saved) {                 // 设备已标定但本机无记录（如换手机）→ 取回
-      this.pending = true;
-      this._sendWhenIdle(off, false);
+    if (valid && !saved) {                 // 设备有本次上电的旧标定，但本机没有记录：
+      log("[标定] 设备端有旧标定但本机无记录（可能是串口测试），要求重新标定", "log-warn");
+      if (this._dismissed === this.addr) return;
+      this.prompt(off);
       return;
     }
     if (this._dismissed === this.addr) return;
@@ -5360,7 +5367,7 @@ const COURT = {
     d.innerHTML = `<div style="background:#1c1f26;color:#eee;padding:18px 20px;border-radius:10px;max-width:360px;line-height:1.8;font-size:14px">
       <b>球场朝向标定（每次上电一次）</b><br>
       把球拍<b>拍面水平朝上</b>平放在底线上，<b>拍柄沿中线指向对面</b>，保持不动 2 秒。<br>
-      <span style="color:#9aa">只用于绝对方位（直线/斜线）；不做不影响拍面角、扇面角。蓝牙断联不会丢失。</span>
+      <span style="color:#9aa">只用于绝对方位（直线/斜线）；不做也不影响拍面角、扇面角。蓝牙断联不会丢失。</span>
       <div style="margin-top:14px;text-align:right">
         <button id="ccSkip">跳过</button>
         <button id="ccGo" style="margin-left:8px">开始标定</button>
