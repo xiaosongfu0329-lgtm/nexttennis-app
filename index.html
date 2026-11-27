@@ -751,6 +751,13 @@
       <span class="hint" id="k3ResetStat" style="margin-left:8px">换拍/换人时重置，重新校准 10 球</span>
     </div>
   </div>
+  <div class="panel">
+    <h2>球场朝向标定</h2>
+    <div class="actions">
+      <button id="courtVerifyBtn">校验标定</button>
+      <span class="hint" id="courtVerifyStat" style="margin-left:8px">连上球拍后，平放球拍（拍面朝上、拍柄指向对面），点此按钮并保持 2 秒</span>
+    </div>
+  </div>
 
   <!-- 运行日志：收进技术页底部折叠（APP-B72 界面重组，原独立页2） -->
   <details class="tech">
@@ -950,9 +957,8 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-// B153：标定存储键升 v2（作废 B151 静默取回留下的脏记录）；保存前校验姿势
-//       （拍面朝上、拍柄水平，偏差 >30° 拒绝并提示重做）。
-const APP_BUILD = "APP-Step5-B153-20261127";   // B152：浏览器路径接标定；B151：球场朝向标定（CMD_CAL/RSP_CAL）
+// B155：技术页新增「校验标定」——平放姿势采 2 秒，不覆盖已有标定，只报告球场系偏差。
+const APP_BUILD = "APP-Step5-B155-20261127";   // B154：标定随包导出；B153：标定键 v2 + 姿势校验
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -5336,8 +5342,20 @@ function matToQuat(c0, c1, c2) {           // 列为基向量
 }
 
 const COURT = {
-  q: null, addr: "", pending: false, _ui: null, _to: 0, _dismissed: "",
+  q: null, addr: "", pending: false, _ui: null, _to: 0, _dismissed: "", verifyMode: false,
   key(a) { return "nt_court_cal_v2_" + (a || "dev"); },
+  latest() {
+    let best = null;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith("nt_court_cal_v2_")) continue;
+        const o = JSON.parse(localStorage.getItem(k) || "null");
+        if (o && o.q && (!best || (o.t || 0) > (best.t || 0))) best = o;
+      }
+    } catch (_) {}
+    return best;
+  },
   load(a) { try { return JSON.parse(localStorage.getItem(this.key(a)) || "null"); } catch (_) { return null; } },
   save(a, o) { try { localStorage.setItem(this.key(a), JSON.stringify(o)); } catch (_) {} },
 
@@ -5358,6 +5376,18 @@ const COURT = {
     }
     if (this._dismissed === this.addr) return;
     this.prompt(off);
+  },
+
+  // 校验：复用 CMD_CAL 采样，但不覆盖已有标定，只比对“球场系里的拍面/拍柄偏差”
+  startVerify(off) {
+    const saved = this.load(this.addr) || this.latest();
+    if (!saved || !saved.q) { log("[校验] 还没有球场朝向标定，请先完成标定", "log-warn"); return; }
+    if (!off || !off.active) { log("[校验] 请先连接球拍", "log-warn"); return; }
+    this.q = saved.q;
+    this.verifyMode = true;
+    this.pending = true;
+    const st = $("courtVerifyStat"); if (st) st.textContent = "采样中…保持不动 2 秒";
+    this._sendWhenIdle(off, true);
   },
 
   prompt(off) {
@@ -5435,6 +5465,25 @@ const COURT = {
       const d = Math.abs(q[0] * qm[0] + q[1] * qm[1] + q[2] * qm[2] + q[3] * qm[3]);
       maxDeg = Math.max(maxDeg, 2 * Math.acos(Math.min(1, d)) * 180 / Math.PI);
     }
+    if (this.verifyMode) {
+      this.verifyMode = false;
+      const q0 = this.q;
+      if (!q0) { log("[校验] 没有可用标定，请先标定", "log-warn"); this.pending = false; return; }
+      const inv = [q0[0], -q0[1], -q0[2], -q0[3]];
+      const fW = vNorm(qRot(qm, [0, 1, 0]));
+      const hW = qRot(qm, [0, 0, -1]);
+      const fC = qRot(inv, fW), hC = qRot(inv, hW);
+      const devF = Math.acos(Math.max(-1, Math.min(1, fC[2]))) * 180 / Math.PI;
+      const devH = Math.acos(Math.max(-1, Math.min(1, hC[1]))) * 180 / Math.PI;
+      const ok = devF < 5 && devH < 5 && maxDeg < 2;
+      this.pending = false; this.close();
+      const st = $("courtVerifyStat");
+      if (st) st.textContent = `拍面偏 ${devF.toFixed(1)}°、拍柄偏 ${devH.toFixed(1)}°、稳定度 ${maxDeg.toFixed(2)}° · ${ok ? "通过" : "偏差偏大"}`;
+      log(`[校验] 拍面偏 ${devF.toFixed(1)}°、拍柄偏 ${devH.toFixed(1)}°、稳定度 ${maxDeg.toFixed(2)}° → ${ok ? "通过" : "偏差偏大"}`,
+          ok ? "log-pass" : "log-warn");
+      connLogAdd({ event: "court_verify", device: this.addr, note: `dFace=${devF.toFixed(1)} dHandle=${devH.toFixed(1)} maxDeg=${maxDeg.toFixed(2)} ok=${ok ? 1 : 0}` });
+      return;
+    }
     // court→world：拍面法向(+Y传感)→court Z；拍柄(−Z传感)→court Y
     const zw = vNorm(qRot(qm, [0, 1, 0]));
     const hw = qRot(qm, [0, 0, -1]);
@@ -5458,7 +5507,7 @@ const COURT = {
     log(`[标定] 完成：${qs.length} 样本，稳定度 ${maxDeg.toFixed(2)}°，拍面偏 ${faceDeg.toFixed(1)}°、拍柄偏 ${hTilt.toFixed(1)}°，q_wc=[${this.q.map(v => v.toFixed(4)).join(", ")}]`,
         (maxDeg < 5 && faceDeg < 15 && hTilt < 15) ? "log-pass" : "log-warn");
     if (maxDeg >= 5) log("[标定] 采样期间球拍有移动，建议重做", "log-warn");
-    connLogAdd({ event: "court_cal", device: this.addr, note: `n=${qs.length} maxDeg=${maxDeg.toFixed(2)}` });
+    connLogAdd({ event: "court_cal", device: this.addr, note: `n=${qs.length} maxDeg=${maxDeg.toFixed(2)} face=${faceDeg.toFixed(1)} handle=${hTilt.toFixed(1)}` });
   },
 
   // 世界系向量 → 球场系（q_wc 的逆）
@@ -7302,6 +7351,11 @@ async function packExport() {
       device_name: $("devName").textContent || "",
       window_contract: { samples: PROTO.WINDOW.samples, channels: PROTO.WINDOW.channels,
                          t0_index: PROTO.WINDOW.T0_INDEX },
+      // [B154] 球场朝向标定随包导出，离线可复核绝对方位指标
+      court_cal: (() => {
+        const c = COURT.latest();
+        return c ? { q_wc: c.q, t: c.t, n: c.n, maxDeg: c.maxDeg, faceDeg: c.faceDeg, hTilt: c.hTilt } : null;
+      })(),
       sessions: sessFiles,
       // 2026-11-03：voice 字段扩 silent / mic 统计，事后一眼看出耳机是否连上
       voice: {
@@ -8561,14 +8615,16 @@ log("提示：连点 header 5 次切换 家庭视图 / 技术演示视图", "log
 // 形态门限 v2：载入 JSON / 个人资料，绑定设置页
 formLoadProfile();
 formLoadJson();
-if ($("k3ResetBtn")) $("k3ResetBtn").addEventListener("click", () => {
-  FORM.k3Buf = { "正手": [], "反手": [] };
+if ($("k3ResetBtn")) $("k3ResetBtn").addEventListener("click", () => {  FORM.k3Buf = { "正手": [], "反手": [] };
   FORM.k3 = { "正手": { p50: null, n: 0 }, "反手": { p50: null, n: 0 } };
   k3SaveBase();
   formRenderThresholds();
   const stat = $("k3ResetStat");
   if (stat) stat.textContent = `已重置（${new Date().toLocaleTimeString()}），重新校准 ${FORM_K3_MIN_N} 球`;
   log("K3 引拍基线已重置（正反手清零，重新校准 10 球）", "log-info");
+});
+if ($("courtVerifyBtn")) $("courtVerifyBtn").addEventListener("click", () => {
+  COURT.startVerify(OFFLINE);
 });
 formRenderThresholds();
 if (NATIVE) {
