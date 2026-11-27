@@ -1051,9 +1051,9 @@ const PROTO = {
   //   控制回包 设备→App: [0xB5][sub][cmdSeq][len][payload]
   //   历史波形分片: 复用实时 12B 头，flags bit4=1，seq=记录 seq 低 8 位
   CMD: {
-    magic: 0x54, info: 0x01, fetch: 0x03, ack: 0x04, setTime: 0x05,
+    magic: 0x54, info: 0x01, fetch: 0x03, ack: 0x04, setTime: 0x05, cal: 0x06,
     rspMagic: 0xB5,
-    rspInfo: 0x81, rspRecHdr: 0x83, rspAckOk: 0x84, rspTimeOk: 0x85, rspDlEnd: 0x86, rspErr: 0x87,
+    rspInfo: 0x81, rspRecHdr: 0x83, rspAckOk: 0x84, rspTimeOk: 0x85, rspDlEnd: 0x86, rspErr: 0x87, rspCal: 0x88,
   },
   HISTORY_FLAG: 0x10,
   // v3 模块位：bit5/bit6/bit7（bit4 已被 HISTORY_FLAG 占用，本字节已排满）
@@ -5114,6 +5114,8 @@ const OFFLINE = {
     return cs;
   },
 
+  reqCal(start) { return this._send(PROTO.CMD.cal, new Uint8Array([start ? 0 : 1])); },
+
   reqInfo() {
     this.phase = "info"; this._retry = 0;
     this._done = 0; this._fail = 0;
@@ -5127,6 +5129,10 @@ const OFFLINE = {
   // 控制回包（parser.onOffCtl）
   onCtl(sub, cs, p) {
     if (!this.active) return;
+    if (sub === PROTO.CMD.rspCal) {
+      try { COURT.onCal(p); } catch (e) { log("[标定] 解析失败 " + e.message, "log-fail"); }
+      return;
+    }
     if (sub === PROTO.CMD.rspTimeOk) { log("[脱机] 已对时，后续记录带时间戳", "log-info"); return; }
     if (sub === PROTO.CMD.rspErr) {
       const code = p[0];
@@ -5150,9 +5156,10 @@ const OFFLINE = {
       const newest = (p[12] | (p[13] << 8) | (p[14] << 16) | (p[15] << 24)) >>> 0;
       const nextSeq = (p[16] | (p[17] << 8) | (p[18] << 16) | (p[19] << 24)) >>> 0;
       const epochNow = (p[20] | (p[21] << 8) | (p[22] << 16) | (p[23] << 24)) >>> 0;
-      this.info = { fw, offHot: !!(fl & 1), timeSet: !!(fl & 2), cap, cnt, unacked, oldest, newest, nextSeq, epochNow };
+      this.info = { fw, offHot: !!(fl & 1), timeSet: !!(fl & 2), calValid: !!(fl & 4), cap, cnt, unacked, oldest, newest, nextSeq, epochNow };
       log(`[脱机] 固件 B${fw} · 已存 ${cnt} 条 · 未同步 ${unacked} 条 · seq ${oldest}~${newest}`, "log-info");
       this._begin();
+      try { COURT.onInfo(this); } catch (e) { log("[标定] " + e.message, "log-warn"); }
       return;
     }
     if (sub === PROTO.CMD.rspRecHdr) {
@@ -5288,6 +5295,158 @@ const OFFLINE = {
 };
 
 // ---------- 脱机记录卡（首页） ----------
+// =====================================================================
+// 球场朝向标定（SFLP 偏航零点）——协议 CMD_CAL/RSP_CAL
+//   姿势：拍面水平朝上平放底线，拍柄沿中线指向对面，保持 2s。
+//   设备 RAM 记“本次上电已标定”（INFO.flags bit2）；App 把 q_wc 存 localStorage。
+//   断联重连：bit2=1 → 不重复提示；重新上电：bit2=0 → 重新提示。
+//   坐标：court X=右, Y=前(朝网), Z=上；传感器 +Y=拍面法向, −Z=拍柄指向拍头。
+// =====================================================================
+function f16(u) {
+  const s = (u & 0x8000) ? -1 : 1, e = (u >> 10) & 0x1F, m = u & 0x3FF;
+  if (e === 0) return s * Math.pow(2, -14) * (m / 1024);
+  if (e === 31) return m ? NaN : s * Infinity;
+  return s * Math.pow(2, e - 15) * (1 + m / 1024);
+}
+function qRot(q, v) {
+  const w = q[0], x = q[1], y = q[2], z = q[3];
+  const tx = 2 * (y * v[2] - z * v[1]), ty = 2 * (z * v[0] - x * v[2]), tz = 2 * (x * v[1] - y * v[0]);
+  return [v[0] + w * tx + (y * tz - z * ty), v[1] + w * ty + (z * tx - x * tz), v[2] + w * tz + (x * ty - y * tx)];
+}
+function vNorm(v) { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / n, v[1] / n, v[2] / n]; }
+function vCross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+function vDot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+function matToQuat(c0, c1, c2) {           // 列为基向量
+  const m00 = c0[0], m10 = c0[1], m20 = c0[2], m01 = c1[0], m11 = c1[1], m21 = c1[2], m02 = c2[0], m12 = c2[1], m22 = c2[2];
+  const tr = m00 + m11 + m22; let w, x, y, z;
+  if (tr > 0) { const s = Math.sqrt(tr + 1) * 2; w = s / 4; x = (m21 - m12) / s; y = (m02 - m20) / s; z = (m10 - m01) / s; }
+  else if (m00 > m11 && m00 > m22) { const s = Math.sqrt(1 + m00 - m11 - m22) * 2; w = (m21 - m12) / s; x = s / 4; y = (m01 + m10) / s; z = (m02 + m20) / s; }
+  else if (m11 > m22) { const s = Math.sqrt(1 + m11 - m00 - m22) * 2; w = (m02 - m20) / s; x = (m01 + m10) / s; y = s / 4; z = (m12 + m21) / s; }
+  else { const s = Math.sqrt(1 + m22 - m00 - m11) * 2; w = (m10 - m01) / s; x = (m02 + m20) / s; y = (m12 + m21) / s; z = s / 4; }
+  const n = Math.hypot(w, x, y, z) || 1; return [w / n, x / n, y / n, z / n];
+}
+
+const COURT = {
+  q: null, addr: "", pending: false, _ui: null, _to: 0, _dismissed: "",
+  key(a) { return "nt_court_cal_" + (a || "dev"); },
+  load(a) { try { return JSON.parse(localStorage.getItem(this.key(a)) || "null"); } catch (_) { return null; } },
+  save(a, o) { try { localStorage.setItem(this.key(a), JSON.stringify(o)); } catch (_) {} },
+
+  onInfo(off) {
+    this.addr = off.addr || off.name || "";
+    const valid = !!(off.info && off.info.calValid);
+    const saved = this.load(this.addr);
+    if (valid && saved && saved.q) {
+      this.q = saved.q;
+      log("[标定] 沿用本次上电的球场朝向标定（断联不丢）", "log-info");
+      return;
+    }
+    if (valid && !saved) {                 // 设备已标定但本机无记录（如换手机）→ 取回
+      this.pending = true;
+      this._sendWhenIdle(off, false);
+      return;
+    }
+    if (this._dismissed === this.addr) return;
+    this.prompt(off);
+  },
+
+  prompt(off) {
+    if (this._ui) return;
+    const d = document.createElement("div");
+    d.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
+    d.innerHTML = `<div style="background:#1c1f26;color:#eee;padding:18px 20px;border-radius:10px;max-width:360px;line-height:1.8;font-size:14px">
+      <b>球场朝向标定（每次上电一次）</b><br>
+      把球拍<b>拍面水平朝上</b>平放在底线上，<b>拍柄沿中线指向对面</b>，保持不动 2 秒。<br>
+      <span style="color:#9aa">只用于绝对方位（直线/斜线）；不做不影响拍面角、扇面角。蓝牙断联不会丢失。</span>
+      <div style="margin-top:14px;text-align:right">
+        <button id="ccSkip">跳过</button>
+        <button id="ccGo" style="margin-left:8px">开始标定</button>
+      </div></div>`;
+    document.body.appendChild(d);
+    this._ui = d;
+    d.querySelector("#ccSkip").onclick = () => {
+      this._dismissed = this.addr; this.close();
+      log("[标定] 已跳过，绝对方位类指标不输出", "log-warn");
+    };
+    d.querySelector("#ccGo").onclick = () => {
+      this.pending = true;
+      d.querySelector("#ccGo").textContent = "采样中…保持不动";
+      this._sendWhenIdle(off, true);
+    };
+  },
+  close() { if (this._ui) { this._ui.remove(); this._ui = null; } clearTimeout(this._to); clearTimeout(this._poll); },
+
+  // 固件在下载脱机记录时会丢弃新命令，必须等同步空闲再发 CMD_CAL
+  _sendWhenIdle(off, start) {
+    const tick = () => {
+      if (!off.active) return;
+      if (off.phase === "fetch" || off.phase === "ack") {
+        if (this._ui) { const b = this._ui.querySelector("#ccGo"); if (b) b.textContent = "等待脱机同步完成…"; }
+        this._poll = setTimeout(tick, 1000);
+        return;
+      }
+      off.reqCal(start);
+      this._to = setTimeout(() => {
+        if (this.pending) { this.pending = false; this.close(); log("[标定] 超时未收到采样，请重试", "log-fail"); }
+      }, 9000);
+    };
+    tick();
+  },
+
+  onCal(p) {
+    if (!p || p.length < 1) return;
+    const n = p[0];
+    if (!n || p.length < 1 + n * 8) { log("[标定] 采样为空，请保持球拍静止后重试", "log-fail"); this.pending = false; this.close(); return; }
+    const qs = [];
+    for (let i = 0; i < n; i++) {
+      const o = 1 + i * 8;
+      const q = [f16(p[o] | (p[o + 1] << 8)), f16(p[o + 2] | (p[o + 3] << 8)),
+                 f16(p[o + 4] | (p[o + 5] << 8)), f16(p[o + 6] | (p[o + 7] << 8))];
+      const nn = Math.hypot(q[0], q[1], q[2], q[3]);
+      if (!(nn > 0.5)) continue;
+      qs.push(q.map(v => v / nn));
+    }
+    if (qs.length < 5) { log("[标定] 有效样本不足", "log-fail"); this.pending = false; this.close(); return; }
+    // 符号对齐后求均值（q 与 −q 同姿态）
+    const ref = qs[0];
+    const mean = [0, 0, 0, 0];
+    for (const q of qs) {
+      const d = q[0] * ref[0] + q[1] * ref[1] + q[2] * ref[2] + q[3] * ref[3];
+      const s = d < 0 ? -1 : 1;
+      for (let k = 0; k < 4; k++) mean[k] += s * q[k];
+    }
+    const qm = mean.map(v => v / qs.length);
+    const nm = Math.hypot(qm[0], qm[1], qm[2], qm[3]) || 1;
+    for (let k = 0; k < 4; k++) qm[k] /= nm;
+    // 稳定性：与均值的最大夹角
+    let maxDeg = 0;
+    for (const q of qs) {
+      const d = Math.abs(q[0] * qm[0] + q[1] * qm[1] + q[2] * qm[2] + q[3] * qm[3]);
+      maxDeg = Math.max(maxDeg, 2 * Math.acos(Math.min(1, d)) * 180 / Math.PI);
+    }
+    // court→world：拍面法向(+Y传感)→court Z；拍柄(−Z传感)→court Y
+    const zw = vNorm(qRot(qm, [0, 1, 0]));
+    const hw = qRot(qm, [0, 0, -1]);
+    const yw = vNorm([hw[0] - vDot(hw, zw) * zw[0], hw[1] - vDot(hw, zw) * zw[1], hw[2] - vDot(hw, zw) * zw[2]]);
+    const xw = vCross(yw, zw);
+    this.q = matToQuat(xw, yw, zw);
+    this.save(this.addr, { q: this.q, t: Date.now(), n: qs.length, maxDeg: +maxDeg.toFixed(2) });
+    this.pending = false; this.close();
+    log(`[标定] 完成：${qs.length} 样本，稳定度 ${maxDeg.toFixed(2)}°，q_wc=[${this.q.map(v => v.toFixed(4)).join(", ")}]`,
+        maxDeg < 5 ? "log-pass" : "log-warn");
+    if (maxDeg >= 5) log("[标定] 采样期间球拍有移动，建议重做", "log-warn");
+    connLogAdd({ event: "court_cal", device: this.addr, note: `n=${qs.length} maxDeg=${maxDeg.toFixed(2)}` });
+  },
+
+  // 世界系向量 → 球场系（q_wc 的逆）
+  toCourt(vWorld) {
+    if (!this.q) return null;
+    const inv = [this.q[0], -this.q[1], -this.q[2], -this.q[3]];
+    return qRot(inv, vWorld);
+  },
+};
+window.COURT = COURT;
+
 parser.onOffCtl = (sub, cs, p) => OFFLINE.onCtl(sub, cs, p);
 parser.onOffWin = (hdr, data, info) => OFFLINE.onWin(hdr, data, info);
 function offSetState(msg, cls) {
