@@ -759,6 +759,23 @@
       <span class="hint" id="courtVerifyStat" style="margin-left:8px">平放球拍（拍面水平、拍柄指向对面），重新标定保持 2 秒；校验只比对不覆盖</span>
     </div>
   </div>
+  <div class="panel">
+    <h2>SFLP 姿态指标（当前窗口）</h2>
+    <div class="kv"><span>拍面开合角 @T0</span><span class="v" id="qmFace">—</span></div>
+    <div class="kv"><span>拍面稳定性（T0±50ms）</span><span class="v" id="qmFaceStab">—</span></div>
+    <div class="kv"><span>引拍扇面（T0−500~−50ms）</span><span class="v" id="qmBack">—</span></div>
+    <div class="kv"><span>前挥扇面（T0−50~0ms）</span><span class="v" id="qmFwd">—</span></div>
+    <div class="kv"><span>随挥扇面（T0+40~+400ms）</span><span class="v" id="qmFollow">—</span></div>
+    <div class="kv"><span>全挥拍扇面</span><span class="v" id="qmFan">—</span></div>
+    <div class="kv"><span>挥拍平面倾角</span><span class="v" id="qmPlane">—</span></div>
+    <div class="kv"><span>拍面翻转速度（峰值）</span><span class="v" id="qmFlip">—</span></div>
+    <div class="kv"><span>节奏（引拍/前挥/随挥）</span><span class="v" id="qmRhythm">—</span></div>
+    <div class="actions">
+      <button id="qmExportOne">导出当前窗口指标</button>
+      <button id="qmExportAll" style="margin-left:8px">导出全部窗口指标</button>
+      <span class="hint" id="qmHint" style="margin-left:8px">数据来自该窗四元数；无四元数时显示 —</span>
+    </div>
+  </div>
 
   <!-- 运行日志：收进技术页底部折叠（APP-B72 界面重组，原独立页2） -->
   <details class="tech">
@@ -958,8 +975,8 @@
 //   连上后自动对时 → INFO → 逐条 FETCH → CRC 校验 → 入 IndexedDB → ACK，断点续传按 MAC 记 lastSeq。
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
-// B158：球场 Z 改用重力方向（不再拿拍面法向），拍面放斜不再污染坐标系；存储键升 v3 需重标一次。
-const APP_BUILD = "APP-Step5-B158-20261127";   // B157：重新标定按钮；B156：支持翻面
+// B159：技术页接入 6 项 SFLP 姿态指标（拍面开合/稳定性、三段扇面、平面倾角、翻转速度）+ 指标 CSV 导出。
+const APP_BUILD = "APP-Step5-B160-20261128";   // B160：打框门限 7.211→9.5（含 11-26 现场数据重标定）；打框仅屏蔽球速，其余判决项照常评估
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -1231,6 +1248,145 @@ function segRates(w = currentWindow) {
   return { macro: (macroPre + macroPost) / 2, macroPre, macroPost, micro, err137_138, err347_348 };
 }
 // ===== SFLP QUAT/TS PURE END =====
+
+// =====================================================================
+// [B159] SFLP 姿态指标（6 项）：拍面开合、拍面稳定性、三段扇面、全挥拍扇面、
+//        挥拍平面倾角、拍面翻转速度 + 节奏。全部只依赖该窗四元数，无固件改动。
+// =====================================================================
+const QM = {
+  BACK_A: 84, BACK_B: 138,      // 引拍段 −500~−50ms
+  FWD_A: 138, FWD_B: 187,       // 前挥段 −50~0ms
+  FOLLOW_A: 224, FOLLOW_B: 375, // 随挥段 +40~+400ms
+  // 窗口时间轴非均匀：0..137 宏观 120Hz，138..347 微观 960Hz，348..395 宏观 120Hz
+  idxMs(i) {
+    if (i <= 137) return i * 8.3333;
+    if (i <= 347) return 137 * 8.3333 + (i - 137) * 1.04167;
+    return 137 * 8.3333 + 210 * 1.04167 + (i - 348) * 8.3333;
+  },
+  faceDeg(q) {                       // 拍面法向(+Y)的世界仰角：0=竖直，+90=水平朝上
+    if (!q) return null;
+    const f = rotateVecByQuat(q, [0, 1, 0]);
+    return Math.asin(Math.max(-1, Math.min(1, f[2]))) * 180 / Math.PI;
+  },
+  axisTilt(qa, qb) {                 // 相对旋转转轴与竖直的余角：0=竖直面，90=水平面
+    if (!qa || !qb) return null;
+    const qr = quatMul(qb, quatConj(qa));
+    const n = Math.hypot(qr[1], qr[2], qr[3]);
+    if (n < 1e-6) return null;
+    const theta = Math.acos(Math.min(1, Math.abs(qr[3]) / n)) * 180 / Math.PI;
+    return 90 - theta;
+  },
+  // 逐点累加「绕竖直轴」的 swing-twist 转角（度）：不受拍面翻面/横滚影响，也不会 ±180 回绕
+  sweep(kA, kB, w) {
+    const q = w && w.meta && w.meta.quat;
+    if (!q) return null;
+    const k0 = quatKForIdx(kA), k1 = Math.min(PROTO.QUAT.count - 1, quatKForIdx(kB));
+    let s = 0;
+    for (let k = k0; k < k1; k++) {
+      const a = [q[k * 4], q[k * 4 + 1], q[k * 4 + 2], q[k * 4 + 3]];
+      const b = [q[k * 4 + 4], q[k * 4 + 5], q[k * 4 + 6], q[k * 4 + 7]];
+      const qr = quatMul(b, quatConj(a));
+      let ww = qr[0], zz = qr[3];
+      if (ww < 0) { ww = -ww; zz = -zz; }
+      s += 2 * Math.atan2(zz, ww) * 180 / Math.PI;
+    }
+    return s;
+  },
+};
+
+function qmCompute(w) {
+  const q = w && w.meta && w.meta.quat;
+  if (!q || q.length !== PROTO.QUAT.count * 4) return null;
+  const t0 = Number.isFinite(w.meta.t0Index) ? w.meta.t0Index : 186;
+  const face = QM.faceDeg(quatAtIdx(w, t0));
+
+  // 拍面稳定性：T0±50ms（微观段 1.0417ms/样本）
+  const half = 48, vals = [];
+  for (let i = Math.max(0, t0 - half); i <= Math.min(PROTO.WINDOW.samples - 1, t0 + half); i += 4) {
+    const d = QM.faceDeg(quatAtIdx(w, i));
+    if (d != null) vals.push(d);
+  }
+  let faceStd = null;
+  if (vals.length > 3) {
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    faceStd = Math.sqrt(vals.reduce((a, b) => a + (b - mean) * (b - mean), 0) / vals.length);
+  }
+
+  const back = QM.sweep(QM.BACK_A, QM.BACK_B, w);
+  const fwd = QM.sweep(QM.FWD_A, QM.FWD_B, w);
+  const follow = QM.sweep(QM.FOLLOW_A, QM.FOLLOW_B, w);
+  const fan = QM.sweep(QM.BACK_A, QM.FOLLOW_B, w);
+  const plane = QM.axisTilt(quatAtIdx(w, QM.FWD_A), quatAtIdx(w, QM.FWD_B));
+
+  // 拍面翻转速度：绕拍柄轴(−Z)的角速度峰值（度/秒）
+  let flipPeak = null;
+  const kA = quatKForIdx(QM.BACK_A), kB = Math.min(PROTO.QUAT.count - 2, quatKForIdx(QM.FOLLOW_B));
+  for (let k = kA; k <= kB; k++) {
+    const q0 = [q[k * 4], q[k * 4 + 1], q[k * 4 + 2], q[k * 4 + 3]];
+    const q1 = [q[k * 4 + 4], q[k * 4 + 5], q[k * 4 + 6], q[k * 4 + 7]];
+    const dot = Math.min(1, Math.abs(q0[0] * q1[0] + q0[1] * q1[1] + q0[2] * q1[2] + q0[3] * q1[3]));
+    const ang = 2 * Math.acos(dot) * 180 / Math.PI;
+    const qr = quatMul(quatConj(q0), q1);
+    const n = Math.hypot(qr[1], qr[2], qr[3]);
+    if (n < 1e-6) continue;
+    const rate = Math.abs(qr[3] / n) * ang;    // |axis·handle| × angle，handle=[0,0,−1]
+    const dt = Math.max(0.5, QM.idxMs(idxForQuatK(k + 1)) - QM.idxMs(idxForQuatK(k))) / 1000;
+    const dps = rate / dt;
+    if (flipPeak == null || dps > flipPeak) flipPeak = dps;
+  }
+
+  const backMs = QM.idxMs(QM.BACK_B) - QM.idxMs(QM.BACK_A);
+  const fwdMs = QM.idxMs(QM.FWD_B) - QM.idxMs(QM.FWD_A);
+  const followMs = QM.idxMs(QM.FOLLOW_B) - QM.idxMs(QM.FOLLOW_A);
+  return { face, faceStd, back, fwd, follow, fan, plane, flipPeak, backMs, fwdMs, followMs };
+}
+
+function qmSet(id, txt) { const el = $(id); if (el) el.textContent = txt; }
+function qmRender(w) {
+  const m = qmCompute(w);
+  if (!m) {
+    ["qmFace", "qmFaceStab", "qmBack", "qmFwd", "qmFollow", "qmFan", "qmPlane", "qmFlip", "qmRhythm"]
+      .forEach(id => qmSet(id, "—"));
+    return;
+  }
+  const f1 = v => v == null ? "—" : v.toFixed(1) + "°";
+  qmSet("qmFace", m.face == null ? "—" : (m.face >= 0 ? "+" : "") + m.face.toFixed(1) + "°");
+  qmSet("qmFaceStab", m.faceStd == null ? "—" : "σ " + m.faceStd.toFixed(2) + "°");
+  qmSet("qmBack", f1(m.back));
+  qmSet("qmFwd", f1(m.fwd));
+  qmSet("qmFollow", f1(m.follow));
+  qmSet("qmFan", f1(m.fan));
+  qmSet("qmPlane", f1(m.plane));
+  qmSet("qmFlip", m.flipPeak == null ? "—" : m.flipPeak.toFixed(0) + "°/s");
+  qmSet("qmRhythm", `${m.backMs.toFixed(0)} / ${m.fwdMs.toFixed(0)} / ${m.followMs.toFixed(0)} ms`);
+}
+
+function qmCsv(ws) {
+  const head = "seq,t_iso,face_deg,face_std_deg,back_deg,forward_deg,follow_deg,fan_deg,plane_tilt_deg,flip_peak_dps,back_ms,forward_ms,follow_ms\n";
+  const num = v => v == null || !Number.isFinite(v) ? "" : v.toFixed(2);
+  const rows = ws.map(w => {
+    const m = qmCompute(w);
+    if (!m) return null;
+    const iso = w.meta.tCaptureUtcMs ? new Date(w.meta.tCaptureUtcMs).toISOString() : "";
+    return [w.meta.seq, iso, num(m.face), num(m.faceStd), num(m.back), num(m.fwd),
+            num(m.follow), num(m.fan), num(m.plane), num(m.flipPeak),
+            num(m.backMs), num(m.fwdMs), num(m.followMs)].join(",");
+  }).filter(Boolean);
+  return "\ufeff" + head + rows.join("\n") + "\n";
+}
+
+if (document.getElementById("qmExportOne")) document.getElementById("qmExportOne").addEventListener("click", () => {
+  if (!currentWindow) { log("[姿态指标] 没有当前窗口", "log-warn"); return; }
+  download(`quat_metrics_${currentWindow.meta.seq}_${currentWindow.meta.timestamp}.csv`,
+           qmCsv([currentWindow]), "text/csv");
+  log(`[姿态指标] 已导出 seq=${currentWindow.meta.seq}`, "log-info");
+});
+if (document.getElementById("qmExportAll")) document.getElementById("qmExportAll").addEventListener("click", () => {
+  const ws = sessionWindows.filter(w => w && w.meta && w.meta.quat);
+  if (!ws.length) { log("[姿态指标] 本次会话没有带四元数的窗口", "log-warn"); return; }
+  download(`quat_metrics_all_${sessionTag()}.csv`, qmCsv(ws), "text/csv");
+  log(`[姿态指标] 已导出 ${ws.length} 个窗口`, "log-info");
+});
 
 
 // =====================================================================
@@ -2610,6 +2766,7 @@ function onWindow(meta, data) {
   updateWinSelector(true);
   updateQcPanel(res);
   updateDiagnosis(w);
+  qmRender(w);                  // [B159] SFLP 姿态指标（技术页）
   formRenderThresholds();        // 刷新技术视图里的生效门限 / K3 基线 / 实测对照
   starPopIfPerfect(w);           // B109：完美击球弹⭐（游戏式鼓励）
 
@@ -2627,7 +2784,7 @@ function onWindow(meta, data) {
     $("speedVal").textContent = spd.kmh.toFixed(0);
     setGauge(spd.kmh);
   } else if (frameHit) {
-    $("speedVal").textContent = "—";  // 打框是否决项：本球不算球速
+    $("speedVal").textContent = "—";  // 2026-11-28：打框仅屏蔽球速，其余判决项照常评估显示
     setGauge(null);
   }
   meta.milestone = updateStreak(res, meta);   // combo / achieve / null
@@ -2695,6 +2852,7 @@ $("winSel").addEventListener("change", () => {
   currentWindow = w;
   updateQcPanel(w.qc);
   updateDiagnosis(w);
+  qmRender(w);                  // [B159] 切换历史窗口时同步刷新姿态指标
   view.render(w.data, w.qc.info.peakIdx, w.meta.t0Index);
   if (isQcOk(w.qc.code, w.meta)) {
     const spd = estimateSpeed(w.data);
@@ -2777,18 +2935,22 @@ function estimateSpeed(data) {
 //       ratio = peak / den
 // 为什么要归一：绝对幅值随击球力量增长。11-20 采集包按力量四分层实测，
 //   峰值单独使用误报 17.9%→52.6%（随力量上升），归一后 21.4%→10.5%（基本不变）。
-// 判决（2026-11-22 现场语音标注标定）：hit = ratio > RATIO_MAX
-//   室内对照 83 拍（打框 31）：P 74.3% R 83.9% F1 78.8%
-//   发球机未标注正常球误报：11-20 18.7% / 11-16 15.3%
+// 判决（2026-11-28 含 11-26 现场数据重标定）：hit = ratio > RATIO_MAX
+//   全量 1813 窗（打框 57，未标注=正常）：RATIO_MAX=9.5 时 误报 9.2% / 召回 35.1%
+//   干净二类标签 173 拍：P 60.6% R 35.1% FPR 11.2%；AUC 0.790
+//   留一场次交叉（约束训练集 FPR≤10%）选出的门限 9.17~9.30，取 9.5 略保守。
+//   代价：11-26 现场喊"打框"的球多为擦框（ratio 多在 9 以下），会漏检；但擦框靠手感
+//   本就难判，漏检换少误伤正常球，符合现场"偏敏感"反馈。
+//   历史门限 7.211（11-22 仅室内 83 拍标定）在全量现场误报 17.4%，过于敏感，已废弃。
 // 高频谱特征（flat/crest/s120/score）于 2026-11-22 冻结：960Hz 采样上限 480Hz，
 //   而线床主峰实测 600~800Hz，不可测且会折叠，详见 docs/打框高频分析_20261118.md。
-// 打框是击球质量否决项：命中时其余识别项不评估、不给星、不算球速。
+// 打框仅屏蔽球速计算；其余判决项（正反手/引拍随挥/星级/连击）照常评估显示（2026-11-28）。
 const FRAME = {
   PK_LO_MS: -5, PK_HI_MS: 15,         // 冲击峰值窗（含端点）
   BASE_LO_MS: -60, BASE_HI_MS: -20,   // 冲击前基线（与峰值/后窗都不重叠）
   DEN_LO_MS: 50, DEN_HI_MS: 150,      // 击球后归一窗（随挥段）
   DEN_MIN: 50,                        // 后窗均值下限（deg/s），防止分母过小放大噪声
-  RATIO_MAX: 7.211,                   // 判决门限，2026-11-22 现场标定
+  RATIO_MAX: 9.5,                     // 判决门限，2026-11-28 含现场数据重标定
 };
 
 function frameEvaluate(w) {
@@ -4091,9 +4253,7 @@ function diagnoseSwing(data, t0, form, side) {
 
 function updateDiagnosis(w) {
   updateFrame(w); // 打框行独立于引拍/随挥，先刷（无效窗口也要清空）
-  const fh = !!(w && w.qc && isQcOk(w.qc.code, w.meta)
-                && w.meta.frame && w.meta.frame.hit);
-  nfRender(fh ? null : w);    // 打框否决：技术页识别项一并清空
+  nfRender(w);    // 2026-11-28：打框不再屏蔽技术页识别项，正反手/引随挥照常渲染
   const tbEl = $("diagBack"), ftEl = $("diagFollow");
   const tbNum = $("diagBackNum"), ftNum = $("diagFollowNum"), tipEl = $("diagTip");
   const idle = (txt) => {
@@ -4103,7 +4263,7 @@ function updateDiagnosis(w) {
     tipEl.textContent = txt; tipEl.style.color = "";
   };
   if (!w) { idle(""); return; }
-  if (fh) { idle(""); return; }   // B125：打框时不再提示「本球不评估动作项」
+  // 2026-11-28：打框时引拍/随挥等判决项照常评估显示，不再清空（仅球速屏蔽）
 
   // 2026-11-06（B109）：影子期关闭——引拍/随挥幅度直接给档位判决（不是绝对准确没关系，先激励起来）
   const VSHADOW = false;
@@ -4174,7 +4334,7 @@ function updateDiagnosis(w) {
 function starPopIfPerfect(w) {
   if (!w || !w.meta) return;
   if (!(w.qc && isQcOk(w.qc.code, w.meta))) return;   // 只在有效击球窗弹
-  if (w.meta.frame && w.meta.frame.hit) return;       // 打框是否决项：不给星
+  // 2026-11-28：打框不再屏蔽星级；其余判决项达标仍可弹星（仅球速屏蔽）
 
   // 击球时机（Late Contact）正常 → 核心条件
   const lt = w.meta.late;
@@ -4245,9 +4405,9 @@ function setSessionState(st) {
   colRefresh();                     // 采集页会话状态同步
 }
 
-// ---------- 连击计数：只统计有效击球；拍框球/丢包清零，异物与无冲击（捡球、落球）不计 ----------
+// ---------- 连击计数：只统计有效击球；丢包清零，异物与无冲击（捡球、落球）不计 ----------
+// 2026-11-28：打框不再清零连击——其余判决项照常评估（仅球速屏蔽）
 function updateStreak(res, meta) {
-  if (meta.frame && meta.frame.hit) { goodStreak = 0; return null; }  // 打框是否决项：不计入连击
   if (meta.quickClass === 1 || res.code === QC.FAIL_PACKET_LOSS) { goodStreak = 0; return null; }
   if (!isQcOk(res.code, meta)) return null;
   goodStreak++;
