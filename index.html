@@ -976,7 +976,11 @@
 //   脱机波形走 flags bit4=1 的独立重组通道，不进入实时窗口/回顾/导出流程；首页新增「脱机记录」卡，点开看 12×396 波形。
 //   App 启动不自动扫描/自动连接（现场多手机多连接会互相抢），必须由用户点设备芯片选一台。
 // B159：技术页接入 6 项 SFLP 姿态指标（拍面开合/稳定性、三段扇面、平面倾角、翻转速度）+ 指标 CSV 导出。
-const APP_BUILD = "APP-Step5-B160-20261128";   // B160：打框门限 7.211→9.5（含 11-26 现场数据重标定）；打框仅屏蔽球速，其余判决项照常评估
+// B160：打框门限 7.211→9.5（含 11-26 现场数据重标定）；打框仅屏蔽球速，其余判决项照常评估。
+// B161：flipPeak 改用窗口实测锚点求相邻四元数 dt；无锚点窗修正 137→138、346→348 两个跨段间隔。
+// B162：修打框图标不亮——固件 FRAME_HIT 使 QC=FAIL_FRAME_HIT，被当成"非有效窗"整窗作废。
+//   新增 isQcUsable（打框窗展示有效），打框窗只屏蔽球速，图标/识别项/连击不中断。
+const APP_BUILD = "APP-Step5-B162-20261128";
 // B127 说明：①方案 A——volTier 口径 A 用 post_deg 个人基线判随挥「偏小/正常/偏大」（原 post_tier 恒 null）；
 //   vol 基线存储 v2 {正手:{pre:[],post:[]}}（volLoadBase 兼容 v1：旧数字全归 pre，post 冷启动）；
 //   volCheckCue 改为引拍或随挥任一「偏小」计入（同侧 8 窗 ≥3 次触发，冷却 5 窗）；ftNum 数值行加随挥基线。
@@ -1263,6 +1267,26 @@ const QM = {
     if (i <= 347) return 137 * 8.3333 + (i - 137) * 1.04167;
     return 137 * 8.3333 + 210 * 1.04167 + (i - 348) * 8.3333;
   },
+  // 相邻四元数的真实 dt：优先用本窗锚点；无锚点时修正两个跨段边界。
+  // k=137：idx137→138 跨 8 个微观样本；k=164：idx346→348 跨 9 个微观样本。
+  quatDtMs(k, w) {
+    const i0 = idxForQuatK(k), i1 = idxForQuatK(k + 1);
+    const a = w && w.meta && w.meta.anchors;
+    if (a && !w.meta.tsQc && [a[0], a[1], a[2], a[4], a[5], a[6]].every(Number.isFinite)) {
+      const A = [a[0], a[1], a[2], a[4], a[5], a[6]];  // idx 0/137/138/347/348/395
+      const span = (x, y) => ((y - x) >>> 0) / 1000;  // µs → ms，抗 uint32 回绕
+      const at = i => {
+        if (i <= 137) return span(A[0], A[1]) * i / 137;
+        if (i <= 347) return span(A[0], A[2]) + span(A[2], A[3]) * (i - 138) / (347 - 138);
+        return span(A[0], A[4]) + span(A[4], A[5]) * (i - 348) / (395 - 348);
+      };
+      const dt = at(i1) - at(i0);
+      if (Number.isFinite(dt) && dt > 0) return Math.max(0.5, dt);
+    }
+    if (k === 137) return 8.3333;
+    if (k === 164) return 9 * 1.04167;
+    return Math.max(0.5, QM.idxMs(i1) - QM.idxMs(i0));
+  },
   faceDeg(q) {                       // 拍面法向(+Y)的世界仰角：0=竖直，+90=水平朝上
     if (!q) return null;
     const f = rotateVecByQuat(q, [0, 1, 0]);
@@ -1330,7 +1354,7 @@ function qmCompute(w) {
     const n = Math.hypot(qr[1], qr[2], qr[3]);
     if (n < 1e-6) continue;
     const rate = Math.abs(qr[3] / n) * ang;    // |axis·handle| × angle，handle=[0,0,−1]
-    const dt = Math.max(0.5, QM.idxMs(idxForQuatK(k + 1)) - QM.idxMs(idxForQuatK(k))) / 1000;
+    const dt = QM.quatDtMs(k, w) / 1000;
     const dps = rate / dt;
     if (flipPeak == null || dps > flipPeak) flipPeak = dps;
   }
@@ -1791,6 +1815,11 @@ function isGoodClip(code, meta) {
 }
 // QC 是否视为通过（数据可用）
 function isQcOk(code, meta) { return code === QC.PASS || isGoodClip(code, meta); }
+// 2026-11-28：打框窗（固件判 FRAME_HIT）虽不计入合格率，但窗口数据是有效的，
+// 识别项/打框图标仍应正常展示，不能因 QC 而整窗作废。仅用于「展示」判断，不改合格率统计。
+function isQcUsable(code, meta) {
+  return isQcOk(code, meta) || code === QC.FAIL_FRAME_HIT;
+}
 // 日志/下拉框文案（削顶好球对外就是 PASS，不暴露硬件细节）
 function qcCodeText(code, meta) { return isGoodClip(code, meta) ? "PASS" : code; }
 
@@ -2776,7 +2805,8 @@ function onWindow(meta, data) {
   // ---- 声音反馈：暴击音必触发（任何一球都不允许沉默）----
   // 音效与话术分层：音效 <10ms 出手（含连击/达成）；话术每球最多一句，按优先级取。
   const frameRes = meta.frame || { hit: false, deg: NaN };
-  const frameHit = !!frameRes.hit;
+  // 2026-11-28：固件判 FRAME_HIT 也按打框处理（否则球速不屏蔽，与打框图标不一致）
+  const frameHit = !!frameRes.hit || res.code === QC.FAIL_FRAME_HIT;
   let spd = null;
   if (isQcOk(res.code, meta) && !frameHit) {
     spd = estimateSpeed(data);
@@ -4058,7 +4088,7 @@ function nfCompute(data, t0, form) {
 function nfRender(w) {
   const els = [$("nfBox")].filter(Boolean);
   if (!w) { els.forEach(el => el.textContent = "—"); nfRows(null); return; }
-  if (!isQcOk(w.qc.code, w.meta)) { els.forEach(el => el.textContent = "（非有效击球窗，不计算识别项特征）"); nfRows(null); return; }
+  if (!isQcUsable(w.qc.code, w.meta)) { els.forEach(el => el.textContent = `（非有效击球窗：${w.qc.code}，不计算识别项特征）`); nfRows(null); return; }
   const t0 = w.meta.t0Index != null ? w.meta.t0Index : findT0Index(w.data);
   const f = nfCompute(w.data, t0, w.meta.form);
   w.nf = f;
@@ -4359,21 +4389,32 @@ function starPopIfPerfect(w) {
 function updateFrame(w) {
   const el = $("frameBadge"), num = $("frameNum");
   if (!el || !num) return;
-  const f = w && w.meta && w.meta.frame;
-  if (!f || !isFinite(f.ratio)) {
+  const f = (w && w.meta && w.meta.frame) || {};
+  const qc = w && w.qc ? w.qc.code : null;
+  const qcFrame = qc === QC.FAIL_FRAME_HIT;            // 固件刚体判 FRAME_HIT
+  const usable = qc ? isQcUsable(qc, w.meta) : true;
+  const hit = !!f.hit || qcFrame;                      // App 比值 或 固件判决，任一即打框
+  // 有效数据：比值可算，或固件判了打框。其余（丢包/无冲击/毛刺）才显示 —
+  if (!usable && !qcFrame) {
     el.innerHTML = `<span class="badge idle">—</span>`;
-    num.textContent = "—" + (f && f.why ? `（${f.why}）` : "");
+    num.textContent = `—（非有效击球窗：${qc || "未知"}）`;   // 带上 QC 码，便于现场定位为什么不亮
     return;
   }
-  if (!isQcOk(w.qc.code, w.meta)) {
+  if (!isFinite(f.ratio) && !qcFrame) {
     el.innerHTML = `<span class="badge idle">—</span>`;
-    num.textContent = "—（非有效击球窗）";
+    num.textContent = "—" + (f.why ? `（${f.why}）` : "");
     return;
   }
-  el.innerHTML = f.hit
+  el.innerHTML = hit
     ? `<span class="badge fail">打框</span>`
     : `<span class="badge pass">甜区</span>`;
-  num.textContent = `冲击峰值 ${f.peak.toFixed(0)} / 后窗 ${f.den.toFixed(0)} deg/s = ${f.ratio.toFixed(2)}（门限 ${FRAME.RATIO_MAX}）`;
+  const parts = [];
+  if (isFinite(f.ratio)) {
+    parts.push(`冲击峰值 ${f.peak.toFixed(0)} / 后窗 ${f.den.toFixed(0)} deg/s = ${f.ratio.toFixed(2)}（门限 ${FRAME.RATIO_MAX}）`);
+  }
+  if (qcFrame && !f.hit) parts.push("固件判 FRAME_HIT（比值未越限）");
+  if (!usable) parts.push("数据异常窗");
+  num.textContent = parts.join(" · ");
 }
 
 // ---------- 会话状态（训练中 / 捡球暂停） ----------
@@ -4406,9 +4447,10 @@ function setSessionState(st) {
 }
 
 // ---------- 连击计数：只统计有效击球；丢包清零，异物与无冲击（捡球、落球）不计 ----------
-// 2026-11-28：打框不再清零连击——其余判决项照常评估（仅球速屏蔽）
+// 2026-11-28：打框不再清零连击（仅屏蔽球速）；打框窗本身计入 isQcUsable 但不计数也不中断
 function updateStreak(res, meta) {
-  if (meta.quickClass === 1 || res.code === QC.FAIL_PACKET_LOSS) { goodStreak = 0; return null; }
+  if (res.code === QC.FAIL_PACKET_LOSS) { goodStreak = 0; return null; }
+  if (!isQcOk(res.code, meta)) return null;
   if (!isQcOk(res.code, meta)) return null;
   goodStreak++;
   if (goodStreak % 10 === 0) return "achieve";
